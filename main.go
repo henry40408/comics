@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"io/fs"
+	"net/http"
 	"path/filepath"
 	"sort"
 )
@@ -71,9 +71,16 @@ func ListBooks() ([]Book, error) {
 }
 
 func main() {
-	books, err := ListBooks()
+	// books, err := ListBooks()
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Printf("%v", books)
+	dir := "data"
+	fs := http.FileServer(http.Dir(dir))
+	http.Handle("/", fs)
+	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("%v", books)
 }
