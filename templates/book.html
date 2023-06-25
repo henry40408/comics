@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>{{.Book.Name}}</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+  <center>
+    <p>Elapsed: {{.Elapsed}}ms</p>
+    {{ range .Book.Pages }}
+    <img src="/{{.Path}}" />
+    <p>{{.Name}}</p>
+    {{ end }}
+    <p>Elapsed: {{.Elapsed}}ms</p>
+  </center>
+</body>
+
+</html>
