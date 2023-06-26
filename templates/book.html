@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-  <title>{{.Book.Name}}</title>
+  <title>{{.Book.Name}} | {{.Book.Pages | len}}P</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
@@ -11,7 +11,7 @@
   <center>
     <p>Elapsed: {{.Elapsed}}ms</p>
     {{ range .Book.Pages }}
-    <img width="95%" src="/{{.Path}}" />
+    <img width="95%" src="/public/{{.PublicPath}}" />
     <p>{{.Name}}</p>
     {{ end }}
     <p>Elapsed: {{.Elapsed}}ms</p>

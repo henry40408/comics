@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -10,17 +11,133 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/hashicorp/logutils"
+	"github.com/spf13/cobra"
 )
 
+var dataDir, host string
+var port int
+
+func init() {
+	filter := &logutils.LevelFilter{
+		Levels:   []logutils.LogLevel{"DEBUG", "INFO"},
+		MinLevel: logutils.LogLevel("INFO"),
+		Writer:   os.Stderr,
+	}
+	if _, ok := os.LookupEnv("DEBUG"); ok {
+		filter.MinLevel = logutils.LogLevel("DEBUG")
+	}
+	log.SetOutput(filter)
+
+	rootCmd.Flags().StringVarP(&host, "host", "H", "127.0.0.1", "Host to bind")
+	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
+	rootCmd.Flags().StringVarP(&dataDir, "data", "d", "data", "Data directory")
+}
+
+func RunServer() error {
+	indexTemplate, err := template.ParseFiles("templates/index.html")
+	if err != nil {
+		return err
+	}
+	bookTemplate, err := template.ParseFiles("templates/book.html")
+	if err != nil {
+		return err
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		start := time.Now()
+		books, err := ListBooks()
+		elapsed := time.Since(start)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		params := IndexTemplateParams{
+			Books:   books,
+			Elapsed: elapsed.Milliseconds(),
+		}
+		err = indexTemplate.Execute(w, params)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/book/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/book/")
+
+		start := time.Now()
+		books, err := ListBooks()
+		elapsed := time.Since(start)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for _, book := range books {
+			if book.Name == name {
+				params := BookTemplateParams{
+					Book:    book,
+					Elapsed: elapsed.Milliseconds(),
+				}
+				err = bookTemplate.Execute(w, params)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				return
+			}
+		}
+
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+
+	fs := http.FileServer(http.Dir(dataDir))
+	mux.Handle("/public/", http.StripPrefix("/public/", fs))
+
+	addr := fmt.Sprintf("%s:%d", host, port)
+	log.Printf("[INFO] server is running on %s", addr)
+
+	server := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	err = server.ListenAndServe()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+var rootCmd = &cobra.Command{
+	Use:   "comics",
+	Short: "Run the server",
+	Long:  "Run the server.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return RunServer()
+	},
+}
+
 type Book struct {
-	Cover string
-	Name  string
-	Pages []Page
+	// PublicCover represents relative path from data directory
+	PublicCover string
+	Name        string
+	Pages       []Page
 }
 
 type Page struct {
 	Name string
-	Path string
+	// PublicPath represents relative path from data directory
+	PublicPath string
 }
 
 func IsImage(path string) (bool, error) {
@@ -41,14 +158,16 @@ func IsImage(path string) (bool, error) {
 }
 
 func ListBooks() ([]Book, error) {
+	log.Printf("[DEBUG] scan data directory: %s\n", dataDir)
+
 	var books []Book
 
-	err := filepath.Walk("data", func(path string, info fs.FileInfo, err error) error {
+	err := filepath.Walk(dataDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if info.Name() == "data" {
+		if info.Name() == dataDir {
 			return nil // ignore self
 		}
 
@@ -57,30 +176,37 @@ func ListBooks() ([]Book, error) {
 				Name: info.Name(),
 			}
 
-			d := filepath.Join("data", info.Name())
+			bookName := info.Name()
+			log.Printf("[DEBUG] found book: %s\n", bookName)
+
+			bookPath := filepath.Join(dataDir, bookName)
 
 			var pages []Page
 
-			err := filepath.Walk(d, func(path string, info fs.FileInfo, err error) error {
+			err := filepath.Walk(bookPath, func(path string, info fs.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
 
-				if info.Name() == d {
+				if info.Name() == bookPath {
 					return nil // ignore self
 				}
 
 				if !info.IsDir() {
-					imagePath := filepath.Join(d, info.Name())
+					imagePath := filepath.Join(bookPath, info.Name())
 					isImage, err := IsImage(imagePath)
 					if err != nil {
 						return err
 					}
 					if isImage {
+						log.Printf("[DEBUG] found page: %s\n", imagePath)
+						publicPath := filepath.Join(bookName, info.Name())
 						pages = append(pages, Page{
-							Name: info.Name(),
-							Path: imagePath,
+							Name:       info.Name(),
+							PublicPath: publicPath,
 						})
+					} else {
+						log.Printf("[DEBUG] file is not image: %s\n", imagePath)
 					}
 				}
 
@@ -94,7 +220,9 @@ func ListBooks() ([]Book, error) {
 				return pages[i].Name < pages[j].Name
 			})
 			if len(pages) > 0 {
-				book.Cover = pages[0].Path
+				p := pages[0]
+				book.PublicCover = p.PublicPath
+				log.Printf(`[DEBUG] set "%s" as cover of "%s"`, p.PublicPath, bookName)
 			}
 			book.Pages = pages
 			books = append(books, book)
@@ -124,72 +252,8 @@ type BookTemplateParams struct {
 }
 
 func main() {
-	indexTemplate, err := template.ParseFiles("templates/index.html")
-	if err != nil {
-		panic(err)
-	}
-	bookTemplate, err := template.ParseFiles("templates/book.html")
-	if err != nil {
-		panic(err)
-	}
-
-	dir := "data"
-
-	fs := http.FileServer(http.Dir(dir))
-	http.Handle("/data/", http.StripPrefix("/data/", fs))
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		books, err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		params := IndexTemplateParams{
-			Books:   books,
-			Elapsed: elapsed.Milliseconds(),
-		}
-		err = indexTemplate.Execute(w, params)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	})
-
-	http.HandleFunc("/book/", func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/book/")
-
-		start := time.Now()
-		books, err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		for _, book := range books {
-			if book.Name == name {
-				params := BookTemplateParams{
-					Book:    book,
-					Elapsed: elapsed.Milliseconds(),
-				}
-				err = bookTemplate.Execute(w, params)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				return
-			}
-		}
-
-		http.Error(w, "not found", http.StatusNotFound)
-	})
-
-	log.Printf("server is running on port 8080")
-
-	err = http.ListenAndServe(":8080", nil)
-	if err != nil {
-		panic(err)
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+		os.Exit(1)
 	}
 }
