@@ -14,6 +14,7 @@ import (
 
 	"github.com/hashicorp/logutils"
 	"github.com/spf13/cobra"
+	"github.com/urfave/negroni"
 )
 
 var dataDir, host string
@@ -106,9 +107,12 @@ func RunServer() error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.Printf("[INFO] server is running on %s", addr)
 
+	n := negroni.Classic()
+	n.UseHandler(mux)
+
 	server := &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: n,
 	}
 
 	err = server.ListenAndServe()
