@@ -11,7 +11,7 @@
   <center>
     <p>Elapsed: {{.Elapsed}}ms</p>
     {{range .Books}}
-    <img width="95%" src="/{{.Cover}}" />
+    <a href="/book/{{.Name}}"><img width="95%" src="/{{.Cover}}" /></a>
     <p><a href="/book/{{.Name}}">{{.Name}}</a></p>
     {{end}}
     <p>Elapsed: {{.Elapsed}}ms</p>

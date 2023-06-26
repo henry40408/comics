@@ -2,7 +2,9 @@ package main
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +21,23 @@ type Book struct {
 type Page struct {
 	Name string
 	Path string
+}
+
+func IsImage(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, nil
+	}
+	defer file.Close()
+
+	buf := make([]byte, 512)
+	_, err = file.Read(buf)
+	if err != nil {
+		return false, err
+	}
+
+	contentType := http.DetectContentType(buf)
+	return contentType[:5] == "image", nil
 }
 
 func ListBooks() ([]Book, error) {
@@ -52,10 +71,17 @@ func ListBooks() ([]Book, error) {
 				}
 
 				if !info.IsDir() {
-					pages = append(pages, Page{
-						Name: info.Name(),
-						Path: filepath.Join(d, info.Name()),
-					})
+					imagePath := filepath.Join(d, info.Name())
+					isImage, err := IsImage(imagePath)
+					if err != nil {
+						return err
+					}
+					if isImage {
+						pages = append(pages, Page{
+							Name: info.Name(),
+							Path: imagePath,
+						})
+					}
 				}
 
 				return nil
@@ -159,6 +185,8 @@ func main() {
 
 		http.Error(w, "not found", http.StatusNotFound)
 	})
+
+	log.Printf("server is running on port 8080")
 
 	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
