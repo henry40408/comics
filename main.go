@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"io/fs"
 	"log"
@@ -17,6 +18,9 @@ import (
 	"github.com/urfave/negroni"
 )
 
+//go:embed templates/*.html
+var templateFiles embed.FS
+
 var dataDir, host string
 var port int
 
@@ -31,17 +35,17 @@ func init() {
 	}
 	log.SetOutput(filter)
 
-	rootCmd.Flags().StringVarP(&host, "host", "H", "127.0.0.1", "Host to bind")
+	rootCmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind")
 	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
 	rootCmd.Flags().StringVarP(&dataDir, "data", "d", "data", "Data directory")
 }
 
 func RunServer() error {
-	indexTemplate, err := template.ParseFiles("templates/index.html")
+	indexTemplate, err := template.ParseFS(templateFiles, "templates/index.html")
 	if err != nil {
 		return err
 	}
-	bookTemplate, err := template.ParseFiles("templates/book.html")
+	bookTemplate, err := template.ParseFS(templateFiles, "templates/book.html")
 	if err != nil {
 		return err
 	}
