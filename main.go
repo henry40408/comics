@@ -13,6 +13,9 @@ import (
 	"text/template"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/ssh/terminal"
+
 	"github.com/hashicorp/logutils"
 	"github.com/spf13/cobra"
 	"github.com/urfave/negroni"
@@ -21,7 +24,7 @@ import (
 //go:embed templates/*.html
 var templateFiles embed.FS
 
-var dataDir, host string
+var dataDir, host, expectedUsername, expectedPassword string
 var port int
 
 func init() {
@@ -38,6 +41,38 @@ func init() {
 	rootCmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind")
 	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
 	rootCmd.Flags().StringVarP(&dataDir, "data", "d", "data", "Data directory")
+	rootCmd.Flags().StringVarP(&expectedUsername, "username", "U", os.Getenv("COMICS_USERNAME"), "Basic auth username")
+	rootCmd.Flags().StringVarP(&expectedPassword, "password", "P", os.Getenv("COMICS_PASSWORD"), "Hashed basic auth password")
+	rootCmd.AddCommand(hashPasswordCmd)
+}
+
+type BasicAuth struct{}
+
+func (b *BasicAuth) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if expectedUsername == "" || expectedPassword == "" {
+		next(w, r) // PASS
+		return
+	}
+
+	username, password, ok := r.BasicAuth()
+	if !ok { // AUTHORIZE
+		w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if username != expectedUsername { // FAIL
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(expectedPassword), []byte(password))
+	if err != nil { // FAIL
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	next(w, r) // PASS
 }
 
 func RunServer() error {
@@ -112,6 +147,7 @@ func RunServer() error {
 	log.Printf("[INFO] server is running on %s", addr)
 
 	n := negroni.Classic()
+	n.Use(&BasicAuth{})
 	n.UseHandler(mux)
 
 	server := &http.Server{
@@ -132,6 +168,38 @@ var rootCmd = &cobra.Command{
 	Long:  "Run the server.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return RunServer()
+	},
+}
+
+var hashPasswordCmd = &cobra.Command{
+	Use:   "hash-password",
+	Short: "Hashes a password and writes the output to stdout, then exits",
+	Long:  "Hashes a password and writes the output to stdout, then exits",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Printf("Password: ")
+		password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("\nConfirmation: ")
+		confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+
+		if string(password) != string(confirmation) {
+			return err
+		}
+
+		hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("\n%s\n", string(hash))
+
+		return nil
 	},
 }
 
@@ -261,7 +329,6 @@ type BookTemplateParams struct {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }
