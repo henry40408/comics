@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -29,7 +30,7 @@ var port int
 
 func init() {
 	filter := &logutils.LevelFilter{
-		Levels:   []logutils.LogLevel{"DEBUG", "INFO"},
+		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN"},
 		MinLevel: logutils.LogLevel("INFO"),
 		Writer:   os.Stderr,
 	}
@@ -41,15 +42,19 @@ func init() {
 	rootCmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind")
 	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
 	rootCmd.Flags().StringVarP(&dataDir, "data", "d", "data", "Data directory")
-	rootCmd.Flags().StringVarP(&expectedUsername, "username", "U", os.Getenv("COMICS_USERNAME"), "Basic auth username")
-	rootCmd.Flags().StringVarP(&expectedPassword, "password", "P", os.Getenv("COMICS_PASSWORD"), "Hashed basic auth password")
+	rootCmd.Flags().StringVarP(&expectedUsername, "auth-username", "U", os.Getenv("AUTH_USERNAME"), "Basic auth username")
+	rootCmd.Flags().StringVarP(&expectedPassword, "auth-password", "P", os.Getenv("AUTH_PASSWORD"), "Hashed basic auth password")
 	rootCmd.AddCommand(hashPasswordCmd)
 }
 
-type BasicAuth struct{}
+func ServerProtected() bool {
+	return expectedUsername != "" && expectedPassword != ""
+}
 
-func (b *BasicAuth) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	if expectedUsername == "" || expectedPassword == "" {
+type BasicAuthMiddleware struct{}
+
+func (b *BasicAuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if !ServerProtected() {
 		next(w, r) // PASS
 		return
 	}
@@ -143,11 +148,15 @@ func RunServer() error {
 	fs := http.FileServer(http.Dir(dataDir))
 	mux.Handle("/public/", http.StripPrefix("/public/", fs))
 
+	if !ServerProtected() {
+		log.Printf("[WARN] Server is publicly accessible")
+	}
+
 	addr := fmt.Sprintf("%s:%d", host, port)
-	log.Printf("[INFO] server is running on %s", addr)
+	log.Printf("[INFO] Server is running on %s", addr)
 
 	n := negroni.Classic()
-	n.Use(&BasicAuth{})
+	n.Use(&BasicAuthMiddleware{})
 	n.UseHandler(mux)
 
 	server := &http.Server{
@@ -176,20 +185,20 @@ var hashPasswordCmd = &cobra.Command{
 	Short: "Hashes a password and writes the output to stdout, then exits",
 	Long:  "Hashes a password and writes the output to stdout, then exits",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("Password: ")
+		fmt.Fprintf(os.Stderr, "Password: ")
 		password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("\nConfirmation: ")
+		fmt.Fprintf(os.Stderr, "\nConfirmation: ")
 		confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
 		if err != nil {
 			return err
 		}
 
 		if string(password) != string(confirmation) {
-			return err
+			return errors.New("Confirmation mismatches password")
 		}
 
 		hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
@@ -197,7 +206,8 @@ var hashPasswordCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("\n%s\n", string(hash))
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Printf("%s\n", string(hash))
 
 		return nil
 	},
