@@ -5,14 +5,18 @@
   <title>{{.Book.Name}} | {{.Book.Pages | len}}P</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
 </head>
 
 <body>
   <center>
     <p>Elapsed: {{.Elapsed}}ms</p>
+    <p>{{.Book.Name}}</p>
     {{ range .Book.Pages }}
-    <img width="95%" src="/public/{{.PublicPath}}" />
-    <p>{{.Name}}</p>
+    <figure>
+      <img src="/public/{{.PublicPath}}" />
+      <figurecaption>{{.Name}}</figurecaption>
+    </figure>
     {{ end }}
     <p>Elapsed: {{.Elapsed}}ms</p>
   </center>

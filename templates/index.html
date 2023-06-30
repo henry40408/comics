@@ -5,14 +5,19 @@
   <title>Comics | {{.Books | len}} book(s)</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
 </head>
 
 <body>
   <center>
     <p>Elapsed: {{.Elapsed}}ms</p>
     {{range .Books}}
-    <a href="/book/{{.Name}}"><img width="95%" src="/public/{{.PublicCover}}" /></a>
-    <p><a href="/book/{{.Name}}">{{.Name}} ({{.Pages | len}}P)</a></p>
+    <a href="/book/{{.Name}}">
+      <figure>
+        <img src="/public/{{.PublicCover}}" />
+        <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
+      </figure>
+    </a>
     {{end}}
     <p>Elapsed: {{.Elapsed}}ms</p>
   </center>
