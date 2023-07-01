@@ -15,7 +15,7 @@ There are already several options for self-hosted comic readers, such as [Calibr
 * Simple: The server only searches one layer of the file system. Each directory represents a book, and the files within the directory represent the pages. That's all.
 * Basic auth: A dead simple way to protect your comics.
 
-To obtain a hashed password, use the "comics hash-password" command like Caddy.
+To obtain a hashed password, use the `comics hash-password` command like Caddy.
 
 ```
 $ comics hash-password
@@ -27,7 +27,8 @@ $2a$10$...Ot6
 Then, set the hashed password in environment variables:
 
 ```
-PASSWORD=$2a$10$...Ot6
+AUTH_USERNAME=john
+AUTH_PASSWORD=$2a$10$...Ot6
 ```
 
 ## Out of scope
