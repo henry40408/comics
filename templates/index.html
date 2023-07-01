@@ -10,17 +10,19 @@
 
 <body>
   <center>
-    <p>Elapsed: {{.Elapsed}}ms</p>
     {{range .Books}}
-    <a href="/book/{{.Name}}">
-      <figure>
-        <img src="/public/{{.PublicCover}}" />
-        <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
-      </figure>
-    </a>
+    <p>
+      <a href="/book/{{.Name}}">
+        <figure>
+          <img src="/public/{{.PublicCover}}" />
+          <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
+        </figure>
+      </a>
+    </p>
+    {{else}}
+    <p>No books found.</p>
     {{end}}
-    <p>Elapsed: {{.Elapsed}}ms</p>
-    <p>Comics {{.Version}} ({{.Commit}}), built at {{.BuildDate}}</p>
+    <p>Elapsed: {{.Elapsed}}ms | Comics {{.Version}} ({{.Commit}}), built at {{.BuildDate}}</p>
   </center>
 </body>
 

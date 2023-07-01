@@ -10,15 +10,16 @@
 
 <body>
   <center>
-    <p>Elapsed: {{.Elapsed}}ms</p>
     <p>{{.Book.Name}}</p>
     {{ range .Book.Pages }}
+    <p>
     <figure>
       <img src="/public/{{.PublicPath}}" />
       <figurecaption>{{.Name}}</figurecaption>
     </figure>
+    </p>
     {{ end }}
-    <p>Elapsed: {{.Elapsed}}ms</p>
+    <p>Elapsed: {{.Elapsed}}ms | Comics {{.Version}} ({{.Commit}}), built at {{.BuildDate}}</p>
   </center>
 </body>
 
