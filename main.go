@@ -238,6 +238,7 @@ func HandleIndex(tpl *template.Template) http.HandlerFunc {
 		}
 
 		params := NewTemplateParams()
+		params["LastScanned"] = lastScanned.Format("2006-01-02T15:04:05-07:00")
 		params["Books"] = bookList
 		params["Elapsed"] = elapsed.Milliseconds()
 
@@ -293,6 +294,9 @@ func RunServer() error {
 		return err
 	}
 	mux.HandleFunc("/book/", HandleBook(bookTemplate))
+
+	assets := http.FileServer(http.Dir("assets"))
+	mux.Handle("/assets/", http.StripPrefix("/assets/", assets))
 
 	fs := http.FileServer(http.Dir(dataDir))
 	mux.Handle("/public/", http.StripPrefix("/public/", fs))

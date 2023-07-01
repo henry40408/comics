@@ -5,22 +5,22 @@
   <title>{{.Book.Name}} | {{.Book.Pages | len}}P</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
+  <link rel="stylesheet" href="/assets/pico.min.css" />
 </head>
 
 <body>
-  <center>
-    <p>{{.Book.Name}}</p>
-    {{ range .Book.Pages }}
-    <p>
-    <figure>
-      <img src="/public/{{.PublicPath}}" />
-      <figurecaption>{{.Name}}</figurecaption>
-    </figure>
-    </p>
-    {{ end }}
-    <p>Elapsed: {{.Elapsed}}ms | comics {{.Version}}</p>
-  </center>
+  <main class="container">
+    <center>
+      <p>{{.Book.Name}}</p>
+      {{ range .Book.Pages }}
+      <div>
+        <img src="/public/{{.PublicPath}}" />
+        <p>{{.Name}}</p>
+      </div>
+      {{ end }}
+      <p>Elapsed: {{.Elapsed}}ms | comics {{.Version}}</p>
+    </center>
+  </main>
 </body>
 
 </html>

@@ -5,28 +5,31 @@
   <title>Comics | {{.Books | len}} book(s)</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
+  <link rel="stylesheet" href="/assets/pico.min.css" />
 </head>
 
 <body>
-  <center>
-    <form method="post">
-      <input type="submit" value="re-scan" />
-    </form>
-    {{range .Books}}
-    <p>
-      <a href="/book/{{.Name}}">
-        <figure>
-          <img src="/public/{{.PublicCover}}" />
-          <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
-        </figure>
-      </a>
-    </p>
-    {{else}}
-    <p>No books found.</p>
-    {{end}}
-    <p>Elapsed: {{.Elapsed}}ms | comics {{.Version}}</p>
-  </center>
+  <main class="container">
+    <center>
+      <form method="post">
+        <input type="submit" value="re-scan" />
+        <div>scanned @ {{.LastScanned}}</div>
+      </form>
+      {{range .Books}}
+      <p>
+        <a href="/book/{{.Name}}">
+          <figure>
+            <img src="/public/{{.PublicCover}}" />
+            <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
+          </figure>
+        </a>
+      </p>
+      {{else}}
+      <p>No books found.</p>
+      {{end}}
+      <p>Elapsed: {{.Elapsed}}ms | comics {{.Version}}</p>
+    </center>
+  </main>
 </body>
 
 </html>
