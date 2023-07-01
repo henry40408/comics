@@ -23,6 +23,10 @@ import (
 	"github.com/urfave/negroni"
 )
 
+const (
+	RESCAN_INTERVAL = 24 * time.Hour
+)
+
 //go:embed templates/*.html
 var templateFiles embed.FS
 
@@ -78,10 +82,19 @@ func IsImage(path string) (bool, error) {
 	return contentType[:5] == "image", nil
 }
 
-func ListBooks() ([]Book, error) {
+var bookList []Book
+var lastScanned time.Time
+
+func ListBooks() error {
+	if time.Now().Sub(lastScanned) < RESCAN_INTERVAL {
+		log.Printf("[DEBUG] re-use book list scanned at %s\n", lastScanned.Format("2006-01-02T15:04:05-07:00"))
+		return nil
+	}
+
+	lastScanned = time.Now()
 	log.Printf("[DEBUG] scan data directory: %s\n", dataDir)
 
-	var books []Book
+	bookList = []Book{}
 
 	err := filepath.Walk(dataDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
@@ -146,20 +159,20 @@ func ListBooks() ([]Book, error) {
 				log.Printf(`[DEBUG] set "%s" as cover of "%s"`, p.PublicPath, bookName)
 			}
 			book.Pages = pages
-			books = append(books, book)
+			bookList = append(bookList, book)
 			return nil
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	sort.Slice(books, func(i, j int) bool {
-		return books[i].Name < books[j].Name
+	sort.Slice(bookList, func(i, j int) bool {
+		return bookList[i].Name < bookList[j].Name
 	})
 
-	return books, nil
+	return nil
 }
 
 func PubliclyAccessible() bool {
@@ -209,8 +222,15 @@ func HandleIndex(tpl *template.Template) http.HandlerFunc {
 			return
 		}
 
+		if r.Method == http.MethodPost {
+			log.Printf("[DEBUG] reset last scanned timestamp\n")
+			lastScanned = time.UnixMicro(0)
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+
 		start := time.Now()
-		books, err := ListBooks()
+		err := ListBooks()
 		elapsed := time.Since(start)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -218,7 +238,7 @@ func HandleIndex(tpl *template.Template) http.HandlerFunc {
 		}
 
 		params := NewTemplateParams()
-		params["Books"] = books
+		params["Books"] = bookList
 		params["Elapsed"] = elapsed.Milliseconds()
 
 		err = tpl.Execute(w, params)
@@ -233,14 +253,14 @@ func HandleBook(tpl *template.Template) http.HandlerFunc {
 		name := strings.TrimPrefix(r.URL.Path, "/book/")
 
 		start := time.Now()
-		books, err := ListBooks()
+		err := ListBooks()
 		elapsed := time.Since(start)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		for _, book := range books {
+		for _, book := range bookList {
 			if book.Name == name {
 				params := NewTemplateParams()
 				params["Book"] = book

@@ -10,6 +10,9 @@
 
 <body>
   <center>
+    <form method="post">
+      <input type="submit" value="re-scan" />
+    </form>
     {{range .Books}}
     <p>
       <a href="/book/{{.Name}}">
