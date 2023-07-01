@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"comics.app/version"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh/terminal"
 
@@ -45,172 +46,6 @@ func init() {
 	rootCmd.Flags().StringVarP(&expectedUsername, "auth-username", "U", os.Getenv("AUTH_USERNAME"), "Basic auth username")
 	rootCmd.Flags().StringVarP(&expectedPassword, "auth-password", "P", os.Getenv("AUTH_PASSWORD"), "Hashed basic auth password")
 	rootCmd.AddCommand(hashPasswordCmd)
-}
-
-func ServerProtected() bool {
-	return expectedUsername != "" && expectedPassword != ""
-}
-
-type BasicAuthMiddleware struct{}
-
-func (b *BasicAuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	if !ServerProtected() {
-		next(w, r) // PASS
-		return
-	}
-
-	username, password, ok := r.BasicAuth()
-	if !ok { // AUTHORIZE
-		w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if username != expectedUsername { // FAIL
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	err := bcrypt.CompareHashAndPassword([]byte(expectedPassword), []byte(password))
-	if err != nil { // FAIL
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	next(w, r) // PASS
-}
-
-func RunServer() error {
-	indexTemplate, err := template.ParseFS(templateFiles, "templates/index.html")
-	if err != nil {
-		return err
-	}
-	bookTemplate, err := template.ParseFS(templateFiles, "templates/book.html")
-	if err != nil {
-		return err
-	}
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-
-		start := time.Now()
-		books, err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		params := IndexTemplateParams{
-			Books:   books,
-			Elapsed: elapsed.Milliseconds(),
-		}
-		err = indexTemplate.Execute(w, params)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	})
-
-	mux.HandleFunc("/book/", func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/book/")
-
-		start := time.Now()
-		books, err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		for _, book := range books {
-			if book.Name == name {
-				params := BookTemplateParams{
-					Book:    book,
-					Elapsed: elapsed.Milliseconds(),
-				}
-				err = bookTemplate.Execute(w, params)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				return
-			}
-		}
-
-		http.Error(w, "not found", http.StatusNotFound)
-	})
-
-	fs := http.FileServer(http.Dir(dataDir))
-	mux.Handle("/public/", http.StripPrefix("/public/", fs))
-
-	if !ServerProtected() {
-		log.Printf("[WARN] Server is publicly accessible")
-	}
-
-	addr := fmt.Sprintf("%s:%d", host, port)
-	log.Printf("[INFO] Server is running on %s", addr)
-
-	n := negroni.Classic()
-	n.Use(&BasicAuthMiddleware{})
-	n.UseHandler(mux)
-
-	server := &http.Server{
-		Addr:    addr,
-		Handler: n,
-	}
-
-	err = server.ListenAndServe()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-var rootCmd = &cobra.Command{
-	Use:   "comics",
-	Short: "Run the server",
-	Long:  "Run the server.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return RunServer()
-	},
-}
-
-var hashPasswordCmd = &cobra.Command{
-	Use:   "hash-password",
-	Short: "Hashes a password and writes the output to stdout, then exits",
-	Long:  "Hashes a password and writes the output to stdout, then exits",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintf(os.Stderr, "Password: ")
-		password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(os.Stderr, "\nConfirmation: ")
-		confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return err
-		}
-
-		if string(password) != string(confirmation) {
-			return errors.New("Confirmation mismatches password")
-		}
-
-		hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Printf("%s\n", string(hash))
-
-		return nil
-	},
 }
 
 type Book struct {
@@ -327,14 +162,187 @@ func ListBooks() ([]Book, error) {
 	return books, nil
 }
 
-type IndexTemplateParams struct {
-	Books   []Book
-	Elapsed int64
+func PubliclyAccessible() bool {
+	return expectedUsername == "" || expectedPassword == ""
 }
 
-type BookTemplateParams struct {
-	Book    Book
-	Elapsed int64
+type BasicAuthMiddleware struct{}
+
+func (b *BasicAuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if PubliclyAccessible() {
+		next(w, r) // PASS
+		return
+	}
+
+	username, password, ok := r.BasicAuth()
+	if !ok { // AUTHORIZE
+		w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if username != expectedUsername { // FAIL
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(expectedPassword), []byte(password))
+	if err != nil { // FAIL
+		log.Printf("[ERROR] %v\n", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	next(w, r) // PASS
+}
+
+func NewTemplateParams() map[string]interface{} {
+	params := make(map[string]interface{})
+	params["Version"] = version.Version
+	params["Commit"] = version.Commit
+	params["BuildDate"] = version.BuildDate
+	return params
+}
+
+func HandleIndex(tpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		start := time.Now()
+		books, err := ListBooks()
+		elapsed := time.Since(start)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		params := NewTemplateParams()
+		params["Books"] = books
+		params["Elapsed"] = elapsed.Milliseconds()
+
+		err = tpl.Execute(w, params)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+func HandleBook(tpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/book/")
+
+		start := time.Now()
+		books, err := ListBooks()
+		elapsed := time.Since(start)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for _, book := range books {
+			if book.Name == name {
+				params := NewTemplateParams()
+				params["Book"] = book
+				params["Elapsed"] = elapsed.Milliseconds()
+
+				err = tpl.Execute(w, params)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				return
+			}
+		}
+
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+func RunServer() error {
+	mux := http.NewServeMux()
+
+	indexTemplate, err := template.ParseFS(templateFiles, "templates/index.html")
+	if err != nil {
+		return err
+	}
+	mux.HandleFunc("/", HandleIndex(indexTemplate))
+
+	bookTemplate, err := template.ParseFS(templateFiles, "templates/book.html")
+	if err != nil {
+		return err
+	}
+	mux.HandleFunc("/book/", HandleBook(bookTemplate))
+
+	fs := http.FileServer(http.Dir(dataDir))
+	mux.Handle("/public/", http.StripPrefix("/public/", fs))
+
+	if PubliclyAccessible() {
+		log.Printf("[WARN] Server is publicly accessible")
+	}
+
+	addr := fmt.Sprintf("%s:%d", host, port)
+	log.Printf("[INFO] Server is running on %s", addr)
+
+	n := negroni.Classic()
+	n.Use(&BasicAuthMiddleware{})
+	n.UseHandler(mux)
+
+	server := &http.Server{
+		Addr:    addr,
+		Handler: n,
+	}
+
+	err = server.ListenAndServe()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+var rootCmd = &cobra.Command{
+	Use:   "comics",
+	Short: "Run the server",
+	Long:  "Run the server.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		log.Printf("[INFO] Comics %s (%s), built at %s", version.Version, version.Commit, version.BuildDate)
+		return RunServer()
+	},
+}
+
+var hashPasswordCmd = &cobra.Command{
+	Use:   "hash-password",
+	Short: "Hashes a password and writes the output to stdout, then exits",
+	Long:  "Hashes a password and writes the output to stdout, then exits",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintf(os.Stderr, "Password: ")
+		password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(os.Stderr, "\nConfirmation: ")
+		confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+
+		if string(password) != string(confirmation) {
+			return errors.New("Confirmation mismatches password")
+		}
+
+		hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Printf("%s\n", string(hash))
+
+		return nil
+	},
 }
 
 func main() {

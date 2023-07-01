@@ -1,4 +1,4 @@
-module github.com/henry40408/comics
+module comics.app
 
 go 1.20
 
