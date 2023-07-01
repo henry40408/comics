@@ -198,9 +198,7 @@ func (b *BasicAuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, 
 
 func NewTemplateParams() map[string]interface{} {
 	params := make(map[string]interface{})
-	params["Version"] = version.Version
-	params["Commit"] = version.Commit
-	params["BuildDate"] = version.BuildDate
+	params["Version"] = version.String()
 	return params
 }
 
@@ -303,11 +301,12 @@ func RunServer() error {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "comics",
-	Short: "Run the server",
-	Long:  "Run the server.",
+	Use:     "comics",
+	Short:   "Run the server",
+	Long:    "Run the server.",
+	Version: version.String(),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		log.Printf("[INFO] Comics %s (%s), built at %s", version.Version, version.Commit, version.BuildDate)
+		log.Printf("[INFO] comics %s", version.String())
 		return RunServer()
 	},
 }
