@@ -30,6 +30,9 @@ const (
 //go:embed templates/*.html
 var templateFiles embed.FS
 
+//go:embed assets/*.css
+var assetFiles embed.FS
+
 var dataDir, host, expectedUsername, expectedPassword string
 var port int
 
@@ -295,7 +298,7 @@ func RunServer() error {
 	}
 	mux.HandleFunc("/book/", HandleBook(bookTemplate))
 
-	assets := http.FileServer(http.Dir("assets"))
+	assets := http.FileServer(http.FS(assetFiles))
 	mux.Handle("/assets/", http.StripPrefix("/assets/", assets))
 
 	fs := http.FileServer(http.Dir(dataDir))
