@@ -4,37 +4,39 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
-	"text/template"
 	"time"
 
 	"comics.app/version"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh/terminal"
 
+	"github.com/gin-gonic/gin"
 	"github.com/hashicorp/logutils"
+	"github.com/jwalton/go-supportscolor"
 	"github.com/spf13/cobra"
-	"github.com/urfave/negroni"
 )
 
 const (
 	RESCAN_INTERVAL = 24 * time.Hour
 )
 
-//go:embed templates/*.html
-var templateFiles embed.FS
+//go:embed assets/*.css templates/*.html
+var embeddedFS embed.FS
 
-//go:embed assets/*.css
-var assetFiles embed.FS
+var (
+	dataDir, host                  string
+	expectedUsername, passwordHash string
+	port                           int
+)
 
-var dataDir, host, expectedUsername, expectedPassword string
-var port int
+var completeVersion = fmt.Sprintf("%s (%s), built at %s", version.Version, version.Commit, version.BuildDate)
 
 func init() {
 	filter := &logutils.LevelFilter{
@@ -47,12 +49,14 @@ func init() {
 	}
 	log.SetOutput(filter)
 
-	rootCmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind")
-	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
-	rootCmd.Flags().StringVarP(&dataDir, "data", "d", "data", "Data directory")
-	rootCmd.Flags().StringVarP(&expectedUsername, "auth-username", "U", os.Getenv("AUTH_USERNAME"), "Basic auth username")
-	rootCmd.Flags().StringVarP(&expectedPassword, "auth-password", "P", os.Getenv("AUTH_PASSWORD"), "Hashed basic auth password")
 	rootCmd.AddCommand(hashPasswordCmd)
+
+	serveCmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind")
+	serveCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
+	serveCmd.Flags().StringVarP(&dataDir, "data", "D", "data", "Data directory")
+	serveCmd.Flags().StringVarP(&expectedUsername, "username", "u", os.Getenv("AUTH_USERNAME"), "Basic auth username")
+	serveCmd.Flags().StringVar(&passwordHash, "password", os.Getenv("AUTH_PASSWORD_HASH"), "Hashed basic auth password")
+	rootCmd.AddCommand(serveCmd)
 }
 
 type Book struct {
@@ -179,130 +183,103 @@ func ListBooks() error {
 }
 
 func PubliclyAccessible() bool {
-	return expectedUsername == "" || expectedPassword == ""
+	return expectedUsername == "" || passwordHash == ""
 }
 
-type BasicAuthMiddleware struct{}
-
-func (b *BasicAuthMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	if PubliclyAccessible() {
-		next(w, r) // PASS
-		return
-	}
-
-	username, password, ok := r.BasicAuth()
-	if !ok { // AUTHORIZE
-		w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if username != expectedUsername { // FAIL
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	err := bcrypt.CompareHashAndPassword([]byte(expectedPassword), []byte(password))
-	if err != nil { // FAIL
-		log.Printf("[ERROR] %v\n", err)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	next(w, r) // PASS
-}
-
-func NewTemplateParams() map[string]interface{} {
-	params := make(map[string]interface{})
-	params["Version"] = version.String()
-	return params
-}
-
-func HandleIndex(tpl *template.Template) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+func BasicAuth() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if PubliclyAccessible() {
+			ctx.Next()
 			return
 		}
 
-		if r.Method == http.MethodPost {
-			log.Printf("[DEBUG] reset last scanned timestamp\n")
-			lastScanned = time.UnixMicro(0)
-			http.Redirect(w, r, "/", http.StatusFound)
+		username, password, ok := ctx.Request.BasicAuth()
+		if !ok { // AUTHORIZE
+			ctx.Header("WWW-Authenticate", `Basic realm="Restricted"`)
+			ctx.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
 
-		start := time.Now()
-		err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if username != expectedUsername { // FAIL
+			ctx.Status(http.StatusUnauthorized)
+			ctx.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
 
-		params := NewTemplateParams()
-		params["LastScanned"] = lastScanned.Format("2006-01-02T15:04:05-07:00")
-		params["Books"] = bookList
-		params["Elapsed"] = elapsed.Milliseconds()
-
-		err = tpl.Execute(w, params)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
-func HandleBook(tpl *template.Template) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/book/")
-
-		start := time.Now()
-		err := ListBooks()
-		elapsed := time.Since(start)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+		if err != nil { // FAIL
+			log.Printf("[ERROR] %v\n", err)
+			ctx.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
 
-		for _, book := range bookList {
-			if book.Name == name {
-				params := NewTemplateParams()
-				params["Book"] = book
-				params["Elapsed"] = elapsed.Milliseconds()
-
-				err = tpl.Execute(w, params)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				return
-			}
-		}
-
-		http.Error(w, "not found", http.StatusNotFound)
+		ctx.Next() // PASS
 	}
 }
 
 func RunServer() error {
-	mux := http.NewServeMux()
-
-	indexTemplate, err := template.ParseFS(templateFiles, "templates/index.html")
-	if err != nil {
-		return err
+	if !supportscolor.Stdout().SupportsColor {
+		gin.DisableConsoleColor()
 	}
-	mux.HandleFunc("/", HandleIndex(indexTemplate))
 
-	bookTemplate, err := template.ParseFS(templateFiles, "templates/book.html")
-	if err != nil {
-		return err
+	gin.SetMode(gin.ReleaseMode)
+	if _, ok := os.LookupEnv("DEBUG"); ok {
+		gin.SetMode(gin.DebugMode)
 	}
-	mux.HandleFunc("/book/", HandleBook(bookTemplate))
 
-	assets := http.FileServer(http.FS(assetFiles))
-	mux.Handle("/assets/", http.StripPrefix("/assets/", assets))
+	r := gin.Default()
 
-	fs := http.FileServer(http.Dir(dataDir))
-	mux.Handle("/public/", http.StripPrefix("/public/", fs))
+	templ := template.Must(template.New("").ParseFS(embeddedFS, "templates/*.html"))
+	r.SetHTMLTemplate(templ)
+
+	r.Use(BasicAuth())
+
+	r.StaticFS("/static", http.FS(embeddedFS))
+
+	r.StaticFS("/public", http.Dir(dataDir))
+
+	r.GET("/", func(ctx *gin.Context) {
+		start := time.Now()
+		err := ListBooks()
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+		elapsed := time.Since(start)
+		ctx.HTML(http.StatusOK, "index.html", gin.H{
+			"Books":       bookList,
+			"Elapsed":     elapsed.Milliseconds(),
+			"LastScanned": lastScanned.Format("2006-01-02T15:04:05-07:00"),
+			"Version":     completeVersion,
+		})
+	})
+
+	r.POST("/", func(ctx *gin.Context) {
+		log.Printf("[DEBUG] reset last scanned timestamp\n")
+		lastScanned = time.UnixMicro(0)
+		ctx.Redirect(http.StatusFound, "/")
+	})
+
+	r.GET("/book/:name", func(ctx *gin.Context) {
+		start := time.Now()
+		err := ListBooks()
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+		elapsed := time.Since(start)
+		for _, book := range bookList {
+			if book.Name == ctx.Param("name") {
+				ctx.HTML(http.StatusOK, "book.html", gin.H{
+					"Book":    book,
+					"Elapsed": elapsed.Milliseconds(),
+					"Version": completeVersion,
+				})
+				return
+			}
+		}
+		ctx.String(http.StatusNotFound, "404 not found")
+	})
 
 	if PubliclyAccessible() {
 		log.Printf("[WARN] Server is publicly accessible")
@@ -311,16 +288,7 @@ func RunServer() error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.Printf("[INFO] Server is running on %s", addr)
 
-	n := negroni.Classic()
-	n.Use(&BasicAuthMiddleware{})
-	n.UseHandler(mux)
-
-	server := &http.Server{
-		Addr:    addr,
-		Handler: n,
-	}
-
-	err = server.ListenAndServe()
+	err := r.Run(addr)
 	if err != nil {
 		return err
 	}
@@ -329,9 +297,15 @@ func RunServer() error {
 
 var rootCmd = &cobra.Command{
 	Use:     "comics",
-	Short:   "Run the server",
-	Long:    "Run the server.",
+	Short:   "Simple file server for comic books",
+	Long:    "Simple file server for comic books.",
 	Version: version.String(),
+}
+
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Run the server",
+	Long:  "Run the server.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		log.Printf("[INFO] comics %s", version.String())
 		return RunServer()
