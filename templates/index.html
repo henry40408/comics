@@ -13,7 +13,10 @@
     <h1>Comics</h1>
     <form method="post">
       <input type="submit" value="re-scan" />
-      <small>Last scanned: {{.LastScanned}}, Elapsed: {{.Elapsed}}ms</small>
+      <small>
+        Last scanned: {{ if eq .Scanning true }}scanning{{ else }}{{.LastScanned}}{{ end }},
+        Elapsed: {{.Elapsed}}ms
+      </small>
     </form>
     {{range .Books}}
     <p>

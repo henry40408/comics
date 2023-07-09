@@ -93,18 +93,22 @@ func IsImage(path string) (bool, error) {
 type Scanned struct {
 	Elapsed     time.Duration
 	List        []Book
+	Map         map[string]Book
 	LastScanned time.Time
 }
 
 var scanned atomic.Value
 
 func ListBooks() error {
+	firstScan := false
 	if o := scanned.Load(); o != nil {
 		o1 := o.(*Scanned)
 		if time.Now().Sub(o1.LastScanned) < RESCAN_INTERVAL {
 			log.Printf("[DEBUG] Re-use book list scanned at %s", o1.LastScanned.Format("2006-01-02T15:04:05-07:00"))
 			return nil
 		}
+	} else {
+		firstScan = true
 	}
 
 	n := &Scanned{}
@@ -112,6 +116,7 @@ func ListBooks() error {
 	log.Printf("[DEBUG] Scan data directory: %s", dataDir)
 
 	n.List = []Book{}
+	n.Map = make(map[string]Book)
 
 	err := filepath.Walk(dataDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
@@ -128,7 +133,11 @@ func ListBooks() error {
 			}
 
 			bookName := info.Name()
-			log.Printf("[DEBUG] Found book: %s", bookName)
+			if firstScan {
+				log.Printf("[INFO] Found book: %s", bookName)
+			} else {
+				log.Printf("[DEBUG] Found book: %s", bookName)
+			}
 
 			bookPath := filepath.Join(dataDir, bookName)
 
@@ -177,6 +186,7 @@ func ListBooks() error {
 			}
 			book.Pages = pages
 			n.List = append(n.List, book)
+			n.Map[book.Name] = book
 			return nil
 		}
 		return nil
@@ -253,12 +263,13 @@ func RunServer() error {
 	r.StaticFS("/public", http.Dir(dataDir))
 
 	r.GET("/", func(ctx *gin.Context) {
-		if o := scanned.Load(); o != nil {
-			o1 := o.(*Scanned)
+		if s := scanned.Load(); s != nil {
+			s1 := s.(*Scanned)
 			ctx.HTML(http.StatusOK, "index.html", gin.H{
-				"Books":       o1.List,
-				"Elapsed":     o1.Elapsed.Milliseconds(),
-				"LastScanned": o1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
+				"Books":       s1.List,
+				"Elapsed":     s1.Elapsed.Milliseconds(),
+				"LastScanned": s1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
+				"Scanning":    0 == s1.LastScanned.UnixMilli(),
 				"Version":     completeVersion,
 			})
 			return
@@ -267,35 +278,38 @@ func RunServer() error {
 	})
 
 	r.POST("/", func(ctx *gin.Context) {
-		log.Printf("[DEBUG] Reset last scanned timestamp\n")
+		log.Printf("[INFO] Force re-scan")
 		go func() {
 			// reset LastScanned to force re-scan
-			if o := scanned.Load(); o != nil {
-				o1 := o.(*Scanned)
-				o1.LastScanned = time.UnixMilli(0)
-				scanned.Store(o1)
+			if s := scanned.Load(); s != nil {
+				log.Printf("[DEBUG] Reset last scanned timestamp\n")
+				s1 := s.(*Scanned)
+				s1.LastScanned = time.UnixMilli(0)
+				scanned.Store(s1)
 			}
 
+			start := time.Now()
 			err := ListBooks()
 			if err != nil {
 				log.Printf("[ERROR] Failed to scan comics: %v", err)
+				return
 			}
+			elapsed := time.Since(start)
+			log.Printf("[INFO] Re-scan finished: %dms", elapsed.Milliseconds())
 		}()
 		ctx.Redirect(http.StatusFound, "/")
 	})
 
 	r.GET("/book/:name", func(ctx *gin.Context) {
-		if o := scanned.Load(); o != nil {
-			o1 := o.(*Scanned)
-			for _, book := range o1.List {
-				if book.Name == ctx.Param("name") {
-					ctx.HTML(http.StatusOK, "book.html", gin.H{
-						"Book":    book,
-						"Elapsed": o1.Elapsed.Milliseconds(),
-						"Version": completeVersion,
-					})
-					return
-				}
+		if s := scanned.Load(); s != nil {
+			s1 := s.(*Scanned)
+			book, ok := s1.Map[ctx.Param("name")]
+			if ok {
+				ctx.HTML(http.StatusOK, "book.html", gin.H{
+					"Book":    book,
+					"Version": completeVersion,
+				})
+				return
 			}
 		}
 		ctx.String(http.StatusNotFound, "book is not found")
@@ -312,11 +326,11 @@ func RunServer() error {
 		log.Printf("[INFO] Run the first-scan")
 		start := time.Now()
 		err := ListBooks()
-		elapsed := time.Since(start)
 		if err != nil {
 			log.Printf("[ERROR] Failed to scan comics: %v", err)
 			return
 		}
+		elapsed := time.Since(start)
 		log.Printf("[INFO] First scan finished: %dms", elapsed.Milliseconds())
 	}()
 
