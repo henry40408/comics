@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"comics.app/version"
@@ -89,19 +90,28 @@ func IsImage(path string) (bool, error) {
 	return contentType[:5] == "image", nil
 }
 
-var bookList []Book
-var lastScanned time.Time
+type Scanned struct {
+	Elapsed     time.Duration
+	List        []Book
+	LastScanned time.Time
+}
+
+var scanned atomic.Value
 
 func ListBooks() error {
-	if time.Now().Sub(lastScanned) < RESCAN_INTERVAL {
-		log.Printf("[DEBUG] re-use book list scanned at %s\n", lastScanned.Format("2006-01-02T15:04:05-07:00"))
-		return nil
+	if o := scanned.Load(); o != nil {
+		o1 := o.(*Scanned)
+		if time.Now().Sub(o1.LastScanned) < RESCAN_INTERVAL {
+			log.Printf("[DEBUG] Re-use book list scanned at %s", o1.LastScanned.Format("2006-01-02T15:04:05-07:00"))
+			return nil
+		}
 	}
 
-	lastScanned = time.Now()
-	log.Printf("[DEBUG] scan data directory: %s\n", dataDir)
+	n := &Scanned{}
+	n.LastScanned = time.Now()
+	log.Printf("[DEBUG] Scan data directory: %s", dataDir)
 
-	bookList = []Book{}
+	n.List = []Book{}
 
 	err := filepath.Walk(dataDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
@@ -118,7 +128,7 @@ func ListBooks() error {
 			}
 
 			bookName := info.Name()
-			log.Printf("[DEBUG] found book: %s\n", bookName)
+			log.Printf("[DEBUG] Found book: %s", bookName)
 
 			bookPath := filepath.Join(dataDir, bookName)
 
@@ -140,14 +150,14 @@ func ListBooks() error {
 						return err
 					}
 					if isImage {
-						log.Printf("[DEBUG] found page: %s\n", imagePath)
+						log.Printf("[DEBUG] Found page: %s", imagePath)
 						publicPath := filepath.Join(bookName, info.Name())
 						pages = append(pages, Page{
 							Name:       info.Name(),
 							PublicPath: publicPath,
 						})
 					} else {
-						log.Printf("[DEBUG] file is not image: %s\n", imagePath)
+						log.Printf("[DEBUG] File is not image: %s", imagePath)
 					}
 				}
 
@@ -163,10 +173,10 @@ func ListBooks() error {
 			if len(pages) > 0 {
 				p := pages[0]
 				book.PublicCover = p.PublicPath
-				log.Printf(`[DEBUG] set "%s" as cover of "%s"`, p.PublicPath, bookName)
+				log.Printf(`[DEBUG] Set "%s" as cover of "%s"`, p.PublicPath, bookName)
 			}
 			book.Pages = pages
-			bookList = append(bookList, book)
+			n.List = append(n.List, book)
 			return nil
 		}
 		return nil
@@ -175,9 +185,13 @@ func ListBooks() error {
 		return err
 	}
 
-	sort.Slice(bookList, func(i, j int) bool {
-		return bookList[i].Name < bookList[j].Name
+	sort.Slice(n.List, func(i, j int) bool {
+		return n.List[i].Name < n.List[j].Name
 	})
+
+	n.Elapsed = time.Since(n.LastScanned)
+
+	scanned.Store(n)
 
 	return nil
 }
@@ -208,7 +222,7 @@ func BasicAuth() gin.HandlerFunc {
 
 		err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
 		if err != nil { // FAIL
-			log.Printf("[ERROR] %v\n", err)
+			log.Printf("[ERROR] %v", err)
 			ctx.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
@@ -239,46 +253,52 @@ func RunServer() error {
 	r.StaticFS("/public", http.Dir(dataDir))
 
 	r.GET("/", func(ctx *gin.Context) {
-		start := time.Now()
-		err := ListBooks()
-		if err != nil {
-			ctx.String(http.StatusInternalServerError, err.Error())
+		if o := scanned.Load(); o != nil {
+			o1 := o.(*Scanned)
+			ctx.HTML(http.StatusOK, "index.html", gin.H{
+				"Books":       o1.List,
+				"Elapsed":     o1.Elapsed.Milliseconds(),
+				"LastScanned": o1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
+				"Version":     completeVersion,
+			})
 			return
 		}
-		elapsed := time.Since(start)
-		ctx.HTML(http.StatusOK, "index.html", gin.H{
-			"Books":       bookList,
-			"Elapsed":     elapsed.Milliseconds(),
-			"LastScanned": lastScanned.Format("2006-01-02T15:04:05-07:00"),
-			"Version":     completeVersion,
-		})
+		ctx.String(http.StatusNotFound, "comics are not ready")
 	})
 
 	r.POST("/", func(ctx *gin.Context) {
-		log.Printf("[DEBUG] reset last scanned timestamp\n")
-		lastScanned = time.UnixMicro(0)
+		log.Printf("[DEBUG] Reset last scanned timestamp\n")
+		go func() {
+			// reset LastScanned to force re-scan
+			if o := scanned.Load(); o != nil {
+				o1 := o.(*Scanned)
+				o1.LastScanned = time.UnixMilli(0)
+				scanned.Store(o1)
+			}
+
+			err := ListBooks()
+			if err != nil {
+				log.Printf("[ERROR] Failed to scan comics: %v", err)
+			}
+		}()
 		ctx.Redirect(http.StatusFound, "/")
 	})
 
 	r.GET("/book/:name", func(ctx *gin.Context) {
-		start := time.Now()
-		err := ListBooks()
-		if err != nil {
-			ctx.String(http.StatusInternalServerError, err.Error())
-			return
-		}
-		elapsed := time.Since(start)
-		for _, book := range bookList {
-			if book.Name == ctx.Param("name") {
-				ctx.HTML(http.StatusOK, "book.html", gin.H{
-					"Book":    book,
-					"Elapsed": elapsed.Milliseconds(),
-					"Version": completeVersion,
-				})
-				return
+		if o := scanned.Load(); o != nil {
+			o1 := o.(*Scanned)
+			for _, book := range o1.List {
+				if book.Name == ctx.Param("name") {
+					ctx.HTML(http.StatusOK, "book.html", gin.H{
+						"Book":    book,
+						"Elapsed": o1.Elapsed.Milliseconds(),
+						"Version": completeVersion,
+					})
+					return
+				}
 			}
 		}
-		ctx.String(http.StatusNotFound, "404 not found")
+		ctx.String(http.StatusNotFound, "book is not found")
 	})
 
 	if PubliclyAccessible() {
@@ -287,6 +307,18 @@ func RunServer() error {
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.Printf("[INFO] Server is running on %s", addr)
+
+	go func() {
+		log.Printf("[INFO] Run the first-scan")
+		start := time.Now()
+		err := ListBooks()
+		elapsed := time.Since(start)
+		if err != nil {
+			log.Printf("[ERROR] Failed to scan comics: %v", err)
+			return
+		}
+		log.Printf("[INFO] First scan finished: %dms", elapsed.Milliseconds())
+	}()
 
 	err := r.Run(addr)
 	if err != nil {

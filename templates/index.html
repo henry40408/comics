@@ -13,7 +13,7 @@
     <h1>Comics</h1>
     <form method="post">
       <input type="submit" value="re-scan" />
-      <small>Last scanned: {{.LastScanned}}</small>
+      <small>Last scanned: {{.LastScanned}}, Elapsed: {{.Elapsed}}ms</small>
     </form>
     {{range .Books}}
     <p>
@@ -27,7 +27,7 @@
     {{else}}
     <p>No books found.</p>
     {{end}}
-    <small>Elapsed: {{.Elapsed}}ms | comics {{.Version}}</small>
+    <small>comics {{.Version}}</small>
   </main>
 </body>
 
