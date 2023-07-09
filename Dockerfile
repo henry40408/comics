@@ -27,4 +27,4 @@ EXPOSE 8080
 RUN apk --no-cache add ca-certificates tzdata
 COPY --from=build /go/src/app/comics /usr/bin/comics
 USER nobody
-CMD ["/usr/bin/comics"]
+CMD ["/usr/bin/comics", "serve"]
