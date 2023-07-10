@@ -28,7 +28,7 @@ Then, set the hashed password in environment variables:
 
 ```
 AUTH_USERNAME=john
-AUTH_PASSWORD=$2a$10$...Ot6
+AUTH_PASSWORD_HASH=$2a$10$...Ot6
 ```
 
 ## Out of scope

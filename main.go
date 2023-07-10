@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"math/rand"
@@ -36,6 +37,7 @@ var embeddedFS embed.FS
 var (
 	dataDir, host                  string
 	expectedUsername, passwordHash string
+	passwordHashFile               string
 	port                           int
 )
 
@@ -58,7 +60,7 @@ func init() {
 	serveCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to bind")
 	serveCmd.Flags().StringVarP(&dataDir, "data", "D", "data", "Data directory")
 	serveCmd.Flags().StringVarP(&expectedUsername, "username", "u", os.Getenv("AUTH_USERNAME"), "Basic auth username")
-	serveCmd.Flags().StringVar(&passwordHash, "password", os.Getenv("AUTH_PASSWORD_HASH"), "Hashed basic auth password")
+	serveCmd.Flags().StringVarP(&passwordHashFile, "password-file", "P", "", "File with hashed basic auth password")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -247,7 +249,31 @@ func BasicAuth() gin.HandlerFunc {
 	}
 }
 
+func SetPassword() error {
+	if passwordHashFile != "" {
+		f, err := os.Open(passwordHashFile)
+		log.Printf("[DEBUG] Open password hash file: %s", passwordHashFile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		s, err := io.ReadAll(f)
+		if err != nil {
+			return err
+		}
+		passwordHash = strings.TrimSpace(string(s))
+	} else if s, ok := os.LookupEnv("AUTH_PASSWORD_HASH"); ok {
+		log.Printf("[DEBUG] Set password hash from environment variable")
+		passwordHash = s
+	}
+	return nil
+}
+
 func RunServer() error {
+	if err := SetPassword(); err != nil {
+		return err
+	}
+
 	if !supportscolor.Stdout().SupportsColor {
 		gin.DisableConsoleColor()
 	}
