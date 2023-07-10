@@ -7,10 +7,12 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -95,6 +97,10 @@ type Scanned struct {
 	List        []Book
 	Map         map[string]Book
 	LastScanned time.Time
+}
+
+func (s *Scanned) IsScanning() bool {
+	return s.LastScanned.Equal(time.UnixMilli(0))
 }
 
 var scanned atomic.Value
@@ -269,9 +275,21 @@ func RunServer() error {
 				"Books":       s1.List,
 				"Elapsed":     s1.Elapsed.Milliseconds(),
 				"LastScanned": s1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
-				"Scanning":    0 == s1.LastScanned.UnixMilli(),
+				"Scanning":    s1.IsScanning(),
 				"Version":     completeVersion,
 			})
+			return
+		}
+		ctx.String(http.StatusNotFound, "comics are not ready")
+	})
+
+	r.POST("/shuffle", func(ctx *gin.Context) {
+		rand.Seed(time.Now().Unix())
+		if s := scanned.Load(); s != nil {
+			s1 := s.(*Scanned)
+			book := s1.List[rand.Intn(len(s1.List))]
+			escaped := strings.Replace(book.Name, "%", "%25", -1) // handle '%'
+			ctx.Redirect(http.StatusFound, fmt.Sprintf("/book/%s", escaped))
 			return
 		}
 		ctx.String(http.StatusNotFound, "comics are not ready")

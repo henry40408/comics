@@ -5,33 +5,34 @@
   <title>Comics | {{.Books | len}} book(s)</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/assets/pico.min.css" />
+  <link rel="stylesheet" href="/static/assets/water.css" />
 </head>
 
 <body>
-  <main class="container">
-    <h1>Comics</h1>
-    <form method="post">
-      <input type="submit" value="re-scan" />
-      <small>
-        Last scanned: {{ if eq .Scanning true }}scanning{{ else }}{{.LastScanned}}{{ end }},
-        Elapsed: {{.Elapsed}}ms
-      </small>
-    </form>
-    {{range .Books}}
-    <p>
-      <a href="/book/{{.Name}}">
-        <figure>
-          <img src="/public/{{.PublicCover}}" />
-          <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
-        </figure>
-      </a>
-    </p>
-    {{else}}
-    <p>No books found.</p>
-    {{end}}
-    <small>comics {{.Version}}</small>
-  </main>
+  <h1>Comics</h1>
+  <form method="post" action="/shuffle">
+    <input type="submit" value="shuffle" />
+  </form>
+  <form method="post">
+    <input type="submit" value="re-scan" />
+    <small>
+      Last scanned: {{ if eq .Scanning true }}scanning{{ else }}{{.LastScanned}}{{ end }},
+      Elapsed: {{.Elapsed}}ms
+    </small>
+  </form>
+  {{range .Books}}
+  <p>
+    <a href="/book/{{.Name}}">
+      <figure>
+        <img src="/public/{{.PublicCover}}" alt="{{.Name}}" />
+        <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
+      </figure>
+    </a>
+  </p>
+  {{else}}
+  <p>No books found.</p>
+  {{end}}
+  <small>comics {{.Version}}</small>
 </body>
 
 </html>

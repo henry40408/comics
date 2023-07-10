@@ -5,12 +5,15 @@
   <title>{{.Book.Name}} | {{.Book.Pages | len}}P</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/assets/pico.min.css" />
+  <link rel="stylesheet" href="/static/assets/water.css" />
 </head>
 
 <body>
   <main class="container">
     <h2>{{.Book.Name}}</h2>
+    <form method="post" action="/shuffle">
+      <input style="width:auto;" type="submit" value="shuffle" />
+    </form>
     {{ range .Book.Pages }}
     <div>
       <figure>
