@@ -27,10 +27,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	RESCAN_INTERVAL = 24 * time.Hour
-)
-
 //go:embed assets/*.css templates/*.html
 var embeddedFS embed.FS
 
@@ -107,7 +103,7 @@ type Scanned struct {
 
 var (
 	scanning atomic.Bool
-	scanned  atomic.Value
+	scanned  atomic.Pointer[Scanned]
 )
 
 func ListBooks() error {
@@ -116,16 +112,7 @@ func ListBooks() error {
 	}
 	defer scanning.Store(false)
 
-	firstScan := false
-	if o := scanned.Load(); o != nil {
-		o1 := o.(*Scanned)
-		if time.Now().Sub(o1.LastScanned) < RESCAN_INTERVAL {
-			log.Printf("[DEBUG] Re-use book list scanned at %s", o1.LastScanned.Format("2006-01-02T15:04:05-07:00"))
-			return nil
-		}
-	} else {
-		firstScan = true
-	}
+	firstScan := scanned.Load() == nil
 
 	n := &Scanned{}
 	n.LastScanned = time.Now()
@@ -312,11 +299,10 @@ func RunServer() error {
 
 	r.GET("/", func(ctx *gin.Context) {
 		if s := scanned.Load(); s != nil {
-			s1 := s.(*Scanned)
 			ctx.HTML(http.StatusOK, "index.html", gin.H{
-				"Books":       s1.List,
-				"Elapsed":     s1.Elapsed.Milliseconds(),
-				"LastScanned": s1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
+				"Books":       s.List,
+				"Elapsed":     s.Elapsed.Milliseconds(),
+				"LastScanned": s.LastScanned.Format("2006-01-02T15:04:05-07:00"),
 				"Scanning":    scanning.Load(),
 				"Version":     completeVersion,
 			})
@@ -328,8 +314,7 @@ func RunServer() error {
 	r.POST("/shuffle", func(ctx *gin.Context) {
 		rand.Seed(time.Now().Unix())
 		if s := scanned.Load(); s != nil {
-			s1 := s.(*Scanned)
-			book := s1.List[rand.Intn(len(s1.List))]
+			book := s.List[rand.Intn(len(s.List))]
 			escaped := strings.Replace(book.Name, "%", "%25", -1) // handle '%'
 			ctx.Redirect(http.StatusFound, fmt.Sprintf("/book/%s", escaped))
 			return
@@ -340,14 +325,6 @@ func RunServer() error {
 	r.POST("/", func(ctx *gin.Context) {
 		log.Printf("[INFO] Force re-scan")
 		go func() {
-			// reset LastScanned to force re-scan
-			if s := scanned.Load(); s != nil {
-				log.Printf("[DEBUG] Reset last scanned timestamp\n")
-				s1 := s.(*Scanned)
-				s1.LastScanned = time.UnixMilli(0)
-				scanned.Store(s1)
-			}
-
 			start := time.Now()
 			err := ListBooks()
 			if err != nil {
@@ -362,8 +339,7 @@ func RunServer() error {
 
 	r.GET("/book/:name", func(ctx *gin.Context) {
 		if s := scanned.Load(); s != nil {
-			s1 := s.(*Scanned)
-			book, ok := s1.Map[ctx.Param("name")]
+			book, ok := s.Map[ctx.Param("name")]
 			if ok {
 				ctx.HTML(http.StatusOK, "book.html", gin.H{
 					"Book":    book,
