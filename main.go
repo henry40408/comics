@@ -141,11 +141,7 @@ func ListBooks() error {
 			}
 
 			bookName := info.Name()
-			if firstScan {
-				log.Printf("[INFO] Found book: %s", bookName)
-			} else {
-				log.Printf("[DEBUG] Found book: %s", bookName)
-			}
+			log.Printf("[DEBUG] Scan directory: %s", bookName)
 
 			bookPath := filepath.Join(dataDir, bookName)
 
@@ -184,14 +180,26 @@ func ListBooks() error {
 				return err
 			}
 
+			// ignore empty directory
+			if len(pages) <= 0 {
+				log.Printf("[WARN] Ignore empty directory: %s", book.Name)
+				return nil
+			} else {
+				if firstScan {
+					log.Printf("[INFO] Found book: %s", book.Name)
+				} else {
+					log.Printf("[DEBUG] Found book: %s", book.Name)
+				}
+			}
+
 			sort.Slice(pages, func(i, j int) bool {
 				return pages[i].Name < pages[j].Name
 			})
-			if len(pages) > 0 {
-				p := pages[0]
-				book.PublicCover = p.PublicPath
-				log.Printf(`[DEBUG] Set "%s" as cover of "%s"`, p.PublicPath, bookName)
-			}
+
+			p := pages[0]
+			book.PublicCover = p.PublicPath
+			log.Printf(`[DEBUG] Set "%s" as cover of "%s"`, p.PublicPath, book.Name)
+
 			book.Pages = pages
 			n.List = append(n.List, book)
 			n.Map[book.Name] = book
