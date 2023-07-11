@@ -10,16 +10,23 @@
 
 <body>
   <h1>Comics</h1>
-  <form method="post" action="/shuffle">
-    <input type="submit" value="shuffle" />
-  </form>
-  <form method="post">
-    <input type="submit" value="re-scan" />
+  <div style="display:flex">
+    <form method="post" action="/shuffle">
+      <input type="submit" value="shuffle" />
+    </form>
+    <form method="post">
+      <input type="submit" value="{{ if .Scanning }}scanning...{{ else }}re-scan{{ end }}" {{ if .Scanning
+        }}disabled="disabled" {{ end }} />
+    </form>
+  </div>
+  <div style="justify-content:center">
+    {{ if not .Scanning }}
     <small>
-      Last scanned: {{ if eq .Scanning true }}scanning{{ else }}{{.LastScanned}}{{ end }},
+      Last scanned: {{.LastScanned}},
       Elapsed: {{.Elapsed}}ms
     </small>
-  </form>
+    {{ end }}
+  </div>
   {{range .Books}}
   <p>
     <a href="/book/{{.Name}}">

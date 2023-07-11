@@ -43,6 +43,10 @@ var (
 
 var completeVersion = fmt.Sprintf("%s (%s), built at %s", version.Version, version.Commit, version.BuildDate)
 
+var (
+	ErrRescan = errors.New("Re-scan while scanning")
+)
+
 func init() {
 	filter := &logutils.LevelFilter{
 		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN"},
@@ -101,13 +105,17 @@ type Scanned struct {
 	LastScanned time.Time
 }
 
-func (s *Scanned) IsScanning() bool {
-	return s.LastScanned.Equal(time.UnixMilli(0))
-}
-
-var scanned atomic.Value
+var (
+	scanning atomic.Bool
+	scanned  atomic.Value
+)
 
 func ListBooks() error {
+	if !scanning.CompareAndSwap(false, true) {
+		return ErrRescan
+	}
+	defer scanning.Store(false)
+
 	firstScan := false
 	if o := scanned.Load(); o != nil {
 		o1 := o.(*Scanned)
@@ -309,7 +317,7 @@ func RunServer() error {
 				"Books":       s1.List,
 				"Elapsed":     s1.Elapsed.Milliseconds(),
 				"LastScanned": s1.LastScanned.Format("2006-01-02T15:04:05-07:00"),
-				"Scanning":    s1.IsScanning(),
+				"Scanning":    scanning.Load(),
 				"Version":     completeVersion,
 			})
 			return
