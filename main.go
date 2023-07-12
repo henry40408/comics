@@ -62,6 +62,8 @@ func init() {
 	serveCmd.Flags().StringVarP(&expectedUsername, "username", "u", os.Getenv("AUTH_USERNAME"), "Basic auth username")
 	serveCmd.Flags().StringVarP(&passwordHashFile, "password-file", "P", "", "File with hashed basic auth password")
 	rootCmd.AddCommand(serveCmd)
+
+	rootCmd.AddCommand(listCmd)
 }
 
 type Book struct {
@@ -409,6 +411,15 @@ var hashPasswordCmd = &cobra.Command{
 		fmt.Printf("%s\n", string(hash))
 
 		return nil
+	},
+}
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List comics",
+	Long:  "List comics for debugging purpose",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return ListBooks()
 	},
 }
 
