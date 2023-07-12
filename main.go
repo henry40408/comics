@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/fs"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -87,6 +87,9 @@ func IsImage(path string) (bool, error) {
 	buf := make([]byte, 512)
 	_, err = file.Read(buf)
 	if err != nil {
+		if err == io.EOF {
+			return false, nil
+		}
 		return false, err
 	}
 
@@ -121,69 +124,44 @@ func ListBooks() error {
 	n.List = []Book{}
 	n.Map = make(map[string]Book)
 
-	err := filepath.Walk(dataDir, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+	bookDirs, err := ioutil.ReadDir(dataDir)
+	if err != nil {
+		return nil
+	}
 
-		if info.Name() == dataDir {
-			return nil // ignore self
-		}
-
+	for _, info := range bookDirs {
 		if info.IsDir() {
 			book := Book{
 				Name: info.Name(),
 			}
 
-			bookName := info.Name()
-			log.Printf("[DEBUG] Scan directory: %s", bookName)
-
-			bookPath := filepath.Join(dataDir, bookName)
+			bookPath := filepath.Join(dataDir, info.Name())
+			log.Printf("[DEBUG] Scan directory: %s", bookPath)
 
 			var pages []Page
 
-			err := filepath.Walk(bookPath, func(path string, info fs.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
+			pageFiles, err := ioutil.ReadDir(bookPath)
+			if err != nil {
+				log.Printf("[ERROR] Failed to scan directory %s: %v", bookPath, err)
+				continue
+			}
 
-				if info.Name() == bookPath {
-					return nil // ignore self
-				}
-
+			for _, info := range pageFiles {
 				if !info.IsDir() {
 					imagePath := filepath.Join(bookPath, info.Name())
 					isImage, err := IsImage(imagePath)
 					if err != nil {
-						return err
+						log.Printf("[ERROR] Failed to detect file %s: %v", imagePath, err)
+						continue
 					}
-					if isImage {
-						log.Printf("[DEBUG] Found page: %s", imagePath)
-						publicPath := filepath.Join(bookName, info.Name())
-						pages = append(pages, Page{
-							Name:       info.Name(),
-							PublicPath: publicPath,
-						})
-					} else {
-						log.Printf("[DEBUG] File is not image: %s", imagePath)
+					if !isImage {
+						log.Printf("[WARN] %s is not an image", imagePath)
+						continue
 					}
-				}
-
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-
-			// ignore empty directory
-			if len(pages) <= 0 {
-				log.Printf("[WARN] Ignore empty directory: %s", book.Name)
-				return nil
-			} else {
-				if firstScan {
-					log.Printf("[INFO] Found book: %s", book.Name)
-				} else {
-					log.Printf("[DEBUG] Found book: %s", book.Name)
+					pages = append(pages, Page{
+						Name:       info.Name(),
+						PublicPath: fmt.Sprintf("%s/%s", book.Name, info.Name()),
+					})
 				}
 			}
 
@@ -191,19 +169,26 @@ func ListBooks() error {
 				return pages[i].Name < pages[j].Name
 			})
 
+			if len(pages) <= 0 {
+				log.Printf("[WARN] Ignore empty directory: %s", bookPath)
+				continue
+			}
+
 			p := pages[0]
 			book.PublicCover = p.PublicPath
 			log.Printf(`[DEBUG] Set "%s" as cover of "%s"`, p.PublicPath, book.Name)
 
 			book.Pages = pages
+
+			if firstScan {
+				log.Printf("[INFO] Found a book: %s (%dP)", book.Name, len(book.Pages))
+			} else {
+				log.Printf("[DEBUG] Found a book: %s (%dP)", book.Name, len(book.Pages))
+			}
+
 			n.List = append(n.List, book)
 			n.Map[book.Name] = book
-			return nil
 		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
 	sort.Slice(n.List, func(i, j int) bool {
