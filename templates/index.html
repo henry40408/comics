@@ -29,7 +29,7 @@
   </div>
   {{range .Books}}
   <p>
-    <a href="/book/{{.Name}}">
+    <a href="/book?name={{.Name | urlquery}}">
       <figure>
         <img src="/public/{{.PublicCover}}" alt="{{.Name}}" />
         <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>

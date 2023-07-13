@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -302,8 +303,7 @@ func RunServer() error {
 		rand.Seed(time.Now().Unix())
 		if s := scanned.Load(); s != nil {
 			book := s.List[rand.Intn(len(s.List))]
-			escaped := strings.Replace(book.Name, "%", "%25", -1) // handle '%'
-			ctx.Redirect(http.StatusFound, fmt.Sprintf("/book/%s", escaped))
+			ctx.Redirect(http.StatusFound, fmt.Sprintf("/book/?name=%s", url.QueryEscape(book.Name)))
 			return
 		}
 		ctx.String(http.StatusNotFound, "comics are not ready")
@@ -324,9 +324,9 @@ func RunServer() error {
 		ctx.Redirect(http.StatusFound, "/")
 	})
 
-	r.GET("/book/:name", func(ctx *gin.Context) {
+	r.GET("/book", func(ctx *gin.Context) {
 		if s := scanned.Load(); s != nil {
-			book, ok := s.Map[ctx.Param("name")]
+			book, ok := s.Map[ctx.Query("name")]
 			if ok {
 				ctx.HTML(http.StatusOK, "book.html", gin.H{
 					"Book":    book,
