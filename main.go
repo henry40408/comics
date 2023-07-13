@@ -302,7 +302,19 @@ func RunServer() error {
 	r.POST("/shuffle", func(ctx *gin.Context) {
 		rand.Seed(time.Now().Unix())
 		if s := scanned.Load(); s != nil {
-			book := s.List[rand.Intn(len(s.List))]
+			idx := rand.Intn(len(s.List))
+			book := s.List[idx]
+
+			// Select different book
+			if book.Name == ctx.Query("name") {
+				if idx == 0 {
+					idx = len(s.List) - 1
+				} else {
+					idx -= 1
+				}
+				book = s.List[idx]
+			}
+
 			ctx.Redirect(http.StatusFound, fmt.Sprintf("/book/?name=%s", url.QueryEscape(book.Name)))
 			return
 		}

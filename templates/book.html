@@ -11,7 +11,7 @@
 <body>
   <main class="container">
     <h2>{{.Book.Name}}</h2>
-    <form method="post" action="/shuffle">
+      <form method="post" action="/shuffle?name={{.Book.Name | urlquery}}">
       <input style="width:auto;" type="submit" value="shuffle" />
     </form>
     {{ range .Book.Pages }}
