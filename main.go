@@ -32,6 +32,7 @@ import (
 var embeddedFS embed.FS
 
 var (
+	debugMode                      bool
 	dataDir, host                  string
 	expectedUsername, passwordHash string
 	passwordHashFile               string
@@ -45,15 +46,8 @@ var (
 )
 
 func init() {
-	filter := &logutils.LevelFilter{
-		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN"},
-		MinLevel: logutils.LogLevel("INFO"),
-		Writer:   os.Stderr,
-	}
-	if _, ok := os.LookupEnv("DEBUG"); ok {
-		filter.MinLevel = logutils.LogLevel("DEBUG")
-	}
-	log.SetOutput(filter)
+	_, ok := os.LookupEnv("DEBUG")
+	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", ok, "Debug mode")
 
 	rootCmd.AddCommand(hashPasswordCmd)
 
@@ -270,7 +264,7 @@ func RunServer() error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	if _, ok := os.LookupEnv("DEBUG"); ok {
+	if debugMode {
 		gin.SetMode(gin.DebugMode)
 	}
 
@@ -376,64 +370,77 @@ func RunServer() error {
 	return nil
 }
 
-var rootCmd = &cobra.Command{
-	Use:     "comics",
-	Short:   "Simple file server for comic books",
-	Long:    "Simple file server for comic books.",
-	Version: version.String(),
+func SetupLogger() {
+	filter := &logutils.LevelFilter{
+		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN"},
+		MinLevel: logutils.LogLevel("INFO"),
+		Writer:   os.Stderr,
+	}
+	if debugMode {
+		filter.MinLevel = logutils.LogLevel("DEBUG")
+	}
+	log.SetOutput(filter)
 }
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Run the server",
-	Long:  "Run the server.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		log.Printf("[INFO] comics %s", version.String())
-		return RunServer()
-	},
-}
+var (
+	rootCmd = &cobra.Command{
+		Use:     "comics",
+		Short:   "Simple file server for comic books",
+		Long:    "Simple file server for comic books.",
+		Version: version.String(),
+	}
+	serveCmd = &cobra.Command{
+		Use:   "serve",
+		Short: "Run the server",
+		Long:  "Run the server.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			SetupLogger()
+			log.Printf("[INFO] comics %s", version.String())
+			return RunServer()
+		},
+	}
+	hashPasswordCmd = &cobra.Command{
+		Use:   "hash-password",
+		Short: "Hashes a password and writes the output to stdout, then exits",
+		Long:  "Hashes a password and writes the output to stdout, then exits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintf(os.Stderr, "Password: ")
+			password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+			if err != nil {
+				return err
+			}
 
-var hashPasswordCmd = &cobra.Command{
-	Use:   "hash-password",
-	Short: "Hashes a password and writes the output to stdout, then exits",
-	Long:  "Hashes a password and writes the output to stdout, then exits",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintf(os.Stderr, "Password: ")
-		password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return err
-		}
+			fmt.Fprintf(os.Stderr, "\nConfirmation: ")
+			confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+			if err != nil {
+				return err
+			}
 
-		fmt.Fprintf(os.Stderr, "\nConfirmation: ")
-		confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return err
-		}
+			if string(password) != string(confirmation) {
+				return errors.New("Confirmation mismatches password")
+			}
 
-		if string(password) != string(confirmation) {
-			return errors.New("Confirmation mismatches password")
-		}
+			hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
+			if err != nil {
+				return err
+			}
 
-		hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
+			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Printf("%s\n", string(hash))
 
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Printf("%s\n", string(hash))
-
-		return nil
-	},
-}
-
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List comics",
-	Long:  "List comics for debugging purpose",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return ListBooks()
-	},
-}
+			return nil
+		},
+	}
+	listCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List comics",
+		Long:  "List comics for debugging purpose",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			SetupLogger()
+			return ListBooks()
+		},
+	}
+)
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
