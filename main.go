@@ -279,6 +279,10 @@ func RunServer() error {
 
 	r.StaticFS("/public", http.Dir(dataDir))
 
+	r.GET("/healthz", func(ctx *gin.Context) {
+		ctx.String(http.StatusOK, "")
+	})
+
 	r.GET("/", func(ctx *gin.Context) {
 		if s := scanned.Load(); s != nil {
 			ctx.HTML(http.StatusOK, "index.html", gin.H{
