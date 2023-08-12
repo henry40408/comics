@@ -6,38 +6,47 @@
 ![GitHub](https://img.shields.io/github/license/henry40408/comics)
 ![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/henry40408/comics)
 
+## Overview
+
+This project provides a self-hosted solution to serve comic books.
+
 ## Background
 
-There are already several options for self-hosted comic readers, such as [Calibre](https://github.com/janeczku/calibre-web), [Komga](https://github.com/gotson/komga), or [Tanoshi](https://github.com/faldez/tanoshi). However, they are either in the early stages of development, too complicated to install and configure, or require comic books to be in specific formats like CBZ, CBR, EPUB, or PDF. Therefore, I have decided to implement my own solution.
+While several options exist for self-hosted comic readers like [Calibre](https://github.com/janeczku/calibre-web), [Komga](https://github.com/gotson/komga), and [Tanoshi](https://github.com/faldez/tanoshi), they often come with complications in setup or format restrictions. Comics seeks to offer a straightforward alternative.
 
 ## Features
 
-* Simple: The server only searches one layer of the file system. Each directory represents a book, and the files within the directory represent the pages. That's all.
-* Basic auth: A dead simple way to protect your comics.
+* **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
+* **Basic Authentication**: Safeguard your comics with a simple username-password protection. 
 
-To obtain a hashed password, use the `comics hash-password` command like Caddy.
+To set up the authentication:
 
-```
+```bash
 $ comics hash-password
 Password:
 Confirmation:
 $2a$10$...Ot6
 ```
+Next, configure your environment variables:
 
-Then, set the hashed password in environment variables:
-
-```
+```bash
 AUTH_USERNAME=john
 AUTH_PASSWORD_HASH=$2a$10$...Ot6
 ```
 
 ## Out of scope
 
-* Tests: This project is too simple to require unit tests or integration tests.
+* **Tests**: Due to the straightforward nature of this project, testing was deemed unnecessary at this stage. Feedback and contributions to improve the project are always appreciated.
 
-## How to use
+## Setup and Usage
 
-Assuming you have a directory called "data" with the following structure:
+1. **Getting Started**:
+   - Clone the repository to your local machine.
+   - Navigate to the project directory and install any required dependencies (if applicable).
+
+2. **Organize Your Comics**: 
+
+Make sure you have your comics structured as shown below:
 
 ```
 data
@@ -55,19 +64,23 @@ data
     └── page3.jpg
 ```
 
-The "data" directory contains three subdirectories: "book1", "book2", and "book3". Each book directory represents a separate book, and within each book directory, there are multiple image files representing the pages of that book (e.g., "page1.jpg", "page2.jpg", etc.).
+Each book directory represents an individual comic book, with image files as the pages.
 
-Then run the server:
+3. **Run the Server**:
 
-```
+Navigate to the project directory in your terminal or command line and enter:
+
+```bash
 ./comics
 ```
 
-Then open the browser and navigate to http://localhost:8080/.
+Now, open your web browser and head to http://localhost:8080/ to view your comics.
 
-## Help
+## Need Help?
 
-```
+For a comprehensive list of commands and options, type:
+
+```bash
 ./comics -h
 ```
 
