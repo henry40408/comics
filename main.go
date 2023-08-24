@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -20,7 +19,7 @@ import (
 
 	"comics.app/version"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hashicorp/logutils"
@@ -32,7 +31,7 @@ import (
 var embeddedFS embed.FS
 
 var (
-	debugMode                      bool
+	debug                          bool
 	dataDir, host                  string
 	expectedUsername, passwordHash string
 	passwordHashFile               string
@@ -46,8 +45,7 @@ var (
 )
 
 func init() {
-	_, ok := os.LookupEnv("DEBUG")
-	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", ok, "Debug mode")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", os.Getenv("DEBUG") != "", "Debug mode")
 
 	rootCmd.AddCommand(hashPasswordCmd)
 
@@ -121,7 +119,7 @@ func ListBooks() error {
 	n.List = []Book{}
 	n.Map = make(map[string]Book)
 
-	bookDirs, err := ioutil.ReadDir(dataDir)
+	bookDirs, err := os.ReadDir(dataDir)
 	if err != nil {
 		return nil
 	}
@@ -137,7 +135,7 @@ func ListBooks() error {
 
 			var pages []Page
 
-			pageFiles, err := ioutil.ReadDir(bookPath)
+			pageFiles, err := os.ReadDir(bookPath)
 			if err != nil {
 				log.Printf("[ERROR] Failed to scan directory %s: %v", bookPath, err)
 				continue
@@ -264,7 +262,7 @@ func RunServer() error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	if debugMode {
+	if debug {
 		gin.SetMode(gin.DebugMode)
 	}
 
@@ -298,7 +296,7 @@ func RunServer() error {
 	})
 
 	r.POST("/shuffle", func(ctx *gin.Context) {
-		rand.Seed(time.Now().Unix())
+		rand.New(rand.NewSource(time.Now().Unix()))
 		if s := scanned.Load(); s != nil {
 			idx := rand.Intn(len(s.List))
 			book := s.List[idx]
@@ -380,7 +378,7 @@ func SetupLogger() {
 		MinLevel: logutils.LogLevel("INFO"),
 		Writer:   os.Stderr,
 	}
-	if debugMode {
+	if debug {
 		filter.MinLevel = logutils.LogLevel("DEBUG")
 	}
 	log.SetOutput(filter)
@@ -409,13 +407,13 @@ var (
 		Long:  "Hashes a password and writes the output to stdout, then exits",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Password: ")
-			password, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+			password, err := term.ReadPassword(int(os.Stdin.Fd()))
 			if err != nil {
 				return err
 			}
 
 			fmt.Fprintf(os.Stderr, "\nConfirmation: ")
-			confirmation, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+			confirmation, err := term.ReadPassword(int(os.Stdin.Fd()))
 			if err != nil {
 				return err
 			}
