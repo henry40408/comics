@@ -10,7 +10,7 @@ WORKDIR /go/src/app
 
 RUN go build \
   -o comics \
-  -ldflags="-s -w -X 'comics.app/version.Version=`git describe --tags --abbrev=0`' -X 'comics.app/version.Commit=`git rev-parse --short HEAD`' -X 'comics.app/version.BuildDate=`date +%FT%T%z`'" \
+  -ldflags="-s -w -X 'main.Version=`git describe --tags --abbrev=0`' -X 'main.Commit=`git rev-parse --short HEAD`' -X 'main.BuildDate=`date +%FT%T%z`'" \
   main.go
 
 FROM alpine:3.18.2
