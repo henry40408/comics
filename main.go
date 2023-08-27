@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"comics.app/version"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 
@@ -38,7 +37,12 @@ var (
 	port                           int
 )
 
-var completeVersion = fmt.Sprintf("%s (%s), built at %s", version.Version, version.Commit, version.BuildDate)
+var (
+	Version   = "dev"
+	Commit    = "HEAD"
+	BuildDate = "undefined"
+)
+var versionString = fmt.Sprintf("%s (%s), built at %s", Version, Commit, BuildDate)
 
 var (
 	ErrRescan = errors.New("Re-scan while scanning")
@@ -288,7 +292,7 @@ func RunServer() error {
 				"Elapsed":     s.Elapsed.Milliseconds(),
 				"LastScanned": s.LastScanned.Format("2006-01-02T15:04:05-07:00"),
 				"Scanning":    scanning.Load(),
-				"Version":     completeVersion,
+				"Version":     versionString,
 			})
 			return
 		}
@@ -338,7 +342,7 @@ func RunServer() error {
 			if ok {
 				ctx.HTML(http.StatusOK, "book.html", gin.H{
 					"Book":    book,
-					"Version": completeVersion,
+					"Version": versionString,
 				})
 				return
 			}
@@ -389,7 +393,7 @@ var (
 		Use:     "comics",
 		Short:   "Simple file server for comic books",
 		Long:    "Simple file server for comic books.",
-		Version: version.String(),
+		Version: versionString,
 	}
 	serveCmd = &cobra.Command{
 		Use:   "serve",
@@ -397,7 +401,7 @@ var (
 		Long:  "Run the server.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			SetupLogger()
-			log.Printf("[INFO] comics %s", version.String())
+			log.Printf("[INFO] comics %s", versionString)
 			return RunServer()
 		},
 	}
