@@ -1,13 +1,27 @@
-use axum::{routing::get, Router};
+use askama::Template;
+use axum::{
+    extract::{Query, State},
+    http::{header, HeaderMap},
+    response::Html,
+    routing::get,
+    Router,
+};
 use clap::{Parser, Subcommand};
-use std::{ffi::OsString, fs, net::SocketAddr, path::Path};
+use serde::Deserialize;
+use std::{
+    ffi::OsString,
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 use tower_http::{
     services::ServeDir,
     trace::{self, TraceLayer},
 };
-use tracing::{debug, info, Level};
+use tracing::{debug, error, info, Level};
 use tracing_subscriber::EnvFilter;
 
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &'static str = include_str!("../assets/water.css");
 
 #[derive(Parser, Debug)]
@@ -39,10 +53,10 @@ enum Commands {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Page {
-    path: String,
     name: String,
+    path: String,
 }
 
 impl Page {
@@ -51,20 +65,21 @@ impl Page {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Book {
-    path: String,
+    cover: Page,
     name: String,
     pages: Vec<Page>,
+    path: String,
 }
 
 impl Book {
     fn is_valid(&self) -> bool {
-        return !self.path.is_empty() && !self.path.is_empty() && !self.pages.is_empty();
+        !self.path.is_empty() && !self.path.is_empty() && !self.pages.is_empty()
     }
 }
 
-fn list_pages<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Page>> {
+fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> std::io::Result<Vec<Page>> {
     debug!("scan {}", &path.as_ref().to_string_lossy());
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .into_iter()
@@ -94,17 +109,26 @@ fn list_pages<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Page>> {
                 false
             }
         })
-        .map(|entry| Page {
-            name: entry.file_name().to_string_lossy().to_string(),
-            path: entry.path().to_string_lossy().to_string(),
-        })
+        .filter_map(
+            |entry| match strip_dot_prefix(prefix.as_ref().to_path_buf(), entry.path()) {
+                Some(p) => Some(Page {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    path: format!("/data/{}", p.to_string_lossy().to_string()),
+                }),
+                None => None,
+            },
+        )
         .filter(Page::is_valid)
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(pages)
 }
 
-fn list_books<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
+fn strip_dot_prefix<P: AsRef<Path>>(prefix: P, path: P) -> Option<PathBuf> {
+    path.as_ref().strip_prefix(prefix).ok().map(PathBuf::from)
+}
+
+fn list_books<'a, P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
     let mut books: Vec<Book> = fs::read_dir(&path)?
         .into_iter()
         .filter_map(|e| {
@@ -123,10 +147,24 @@ fn list_books<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
                 false
             }
         })
-        .map(|entry| Book {
-            name: entry.file_name().to_string_lossy().to_string(),
-            pages: list_pages(entry.path()).unwrap_or(vec![]),
-            path: entry.path().to_string_lossy().to_string(),
+        .filter_map(|entry| {
+            let data_dir = &path.as_ref().to_path_buf();
+            let book_path = &entry.path();
+
+            let pages = list_pages(data_dir, book_path).unwrap_or(vec![]);
+            if pages.is_empty() {
+                return None;
+            }
+
+            match strip_dot_prefix(data_dir, book_path) {
+                Some(p) => Some(Book {
+                    cover: pages.first().unwrap().clone(),
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    pages,
+                    path: p.to_string_lossy().to_string(),
+                }),
+                None => None,
+            }
         })
         .map(|b| {
             debug!("found a book {} ({}P)", &b.name, &b.pages.len());
@@ -138,15 +176,90 @@ fn list_books<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
     Ok(books)
 }
 
-async fn run_server(addr: SocketAddr) {
+#[derive(Clone)]
+struct AppState {
+    books: Vec<Book>,
+}
+
+#[derive(Clone, Template)]
+#[template(path = "index.html")]
+struct IndexTemplate {
+    books: Vec<Book>,
+    books_count: usize,
+    version: String,
+}
+
+#[derive(Deserialize)]
+struct BookQuery {
+    name: String,
+}
+
+#[derive(Clone, Template)]
+#[template(path = "book.html")]
+struct BookTemplate {
+    book: Book,
+}
+
+async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
+    let books = list_books(&data_dir).expect("failed to scan directory");
+    let state = AppState { books };
     let app = Router::new()
         .route("/healthz", get(|| async { "" }))
-        .nest_service("/assets", ServeDir::new("assets"))
+        .route(
+            "/assets/water.css",
+            get(|| async {
+                let mut headers = HeaderMap::new();
+                headers.insert(header::CONTENT_TYPE, "text/css".parse().unwrap());
+                (headers, WATER_CSS)
+            }),
+        )
+        .nest_service("/data", ServeDir::new(&data_dir))
+        .route(
+            "/book",
+            get(
+                |State(state): State<AppState>, query: Query<BookQuery>| async {
+                    let books = state.books;
+                    let query = query.0;
+                    let book = match books.iter().find(|b| b.name == query.name) {
+                        None => return Html("not found".to_string()),
+                        Some(b) => b,
+                    };
+                    let t = BookTemplate { book: book.clone() };
+                    match t.render() {
+                        Ok(t) => Html(t),
+                        Err(e) => {
+                            error!("failed to render template {:?}", e);
+                            Html("".to_string())
+                        }
+                    }
+                },
+            ),
+        )
+        .route(
+            "/",
+            get(|State(state): State<AppState>| async {
+                let books_count = state.books.len();
+                let books = state.books;
+                let t = IndexTemplate {
+                    books,
+                    books_count,
+                    version: VERSION.to_string(),
+                };
+                Html(match t.render() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("failed to render template {:?}", e);
+                        "".to_string()
+                    }
+                })
+            }),
+        )
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
-        );
+        )
+        .with_state(state);
     info!("running on {:?}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -169,9 +282,10 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .compact()
         .init();
+
+    let data_dir = cli.data_dir.unwrap_or(OsString::from("./data"));
     match &cli.command {
         Some(Commands::List { .. }) => {
-            let data_dir = cli.data_dir.unwrap_or(OsString::from("./data"));
             let books = list_books(data_dir)?;
             for book in &books {
                 println!("{} ({}P)", book.name, book.pages.len());
@@ -180,7 +294,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Serve { bind }) => {
             let bind: SocketAddr = bind.parse().expect("invalid host:port pair");
-            run_server(bind).await
+            run_server(bind, data_dir).await
         }
         None => {}
     };

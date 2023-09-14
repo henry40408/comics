@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>{{ book.name }} ({{ book.pages.len() }}P) | Comics</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="/assets/water.css" rel="stylesheet">
+</head>
+
+<body>
+  <main>
+    <h1>{{ book.name }} ({{ book.pages.len() }}P)</h1>
+    {% for page in book.pages %}
+    <figure>
+      <img src="{{ page.path }}" />
+      <figcaption>
+        <center>{{ page.name }}</center>
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </main>
+</body>
+
+</html>

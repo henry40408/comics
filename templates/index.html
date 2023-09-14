@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>{{ books_count }} books | Comics</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/assets/water.css" rel="stylesheet" />
+</head>
+
+<body>
+  <main>
+    <h1>Comics {{ version }}</h1>
+    {% for b in books %}
+    <a href="/book?name={{ b.name|urlencode }}">
+      <figure>
+        <img src="{{ b.cover.path }}" />
+        <figcaption>
+          <center>{{ b.name }}</center>
+        </figcaption>
+      </figure>
+    </a>
+    {% endfor %}
+  </main>
+</body>
+
+</html>
