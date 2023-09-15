@@ -1,3 +1,5 @@
+#![deny(clippy::pedantic, clippy::perf)]
+
 use askama::Template;
 use axum::{
     extract::{Query, State},
@@ -21,8 +23,8 @@ use tower_http::{
 use tracing::{debug, error, info, Level};
 use tracing_subscriber::EnvFilter;
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const WATER_CSS: &'static str = include_str!("../assets/water.css");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const WATER_CSS: &str = include_str!("../assets/water.css");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about,long_about=None)]
@@ -61,7 +63,7 @@ struct Page {
 
 impl Page {
     fn is_valid(&self) -> bool {
-        return !self.path.is_empty() && !self.name.is_empty();
+        !self.path.is_empty() && !self.name.is_empty()
     }
 }
 
@@ -82,42 +84,36 @@ impl Book {
 fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> std::io::Result<Vec<Page>> {
     debug!("scan {}", &path.as_ref().to_string_lossy());
     let mut pages: Vec<Page> = fs::read_dir(&path)?
-        .into_iter()
         .filter_map(|e| {
             if e.is_err() {
-                debug!("skip a file {:?}", e)
+                debug!("skip {:?}", e);
             }
             Result::ok(e)
         })
-        .filter(|e| match e.path().is_file() {
-            true => {
+        .filter(|e| {
+            if e.path().is_file() {
                 debug!("found a file {}", e.path().to_string_lossy());
                 true
-            }
-            false => {
+            } else {
                 debug!("skip a non-file {}", e.path().to_string_lossy());
                 false
             }
         })
-        .filter(|e| match infer::get_from_path(e.path()) {
-            Ok(Some(inferred)) => {
+        .filter(|e| {
+            if let Ok(Some(inferred)) = infer::get_from_path(e.path()) {
                 debug!("found an image {}", e.path().to_string_lossy());
                 inferred.matcher_type() == infer::MatcherType::Image
-            }
-            _ => {
+            } else {
                 debug!("skip a non-image {}", e.path().to_string_lossy());
                 false
             }
         })
-        .filter_map(
-            |entry| match strip_dot_prefix(prefix.as_ref().to_path_buf(), entry.path()) {
-                Some(p) => Some(Page {
-                    name: entry.file_name().to_string_lossy().to_string(),
-                    path: format!("/data/{}", p.to_string_lossy().to_string()),
-                }),
-                None => None,
-            },
-        )
+        .filter_map(|entry| {
+            strip_dot_prefix(prefix.as_ref().to_path_buf(), entry.path()).map(|p| Page {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: format!("/data/{}", p.to_string_lossy()),
+            })
+        })
         .filter(Page::is_valid)
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
@@ -128,21 +124,19 @@ fn strip_dot_prefix<P: AsRef<Path>>(prefix: P, path: P) -> Option<PathBuf> {
     path.as_ref().strip_prefix(prefix).ok().map(PathBuf::from)
 }
 
-fn list_books<'a, P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
+fn list_books<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
     let mut books: Vec<Book> = fs::read_dir(&path)?
-        .into_iter()
         .filter_map(|e| {
             if e.is_err() {
                 debug!("skip {:?}", e);
             }
             Result::ok(e)
         })
-        .filter(|e| match e.path().is_dir() {
-            true => {
+        .filter(|e| {
+            if e.path().is_dir() {
                 debug!("find a directory {}", e.path().to_string_lossy());
                 true
-            }
-            false => {
+            } else {
                 debug!("skip a non-directory {}", e.path().to_string_lossy());
                 false
             }
@@ -156,15 +150,12 @@ fn list_books<'a, P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
                 return None;
             }
 
-            match strip_dot_prefix(data_dir, book_path) {
-                Some(p) => Some(Book {
-                    cover: pages.first().unwrap().clone(),
-                    name: entry.file_name().to_string_lossy().to_string(),
-                    pages,
-                    path: p.to_string_lossy().to_string(),
-                }),
-                None => None,
-            }
+            strip_dot_prefix(data_dir, book_path).map(|p| Book {
+                cover: pages.first().unwrap().clone(),
+                name: entry.file_name().to_string_lossy().to_string(),
+                pages,
+                path: p.to_string_lossy().to_string(),
+            })
         })
         .map(|b| {
             debug!("found a book {} ({}P)", &b.name, &b.pages.len());
@@ -229,7 +220,7 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
                         Ok(t) => Html(t),
                         Err(e) => {
                             error!("failed to render template {:?}", e);
-                            Html("".to_string())
+                            Html(String::new())
                         }
                     }
                 },
@@ -249,7 +240,7 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
                     Ok(t) => t,
                     Err(e) => {
                         error!("failed to render template {:?}", e);
-                        "".to_string()
+                        String::new()
                     }
                 })
             }),
@@ -273,9 +264,10 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
-                .with_default_directive(match cli.debug {
-                    true => Level::DEBUG.into(),
-                    false => Level::INFO.into(),
+                .with_default_directive(if cli.debug {
+                    Level::DEBUG.into()
+                } else {
+                    Level::INFO.into()
                 })
                 .from_env_lossy(),
         )
@@ -294,7 +286,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Serve { bind }) => {
             let bind: SocketAddr = bind.parse().expect("invalid host:port pair");
-            run_server(bind, data_dir).await
+            run_server(bind, data_dir).await;
         }
         None => {}
     };
