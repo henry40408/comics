@@ -14,8 +14,9 @@ use std::{
     ffi::OsString,
     fs,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
 };
+use thiserror::Error;
 use tower_http::{
     services::ServeDir,
     trace::{self, TraceLayer},
@@ -55,115 +56,156 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Error)]
+enum MyError {
+    #[error("directory is empty: {0}")]
+    EmptyDirectory(PathBuf),
+    #[error("invalid path: {0}")]
+    InvalidPath(PathBuf),
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
+    #[error("not a directory: {0}")]
+    NotDirectory(PathBuf),
+    #[error("not a file: {0}")]
+    NotFile(PathBuf),
+    #[error("not an image: {0}")]
+    NotImage(PathBuf),
+    #[error("server error: {0}")]
+    ServerError(#[from] hyper::Error),
+    #[error("failed to strip prefix")]
+    StripPrefixError(#[from] path::StripPrefixError),
+}
+
+type MyResult<T> = Result<T, MyError>;
+
+fn strip_dot_prefix<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<PathBuf> {
+    path.as_ref()
+        .strip_prefix(prefix)
+        .map(PathBuf::from)
+        .map_err(MyError::StripPrefixError)
+}
+
 #[derive(Clone, Debug)]
 struct Page {
-    name: String,
+    filename: String,
     path: String,
+    relative_path: String,
 }
 
 impl Page {
-    fn is_valid(&self) -> bool {
-        !self.path.is_empty() && !self.name.is_empty()
+    fn new<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Self> {
+        let path_ref = path.as_ref();
+        if !path_ref.is_file() {
+            return Err(MyError::NotFile(path_ref.to_path_buf()));
+        }
+
+        let path = path_ref
+            .to_str()
+            .map(ToString::to_string)
+            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+
+        let is_image = infer::get_from_path(path_ref)
+            .ok()
+            .is_some_and(|i| i.is_some_and(|i| i.matcher_type() == infer::MatcherType::Image));
+        if !is_image {
+            return Err(MyError::NotImage(path_ref.to_path_buf()));
+        }
+
+        let prefix_ref = prefix.as_ref();
+        let relative_path = strip_dot_prefix(prefix_ref, path_ref)
+            .map(|p| p.to_str().map(ToString::to_string))?
+            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+
+        let filename = path_ref
+            .file_name()
+            .and_then(|s| s.to_str().map(ToString::to_string))
+            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+        Ok(Page {
+            filename,
+            path,
+            relative_path,
+        })
     }
 }
 
 #[derive(Clone, Debug)]
 struct Book {
     cover: Page,
-    name: String,
+    filename: String,
     pages: Vec<Page>,
-    path: String,
 }
 
 impl Book {
-    fn is_valid(&self) -> bool {
-        !self.path.is_empty() && !self.path.is_empty() && !self.pages.is_empty()
+    fn new<P: AsRef<Path>>(prefix: P, path: P) -> Result<Self, MyError> {
+        let path_ref = path.as_ref();
+        if !path_ref.is_dir() {
+            return Err(MyError::NotDirectory(path_ref.to_path_buf()));
+        }
+
+        let pages = list_pages(prefix.as_ref(), path_ref)?;
+        let cover = pages
+            .first()
+            .map(Clone::clone)
+            .ok_or(MyError::EmptyDirectory(path_ref.to_path_buf()))?;
+
+        let filename = path_ref
+            .file_name()
+            .and_then(|s| s.to_str().map(ToString::to_string))
+            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+        Ok(Book {
+            cover,
+            filename,
+            pages,
+        })
     }
 }
 
-fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> std::io::Result<Vec<Page>> {
-    debug!("scan {}", &path.as_ref().to_string_lossy());
+fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
-        .filter_map(|e| {
-            if e.is_err() {
-                debug!("skip {:?}", e);
+        .filter_map(|entry| {
+            if entry.is_err() {
+                debug!("skip because {:?}", entry);
             }
-            Result::ok(e)
-        })
-        .filter(|e| {
-            if e.path().is_file() {
-                debug!("found a file {}", e.path().to_string_lossy());
-                true
-            } else {
-                debug!("skip a non-file {}", e.path().to_string_lossy());
-                false
-            }
-        })
-        .filter(|e| {
-            if let Ok(Some(inferred)) = infer::get_from_path(e.path()) {
-                debug!("found an image {}", e.path().to_string_lossy());
-                inferred.matcher_type() == infer::MatcherType::Image
-            } else {
-                debug!("skip a non-image {}", e.path().to_string_lossy());
-                false
-            }
+            Result::ok(entry)
         })
         .filter_map(|entry| {
-            strip_dot_prefix(prefix.as_ref().to_path_buf(), entry.path()).map(|p| Page {
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: format!("/data/{}", p.to_string_lossy()),
-            })
+            let page = Page::new(prefix.as_ref(), entry.path().as_path());
+            if let Err(ref e) = page {
+                debug!("{}", e);
+            }
+            Result::ok(page)
         })
-        .filter(Page::is_valid)
+        .map(|page| {
+            debug!("found a page {}", page.path);
+            page
+        })
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(pages)
 }
 
-fn strip_dot_prefix<P: AsRef<Path>>(prefix: P, path: P) -> Option<PathBuf> {
-    path.as_ref().strip_prefix(prefix).ok().map(PathBuf::from)
-}
-
-fn list_books<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Book>> {
+fn list_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Book>> {
     let mut books: Vec<Book> = fs::read_dir(&path)?
-        .filter_map(|e| {
-            if e.is_err() {
-                debug!("skip {:?}", e);
+        .filter_map(|entry| {
+            if entry.is_err() {
+                debug!("skip because {:?}", entry);
             }
-            Result::ok(e)
-        })
-        .filter(|e| {
-            if e.path().is_dir() {
-                debug!("find a directory {}", e.path().to_string_lossy());
-                true
-            } else {
-                debug!("skip a non-directory {}", e.path().to_string_lossy());
-                false
-            }
+            Result::ok(entry)
         })
         .filter_map(|entry| {
-            let data_dir = &path.as_ref().to_path_buf();
-            let book_path = &entry.path();
-
-            let pages = list_pages(data_dir, book_path).unwrap_or(vec![]);
-            if pages.is_empty() {
-                return None;
+            debug!("found a directory: {}", entry.path().to_string_lossy());
+            let book = Book::new(prefix.as_ref(), entry.path().as_path());
+            if let Err(ref e) = book {
+                debug!("{}", e);
             }
-
-            strip_dot_prefix(data_dir, book_path).map(|p| Book {
-                cover: pages.first().unwrap().clone(),
-                name: entry.file_name().to_string_lossy().to_string(),
-                pages,
-                path: p.to_string_lossy().to_string(),
-            })
+            Result::ok(book)
         })
-        .map(|b| {
-            debug!("found a book {} ({}P)", &b.name, &b.pages.len());
-            b
+        .map(|book| {
+            debug!("found a book {} ({}P)", &book.filename, &book.pages.len());
+            book
         })
-        .filter(Book::is_valid)
         .collect();
-    books.sort_by(|a, b| a.path.cmp(&b.path));
+    books.sort_by(|a, b| a.filename.cmp(&b.filename));
     Ok(books)
 }
 
@@ -182,17 +224,18 @@ struct IndexTemplate {
 
 #[derive(Deserialize)]
 struct BookQuery {
-    name: String,
+    filename: String,
 }
 
 #[derive(Clone, Template)]
 #[template(path = "book.html")]
 struct BookTemplate {
     book: Book,
+    version: String,
 }
 
-async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
-    let books = list_books(&data_dir).expect("failed to scan directory");
+async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
+    let books = list_books(&data_dir, &data_dir)?;
     let state = AppState { books };
     let app = Router::new()
         .route("/healthz", get(|| async { "" }))
@@ -211,11 +254,14 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
                 |State(state): State<AppState>, query: Query<BookQuery>| async {
                     let books = state.books;
                     let query = query.0;
-                    let book = match books.iter().find(|b| b.name == query.name) {
+                    let book = match books.iter().find(|b| b.filename == query.filename) {
                         None => return Html("not found".to_string()),
                         Some(b) => b,
                     };
-                    let t = BookTemplate { book: book.clone() };
+                    let t = BookTemplate {
+                        book: book.clone(),
+                        version: VERSION.to_string(),
+                    };
                     match t.render() {
                         Ok(t) => Html(t),
                         Err(e) => {
@@ -254,12 +300,12 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) {
     info!("running on {:?}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .await
-        .expect("failed to run the server");
+        .await?;
+    Ok(())
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -278,17 +324,30 @@ async fn main() -> anyhow::Result<()> {
     let data_dir = cli.data_dir.unwrap_or(OsString::from("./data"));
     match &cli.command {
         Some(Commands::List { .. }) => {
-            let books = list_books(data_dir)?;
+            let books = match list_books(&data_dir, &data_dir) {
+                Err(e) => {
+                    error!("failed to scan directory: {}", e);
+                    return;
+                }
+                Ok(b) => b,
+            };
             for book in &books {
-                println!("{} ({}P)", book.name, book.pages.len());
+                println!("{} ({}P)", book.filename, book.pages.len());
             }
             println!("{} book(s)", books.len());
         }
         Some(Commands::Serve { bind }) => {
-            let bind: SocketAddr = bind.parse().expect("invalid host:port pair");
-            run_server(bind, data_dir).await;
+            let bind: SocketAddr = match bind.parse() {
+                Err(e) => {
+                    error!("invalid host:port pair: {:?}", e);
+                    return;
+                }
+                Ok(b) => b,
+            };
+            if let Err(e) = run_server(bind, data_dir).await {
+                error!("failed to start the server: {:?}", e);
+            };
         }
         None => {}
     };
-    Ok(())
 }

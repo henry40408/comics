@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-  <title>{{ book.name }} ({{ book.pages.len() }}P) | Comics</title>
+  <title>{{ book.filename }} ({{ book.pages.len() }}P) | Comics {{ version }}</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="/assets/water.css" rel="stylesheet">
@@ -10,12 +10,12 @@
 
 <body>
   <main>
-    <h1>{{ book.name }} ({{ book.pages.len() }}P)</h1>
+    <h1>{{ book.filename }} ({{ book.pages.len() }}P)</h1>
     {% for page in book.pages %}
     <figure>
-      <img src="{{ page.path }}" />
+      <img src="/data/{{ page.relative_path }}" />
       <figcaption>
-        <center>{{ page.name }}</center>
+        <center>{{ page.filename }}</center>
       </figcaption>
     </figure>
     {% endfor %}
