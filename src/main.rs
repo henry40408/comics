@@ -5,7 +5,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, Request},
     middleware::{self, Next},
-    response::{Html, Response},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
@@ -18,6 +18,8 @@ use std::{
     fs,
     net::SocketAddr,
     path::{self, Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tower_http::{
@@ -222,7 +224,13 @@ fn list_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Book>> {
 
 #[derive(Clone)]
 struct AppState {
+    scan: Arc<Mutex<BookScan>>,
+}
+
+#[derive(Clone)]
+struct BookScan {
     books: Vec<Book>,
+    scan_duration: Duration,
 }
 
 #[derive(Clone, Template)]
@@ -230,6 +238,7 @@ struct AppState {
 struct IndexTemplate {
     books: Vec<Book>,
     books_count: usize,
+    scan_duration: u128,
     version: String,
 }
 
@@ -335,54 +344,83 @@ async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> Result<Res
     }
 }
 
+#[allow(clippy::unused_async)]
+async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
+    match state.scan.lock() {
+        Err(e) => {
+            error!("failed to render books {:?}", e);
+            Html(String::new())
+        }
+        Ok(scan) => {
+            let books_count = scan.books.len();
+            let books = scan.books.clone();
+            let t = IndexTemplate {
+                books,
+                books_count,
+                scan_duration: scan.scan_duration.as_millis(),
+                version: VERSION.to_string(),
+            };
+            Html(match t.render() {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("failed to render template {:?}", e);
+                    String::new()
+                }
+            })
+        }
+    }
+}
+
+#[allow(clippy::unused_async)]
+async fn show_book_route(
+    State(state): State<AppState>,
+    query: Query<BookQuery>,
+) -> impl IntoResponse {
+    match state.scan.lock() {
+        Err(e) => {
+            error!("failed to render book {:?}", e);
+            Html(String::new())
+        }
+        Ok(scan) => {
+            let query = query.0;
+            let book = match scan.books.iter().find(|b| b.filename == query.filename) {
+                None => return Html("not found".to_string()),
+                Some(b) => b,
+            };
+            let t = BookTemplate {
+                book: book.clone(),
+                version: VERSION.to_string(),
+            };
+            match t.render() {
+                Ok(t) => Html(t),
+                Err(e) => {
+                    error!("failed to render template {:?}", e);
+                    Html(String::new())
+                }
+            }
+        }
+    }
+}
+
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
+    let start = Instant::now();
     let books = list_books(&data_dir, &data_dir)?;
-    let state = AppState { books };
+    let scan_duration = start.elapsed();
+    info!(
+        "finished initial scan in {} ms, {} book(s) found",
+        scan_duration.as_millis(),
+        books.len()
+    );
+    let state = AppState {
+        scan: Arc::new(Mutex::new(BookScan {
+            books,
+            scan_duration,
+        })),
+    };
     let app = Router::new()
         .nest_service("/data", ServeDir::new(&data_dir))
-        .route(
-            "/book",
-            get(
-                |State(state): State<AppState>, query: Query<BookQuery>| async {
-                    let books = state.books;
-                    let query = query.0;
-                    let book = match books.iter().find(|b| b.filename == query.filename) {
-                        None => return Html("not found".to_string()),
-                        Some(b) => b,
-                    };
-                    let t = BookTemplate {
-                        book: book.clone(),
-                        version: VERSION.to_string(),
-                    };
-                    match t.render() {
-                        Ok(t) => Html(t),
-                        Err(e) => {
-                            error!("failed to render template {:?}", e);
-                            Html(String::new())
-                        }
-                    }
-                },
-            ),
-        )
-        .route(
-            "/",
-            get(|State(state): State<AppState>| async {
-                let books_count = state.books.len();
-                let books = state.books;
-                let t = IndexTemplate {
-                    books,
-                    books_count,
-                    version: VERSION.to_string(),
-                };
-                Html(match t.render() {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("failed to render template {:?}", e);
-                        String::new()
-                    }
-                })
-            }),
-        )
+        .route("/book", get(show_book_route))
+        .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
         .route("/healthz", get(|| async { "" }))
         .route(

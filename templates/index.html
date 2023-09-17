@@ -11,6 +11,7 @@
 <body>
   <main>
     <h1>Comics {{ version }}</h1>
+    <p>Re-scan | Elapsed: {{ scan_duration }}ms</p>
     {% for b in books %}
     <a href="/book?filename={{ b.filename|urlencode }}">
       <figure>
