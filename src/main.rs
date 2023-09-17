@@ -3,12 +3,15 @@
 use askama::Template;
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap},
-    response::Html,
+    http::{header, HeaderMap, HeaderValue, Request},
+    middleware::{self, Next},
+    response::{Html, Response},
     routing::get,
     Router,
 };
+use base64::{engine::GeneralPurpose, Engine};
 use clap::{Parser, Subcommand};
+use hyper::StatusCode;
 use serde::Deserialize;
 use std::{
     ffi::OsString,
@@ -21,9 +24,10 @@ use tower_http::{
     services::ServeDir,
     trace::{self, TraceLayer},
 };
-use tracing::{debug, error, info, Level};
+use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
+const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
 
@@ -241,19 +245,100 @@ struct BookTemplate {
     version: String,
 }
 
+fn get_authorization() -> Option<(String, String)> {
+    let username = std::env::var("AUTH_USERNAME").ok();
+    let password_hash = std::env::var("AUTH_PASSWORD_HASH").ok();
+    if let Some(username) = username {
+        if let Some(password_hash) = password_hash {
+            return Some((username, password_hash));
+        }
+    }
+    None
+}
+
+enum AuthState {
+    Public,
+    Request,
+    Success,
+    Failed,
+}
+
+fn authorize<B>(request: &Request<B>) -> AuthState {
+    if let Some(expected) = get_authorization() {
+        debug!("authorization is enabled");
+        if let Some(header_value) = request.headers().get("Authorization") {
+            debug!("found authorization");
+            if let Some((username, password)) = header_value
+                .to_str()
+                .ok()
+                .and_then(|value| {
+                    let splitted = value.split_ascii_whitespace().collect::<Vec<&str>>();
+                    if let Some(scheme) = splitted.first() {
+                        if "basic" == scheme.to_ascii_lowercase() {
+                            if let Some(digest) = splitted.get(1) {
+                                return Some((*digest).to_string());
+                            }
+                        }
+                    }
+                    None
+                })
+                .and_then(|digest| {
+                    let decoded = BASE64_ENGINE.decode(digest).ok();
+                    if let Some(decoded) = decoded {
+                        if let Ok(decoded) = String::from_utf8(decoded) {
+                            let splitted = decoded.split(':').collect::<Vec<&str>>();
+                            if let Some(username) = splitted.first() {
+                                if let Some(password) = splitted.get(1) {
+                                    return Some((
+                                        (*username).to_string(),
+                                        (*password).to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    None
+                })
+            {
+                let matched = bcrypt::verify(password, &expected.1).unwrap_or(false);
+                if expected.0 == username && matched {
+                    debug!("authorized");
+                    return AuthState::Success;
+                }
+                debug!("unauthorized");
+                return AuthState::Failed;
+            }
+        }
+        debug!("request authorzation");
+        return AuthState::Request;
+    }
+
+    debug!("authentication is disabled");
+    AuthState::Public
+}
+
+async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+    let authorized = authorize(&request);
+    let response = next.run(request).await;
+    match authorized {
+        AuthState::Public | AuthState::Success => Ok(response),
+        AuthState::Failed => Err(StatusCode::UNAUTHORIZED),
+        AuthState::Request => {
+            let mut response = Response::default();
+            response.headers_mut().insert(
+                "WWW-Authenticate",
+                HeaderValue::from_static("Basic realm=comics"),
+            );
+            *response.status_mut() = StatusCode::UNAUTHORIZED;
+            Ok(response)
+        }
+    }
+}
+
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
     let books = list_books(&data_dir, &data_dir)?;
     let state = AppState { books };
     let app = Router::new()
-        .route("/healthz", get(|| async { "" }))
-        .route(
-            "/assets/water.css",
-            get(|| async {
-                let mut headers = HeaderMap::new();
-                headers.insert(header::CONTENT_TYPE, "text/css".parse().unwrap());
-                (headers, WATER_CSS)
-            }),
-        )
         .nest_service("/data", ServeDir::new(&data_dir))
         .route(
             "/book",
@@ -298,12 +383,25 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
                 })
             }),
         )
+        .route_layer(middleware::from_fn(auth_middleware_fn))
+        .route("/healthz", get(|| async { "" }))
+        .route(
+            "/assets/water.css",
+            get(|| async {
+                let mut headers = HeaderMap::new();
+                headers.insert(header::CONTENT_TYPE, "text/css".parse().unwrap());
+                (headers, WATER_CSS)
+            }),
+        )
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state);
+    if get_authorization().is_none() {
+        warn!("no authrization enabled, server is publicly accessible");
+    }
     info!("running on {:?}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -313,7 +411,7 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
 
 fn hash_password() -> MyResult<()> {
     let password = rpassword::prompt_password("Password: ")?;
-    let confirmation = rpassword::prompt_password("Password (again): ")?;
+    let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
         return Err(MyError::PasswordMismatched);
     }
