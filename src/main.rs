@@ -28,7 +28,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
 
 #[derive(Parser, Debug)]
-#[command(author, version, about,long_about=None)]
+#[command(author, version, about, long_about=None, arg_required_else_help(true))]
 struct Cli {
     /// Debug mode
     #[arg(long, short = 'd')]
@@ -44,6 +44,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Hash password
+    #[command()]
+    HashPassword {},
     /// List books
     #[command(alias = "ls")]
     List {},
@@ -58,6 +61,8 @@ enum Commands {
 
 #[derive(Debug, Error)]
 enum MyError {
+    #[error("bcrypt error: {0}")]
+    Bcrypt(#[from] bcrypt::BcryptError),
     #[error("directory is empty: {0}")]
     EmptyDirectory(PathBuf),
     #[error("invalid path: {0}")]
@@ -70,6 +75,8 @@ enum MyError {
     NotFile(PathBuf),
     #[error("not an image: {0}")]
     NotImage(PathBuf),
+    #[error("password mismatched")]
+    PasswordMismatched,
     #[error("server error: {0}")]
     ServerError(#[from] hyper::Error),
     #[error("failed to strip prefix")]
@@ -304,6 +311,17 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
     Ok(())
 }
 
+fn hash_password() -> MyResult<()> {
+    let password = rpassword::prompt_password("Password: ")?;
+    let confirmation = rpassword::prompt_password("Password (again): ")?;
+    if password != confirmation {
+        return Err(MyError::PasswordMismatched);
+    }
+    let hashed = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
+    println!("{hashed}");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -323,6 +341,11 @@ async fn main() {
 
     let data_dir = cli.data_dir.unwrap_or(OsString::from("./data"));
     match &cli.command {
+        Some(Commands::HashPassword { .. }) => {
+            if let Err(e) = hash_password() {
+                error!("failed to hash password: {}", e);
+            }
+        }
         Some(Commands::List { .. }) => {
             let books = match list_books(&data_dir, &data_dir) {
                 Err(e) => {

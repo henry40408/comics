@@ -9,9 +9,11 @@ authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 [dependencies]
 askama = "0.12.0"
 axum = "0.6.20"
+bcrypt = "0.15.0"
 clap = { version = "4.4.3", features = ["derive"] }
 hyper = "0.14.27"
 infer = "0.15.0"
+rpassword = "7.2.0"
 thiserror = "1.0.48"
 tokio = { version = "1.32.0", features = ["macros", "net", "rt-multi-thread"] }
 tower = "0.4.13"
