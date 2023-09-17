@@ -11,13 +11,14 @@
 <body>
   <main>
     <h1>Comics {{ version }}</h1>
-    <p>Re-scan | Elapsed: {{ scan_duration }}ms</p>
+    <form method="POST" action="/rescan"><input type="submit" value="Re-scan" /></form>
+    <p>Elapsed: {{ scan_duration }}ms | Scanned at: {{ scanned_at }}</p>
     {% for b in books %}
-    <a href="/book?filename={{ b.filename|urlencode }}">
+    <a href="/book?name={{ b.name|urlencode }}">
       <figure>
         <img src="/data/{{ b.cover.relative_path }}" />
         <figcaption>
-          <center>{{ b.filename }}</center>
+          <center>{{ b.name }}</center>
         </figcaption>
       </figure>
     </a>

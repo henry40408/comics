@@ -5,11 +5,12 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, Request},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
     Router,
 };
 use base64::{engine::GeneralPurpose, Engine};
+use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
 use serde::Deserialize;
@@ -19,7 +20,6 @@ use std::{
     net::SocketAddr,
     path::{self, Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tower_http::{
@@ -144,7 +144,7 @@ impl Page {
 #[derive(Clone, Debug)]
 struct Book {
     cover: Page,
-    filename: String,
+    name: String,
     pages: Vec<Page>,
 }
 
@@ -167,7 +167,7 @@ impl Book {
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
         Ok(Book {
             cover,
-            filename,
+            name: filename,
             pages,
         })
     }
@@ -214,11 +214,11 @@ fn list_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Book>> {
             Result::ok(book)
         })
         .map(|book| {
-            debug!("found a book {} ({}P)", &book.filename, &book.pages.len());
+            debug!("found a book {} ({}P)", &book.name, &book.pages.len());
             book
         })
         .collect();
-    books.sort_by(|a, b| a.filename.cmp(&b.filename));
+    books.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(books)
 }
 
@@ -230,7 +230,9 @@ struct AppState {
 #[derive(Clone)]
 struct BookScan {
     books: Vec<Book>,
+    data_dir: PathBuf,
     scan_duration: Duration,
+    scanned_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Clone, Template)]
@@ -238,13 +240,14 @@ struct BookScan {
 struct IndexTemplate {
     books: Vec<Book>,
     books_count: usize,
-    scan_duration: u128,
+    scan_duration: i64,
+    scanned_at: String,
     version: String,
 }
 
 #[derive(Deserialize)]
 struct BookQuery {
-    filename: String,
+    name: String,
 }
 
 #[derive(Clone, Template)]
@@ -357,7 +360,8 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
             let t = IndexTemplate {
                 books,
                 books_count,
-                scan_duration: scan.scan_duration.as_millis(),
+                scan_duration: scan.scan_duration.num_milliseconds(),
+                scanned_at: scan.scanned_at.to_rfc2822(),
                 version: VERSION.to_string(),
             };
             Html(match t.render() {
@@ -383,7 +387,7 @@ async fn show_book_route(
         }
         Ok(scan) => {
             let query = query.0;
-            let book = match scan.books.iter().find(|b| b.filename == query.filename) {
+            let book = match scan.books.iter().find(|b| b.name == query.name) {
                 None => return Html("not found".to_string()),
                 Some(b) => b,
             };
@@ -402,24 +406,58 @@ async fn show_book_route(
     }
 }
 
+#[allow(clippy::unused_async)]
+async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
+    match state.scan.lock() {
+        Err(e) => {
+            error!("failed to re-scan books {:?}", e);
+            Redirect::to("/")
+        }
+        Ok(mut scan) => {
+            let data_dir = &scan.data_dir;
+            let scanned_at = Utc::now();
+            match list_books(data_dir, data_dir) {
+                Err(e) => {
+                    error!("failed to re-scan books {:?}", e);
+                }
+                Ok(books) => {
+                    let elapsed = Utc::now().signed_duration_since(scanned_at);
+                    info!(
+                        "re-scan in {}ms, {} books found",
+                        elapsed.num_milliseconds(),
+                        books.len()
+                    );
+                    scan.books = books;
+                    scan.scan_duration = elapsed;
+                    scan.scanned_at = scanned_at;
+                }
+            }
+            Redirect::to("/")
+        }
+    }
+}
+
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
-    let start = Instant::now();
+    let scanned_at = Utc::now();
     let books = list_books(&data_dir, &data_dir)?;
-    let scan_duration = start.elapsed();
+    let scan_duration = scanned_at.signed_duration_since(scanned_at);
     info!(
         "finished initial scan in {} ms, {} book(s) found",
-        scan_duration.as_millis(),
+        scan_duration.num_milliseconds(),
         books.len()
     );
     let state = AppState {
         scan: Arc::new(Mutex::new(BookScan {
             books,
+            data_dir: data_dir.as_ref().to_path_buf(),
             scan_duration,
+            scanned_at,
         })),
     };
     let app = Router::new()
         .nest_service("/data", ServeDir::new(&data_dir))
         .route("/book", get(show_book_route))
+        .route("/rescan", post(rescan_books_route))
         .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
         .route("/healthz", get(|| async { "" }))
@@ -491,7 +529,7 @@ async fn main() {
                 Ok(b) => b,
             };
             for book in &books {
-                println!("{} ({}P)", book.filename, book.pages.len());
+                println!("{} ({}P)", book.name, book.pages.len());
             }
             println!("{} book(s)", books.len());
         }
