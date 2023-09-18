@@ -13,7 +13,7 @@
     <h1>{{ book.name }} ({{ book.pages.len() }}P)</h1>
     {% for page in book.pages %}
     <figure>
-      <img src="/data/{{ page.relative_path }}" />
+      <img src="/data?id={{ page.id|urlencode }}" />
       <figcaption>
         <center>{{ page.filename }}</center>
       </figcaption>

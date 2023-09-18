@@ -13,8 +13,10 @@ use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
+use rand::{distributions::Alphanumeric, Rng};
 use serde::Deserialize;
 use std::{
+    collections::HashMap,
     ffi::OsString,
     fs,
     net::SocketAddr,
@@ -22,14 +24,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-use tower_http::{
-    services::ServeDir,
-    trace::{self, TraceLayer},
-};
+use tower_http::trace::{self, TraceLayer};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
+const PAGE_ID_LEN: usize = 10;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
 
@@ -91,22 +91,23 @@ enum MyError {
 
 type MyResult<T> = Result<T, MyError>;
 
-fn strip_dot_prefix<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<PathBuf> {
-    path.as_ref()
-        .strip_prefix(prefix)
-        .map(PathBuf::from)
-        .map_err(MyError::StripPrefixError)
-}
-
 #[derive(Clone, Debug)]
 struct Page {
     filename: String,
+    id: String,
     path: String,
-    relative_path: String,
+}
+
+fn generate_random_string(len: usize) -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }
 
 impl Page {
-    fn new<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Self> {
+    fn new<P: AsRef<Path>>(path: P) -> MyResult<Self> {
         let path_ref = path.as_ref();
         if !path_ref.is_file() {
             return Err(MyError::NotFile(path_ref.to_path_buf()));
@@ -124,19 +125,14 @@ impl Page {
             return Err(MyError::NotImage(path_ref.to_path_buf()));
         }
 
-        let prefix_ref = prefix.as_ref();
-        let relative_path = strip_dot_prefix(prefix_ref, path_ref)
-            .map(|p| p.to_str().map(ToString::to_string))?
-            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-
         let filename = path_ref
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
         Ok(Page {
             filename,
+            id: generate_random_string(PAGE_ID_LEN),
             path,
-            relative_path,
         })
     }
 }
@@ -149,13 +145,13 @@ struct Book {
 }
 
 impl Book {
-    fn new<P: AsRef<Path>>(prefix: P, path: P) -> Result<Self, MyError> {
+    fn new<P: AsRef<Path>>(path: P) -> Result<Self, MyError> {
         let path_ref = path.as_ref();
         if !path_ref.is_dir() {
             return Err(MyError::NotDirectory(path_ref.to_path_buf()));
         }
 
-        let pages = scan_pages(prefix.as_ref(), path_ref)?;
+        let pages = scan_pages(path_ref)?;
         let cover = pages
             .first()
             .map(Clone::clone)
@@ -165,6 +161,7 @@ impl Book {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+
         Ok(Book {
             cover,
             name: filename,
@@ -173,7 +170,7 @@ impl Book {
     }
 }
 
-fn scan_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
+fn scan_pages<P: AsRef<Path>>(path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
@@ -182,7 +179,7 @@ fn scan_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
             Result::ok(entry)
         })
         .filter_map(|entry| {
-            let page = Page::new(prefix.as_ref(), entry.path().as_path());
+            let page = Page::new(entry.path().as_path());
             if let Err(ref e) = page {
                 debug!("{}", e);
             }
@@ -197,7 +194,7 @@ fn scan_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
     Ok(pages)
 }
 
-fn scan_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<BookScan> {
+fn scan_books<P: AsRef<Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
     let mut books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
@@ -208,7 +205,7 @@ fn scan_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<BookScan> {
         })
         .filter_map(|entry| {
             debug!("found a directory: {}", entry.path().to_string_lossy());
-            let book = Book::new(prefix.as_ref(), entry.path().as_path());
+            let book = Book::new(entry.path().as_path());
             if let Err(ref e) = book {
                 debug!("{}", e);
             }
@@ -220,9 +217,18 @@ fn scan_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<BookScan> {
         })
         .collect();
     books.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut pages_map = HashMap::new();
+    for (i, book) in books.iter().enumerate() {
+        for (j, page) in book.pages.iter().enumerate() {
+            pages_map.insert(page.id.clone(), (i, j));
+        }
+    }
+
     Ok(BookScan {
         books,
         data_dir: path.as_ref().to_path_buf(),
+        pages_map,
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,
     })
@@ -237,13 +243,14 @@ struct AppState {
 struct BookScan {
     books: Vec<Book>,
     data_dir: PathBuf,
+    pages_map: HashMap<String, (usize, usize)>,
     scan_duration: Duration,
     scanned_at: chrono::DateTime<Utc>,
 }
 
 impl BookScan {
     fn pages_count(&self) -> usize {
-        self.books.iter().fold(0, |acc, ref b| acc + b.pages.len())
+        self.books.iter().fold(0, |acc, b| acc + b.pages.len())
     }
 }
 
@@ -427,7 +434,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
         }
         Ok(mut scan) => {
             let data_dir = &scan.data_dir;
-            match scan_books(data_dir, data_dir) {
+            match scan_books(data_dir) {
                 Err(e) => {
                     error!("failed to re-scan books {:?}", e);
                 }
@@ -445,23 +452,51 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
     }
 }
 
+#[derive(Deserialize)]
+struct DataQuery {
+    id: String,
+}
+
+#[allow(clippy::unused_async)]
+async fn show_page_route(
+    State(state): State<AppState>,
+    query: Query<DataQuery>,
+) -> impl IntoResponse {
+    state
+        .scan
+        .lock()
+        .ok()
+        .and_then(|scan| {
+            scan.pages_map.get(&query.id).and_then(|(b_idx, p_idx)| {
+                scan.books
+                    .get(*b_idx)
+                    .and_then(|b| b.pages.get(*p_idx))
+                    .and_then(|p| fs::read(&p.path).ok())
+                    .map(|buf| (StatusCode::OK, buf))
+            })
+        })
+        .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
+}
+
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
-    let scan = scan_books(&data_dir, &data_dir)?;
+    let scan = scan_books(&data_dir)?;
     info!(
         "finished initial scan in {} ms, {} book(s), {} page(s) found",
         scan.scan_duration.num_milliseconds(),
-        scan.pages_count(),
-        &scan.books.len()
+        &scan.books.len(),
+        scan.pages_count()
     );
     let state = AppState {
         scan: Arc::new(Mutex::new(scan)),
     };
     let app = Router::new()
-        .nest_service("/data", ServeDir::new(&data_dir))
         .route("/book", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
         .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
+        // to prevent timing attack, bcrypt is too slow
+        // protected by randomly-generated string as page ID instead
+        .route("/data", get(show_page_route))
         .route("/healthz", get(|| async { "" }))
         .route(
             "/assets/water.css",
@@ -502,6 +537,7 @@ fn hash_password() -> MyResult<()> {
 async fn main() {
     let cli = Cli::parse();
     tracing_subscriber::fmt()
+        .with_ansi(std::env::var_os("NO_COLOR").is_none())
         .with_env_filter(
             EnvFilter::builder()
                 .with_default_directive(if cli.debug {
@@ -523,7 +559,7 @@ async fn main() {
             }
         }
         Some(Commands::List { .. }) => {
-            let scan = match scan_books(&data_dir, &data_dir) {
+            let scan = match scan_books(&data_dir) {
                 Err(e) => {
                     error!("failed to scan directory: {}", e);
                     return;
@@ -533,7 +569,12 @@ async fn main() {
             for book in &scan.books {
                 println!("{} ({}P)", book.name, book.pages.len());
             }
-            println!("{} book(s)", &scan.books.len());
+            println!(
+                "{} book(s), {} page(s), scanned in {}ms",
+                &scan.books.len(),
+                &scan.pages_count(),
+                scan.scan_duration.num_milliseconds()
+            );
         }
         Some(Commands::Serve { bind }) => {
             let bind: SocketAddr = match bind.parse() {

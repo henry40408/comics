@@ -16,7 +16,7 @@
     {% for b in books %}
     <a href="/book?name={{ b.name|urlencode }}">
       <figure>
-        <img src="/data/{{ b.cover.relative_path }}" />
+        <img src="/data?id={{ b.cover.id|urlencode }}" />
         <figcaption>
           <center>{{ b.name }}</center>
         </figcaption>
