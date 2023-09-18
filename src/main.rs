@@ -155,7 +155,7 @@ impl Book {
             return Err(MyError::NotDirectory(path_ref.to_path_buf()));
         }
 
-        let pages = list_pages(prefix.as_ref(), path_ref)?;
+        let pages = scan_pages(prefix.as_ref(), path_ref)?;
         let cover = pages
             .first()
             .map(Clone::clone)
@@ -173,7 +173,7 @@ impl Book {
     }
 }
 
-fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
+fn scan_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
@@ -197,7 +197,8 @@ fn list_pages<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Page>> {
     Ok(pages)
 }
 
-fn list_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Book>> {
+fn scan_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<BookScan> {
+    let scanned_at = Utc::now();
     let mut books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
@@ -219,7 +220,12 @@ fn list_books<P: AsRef<Path>>(prefix: P, path: P) -> MyResult<Vec<Book>> {
         })
         .collect();
     books.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(books)
+    Ok(BookScan {
+        books,
+        data_dir: path.as_ref().to_path_buf(),
+        scan_duration: Utc::now().signed_duration_since(scanned_at),
+        scanned_at,
+    })
 }
 
 #[derive(Clone)]
@@ -233,6 +239,12 @@ struct BookScan {
     data_dir: PathBuf,
     scan_duration: Duration,
     scanned_at: chrono::DateTime<Utc>,
+}
+
+impl BookScan {
+    fn pages_count(&self) -> usize {
+        self.books.iter().fold(0, |acc, ref b| acc + b.pages.len())
+    }
 }
 
 #[derive(Clone, Template)]
@@ -415,21 +427,17 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
         }
         Ok(mut scan) => {
             let data_dir = &scan.data_dir;
-            let scanned_at = Utc::now();
-            match list_books(data_dir, data_dir) {
+            match scan_books(data_dir, data_dir) {
                 Err(e) => {
                     error!("failed to re-scan books {:?}", e);
                 }
-                Ok(books) => {
-                    let elapsed = Utc::now().signed_duration_since(scanned_at);
+                Ok(new_scan) => {
                     info!(
                         "re-scan in {}ms, {} books found",
-                        elapsed.num_milliseconds(),
-                        books.len()
+                        scan.scan_duration.num_milliseconds(),
+                        scan.books.len()
                     );
-                    scan.books = books;
-                    scan.scan_duration = elapsed;
-                    scan.scanned_at = scanned_at;
+                    *scan = new_scan;
                 }
             }
             Redirect::to("/")
@@ -438,21 +446,15 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
-    let scanned_at = Utc::now();
-    let books = list_books(&data_dir, &data_dir)?;
-    let scan_duration = scanned_at.signed_duration_since(scanned_at);
+    let scan = scan_books(&data_dir, &data_dir)?;
     info!(
-        "finished initial scan in {} ms, {} book(s) found",
-        scan_duration.num_milliseconds(),
-        books.len()
+        "finished initial scan in {} ms, {} book(s), {} page(s) found",
+        scan.scan_duration.num_milliseconds(),
+        scan.pages_count(),
+        &scan.books.len()
     );
     let state = AppState {
-        scan: Arc::new(Mutex::new(BookScan {
-            books,
-            data_dir: data_dir.as_ref().to_path_buf(),
-            scan_duration,
-            scanned_at,
-        })),
+        scan: Arc::new(Mutex::new(scan)),
     };
     let app = Router::new()
         .nest_service("/data", ServeDir::new(&data_dir))
@@ -521,17 +523,17 @@ async fn main() {
             }
         }
         Some(Commands::List { .. }) => {
-            let books = match list_books(&data_dir, &data_dir) {
+            let scan = match scan_books(&data_dir, &data_dir) {
                 Err(e) => {
                     error!("failed to scan directory: {}", e);
                     return;
                 }
                 Ok(b) => b,
             };
-            for book in &books {
+            for book in &scan.books {
                 println!("{} ({}P)", book.name, book.pages.len());
             }
-            println!("{} book(s)", books.len());
+            println!("{} book(s)", &scan.books.len());
         }
         Some(Commands::Serve { bind }) => {
             let bind: SocketAddr = match bind.parse() {
