@@ -161,7 +161,6 @@ impl Book {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-
         Ok(Book {
             cover,
             name: filename,
@@ -248,12 +247,6 @@ struct BookScan {
     scanned_at: chrono::DateTime<Utc>,
 }
 
-impl BookScan {
-    fn pages_count(&self) -> usize {
-        self.books.iter().fold(0, |acc, b| acc + b.pages.len())
-    }
-}
-
 #[derive(Clone, Template)]
 #[template(path = "index.html")]
 struct IndexTemplate {
@@ -276,15 +269,10 @@ struct BookTemplate {
     version: String,
 }
 
-fn get_authorization() -> Option<(String, String)> {
-    let username = std::env::var("AUTH_USERNAME").ok();
-    let password_hash = std::env::var("AUTH_PASSWORD_HASH").ok();
-    if let Some(username) = username {
-        if let Some(password_hash) = password_hash {
-            return Some((username, password_hash));
-        }
-    }
-    None
+fn get_expected_credentials() -> Option<(String, String)> {
+    std::env::var("AUTH_USERNAME")
+        .ok()
+        .and_then(|u| std::env::var("AUTH_PASSWORD_HASH").ok().map(|p| (u, p)))
 }
 
 enum AuthState {
@@ -294,64 +282,66 @@ enum AuthState {
     Failed,
 }
 
-fn authorize<B>(request: &Request<B>) -> AuthState {
-    if let Some(expected) = get_authorization() {
-        debug!("authorization is enabled");
-        if let Some(header_value) = request.headers().get("Authorization") {
-            debug!("found authorization");
-            if let Some((username, password)) = header_value
-                .to_str()
-                .ok()
-                .and_then(|value| {
-                    let splitted = value.split_ascii_whitespace().collect::<Vec<&str>>();
-                    if let Some(scheme) = splitted.first() {
-                        if "basic" == scheme.to_ascii_lowercase() {
-                            if let Some(digest) = splitted.get(1) {
-                                return Some((*digest).to_string());
-                            }
-                        }
-                    }
-                    None
-                })
-                .and_then(|digest| {
-                    let decoded = BASE64_ENGINE.decode(digest).ok();
-                    if let Some(decoded) = decoded {
-                        if let Ok(decoded) = String::from_utf8(decoded) {
-                            let splitted = decoded.split(':').collect::<Vec<&str>>();
-                            if let Some(username) = splitted.first() {
-                                if let Some(password) = splitted.get(1) {
-                                    return Some((
-                                        (*username).to_string(),
-                                        (*password).to_string(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    None
-                })
-            {
-                let matched = bcrypt::verify(password, &expected.1).unwrap_or(false);
-                if expected.0 == username && matched {
-                    debug!("authorized");
-                    return AuthState::Success;
-                }
-                debug!("unauthorized");
-                return AuthState::Failed;
-            }
+fn authenticate<B>(request: &Request<B>) -> AuthState {
+    let expected = match get_expected_credentials() {
+        None => {
+            debug!("authentication is disabled");
+            return AuthState::Public;
         }
-        debug!("request authorzation");
+        Some(e) => e,
+    };
+
+    let header_value = request.headers().get("authorization");
+    if header_value.is_none() {
+        debug!("request authentication");
         return AuthState::Request;
     }
 
-    debug!("authentication is disabled");
-    AuthState::Public
+    header_value
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split_ascii_whitespace().collect::<Vec<&str>>())
+        .and_then(|splitted| {
+            match (
+                splitted.first().map(|s| s.to_ascii_lowercase()),
+                splitted.get(1).copied(),
+            ) {
+                (Some(ref scheme), Some(digest)) if scheme == "basic" => Some(digest),
+                _ => None,
+            }
+        })
+        .and_then(|digest| BASE64_ENGINE.decode(digest).ok())
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .map(|decoded| {
+            decoded
+                .split(':')
+                .map(String::from)
+                .collect::<Vec<String>>()
+        })
+        .map_or(AuthState::Failed, |splitted| {
+            match (splitted.first(), splitted.get(1)) {
+                (Some(u), Some(p)) if u == &expected.0 => bcrypt::verify(p, &expected.1)
+                    .ok()
+                    .map_or(AuthState::Failed, |matched| {
+                        if matched {
+                            debug!("authenticated");
+                            AuthState::Success
+                        } else {
+                            debug!("password mismatched");
+                            AuthState::Failed
+                        }
+                    }),
+                _ => {
+                    debug!("username mismatched");
+                    AuthState::Failed
+                }
+            }
+        })
 }
 
 async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
-    let authorized = authorize(&request);
+    let authenticated = authenticate(&request);
     let response = next.run(request).await;
-    match authorized {
+    match authenticated {
         AuthState::Public | AuthState::Success => Ok(response),
         AuthState::Failed => Err(StatusCode::UNAUTHORIZED),
         AuthState::Request => {
@@ -368,30 +358,36 @@ async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> Result<Res
 
 #[allow(clippy::unused_async)]
 async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
-    match state.scan.lock() {
-        Err(e) => {
-            error!("failed to render books {:?}", e);
-            Html(String::new())
-        }
-        Ok(scan) => {
-            let books_count = scan.books.len();
-            let books = scan.books.clone();
-            let t = IndexTemplate {
-                books,
-                books_count,
-                scan_duration: scan.scan_duration.num_milliseconds(),
-                scanned_at: scan.scanned_at.to_rfc2822(),
-                version: VERSION.to_string(),
-            };
-            Html(match t.render() {
-                Ok(t) => t,
-                Err(e) => {
-                    error!("failed to render template {:?}", e);
-                    String::new()
-                }
-            })
-        }
-    }
+    state
+        .scan
+        .lock()
+        .map_err(|e| {
+            debug!("failed to render index {e:?}");
+            e
+        })
+        .ok()
+        .map(|scan| IndexTemplate {
+            books: scan.books.clone(),
+            books_count: scan.books.len(),
+            scan_duration: scan.scan_duration.num_milliseconds(),
+            scanned_at: scan.scanned_at.to_rfc2822(),
+            version: VERSION.to_string(),
+        })
+        .map_or(
+            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
+            |t| {
+                t.render()
+                    .map_err(|e| {
+                        debug!("failed to render index {e:?}");
+                        e
+                    })
+                    .ok()
+                    .map_or(
+                        (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
+                        |rendered| (StatusCode::OK, Html(rendered)),
+                    )
+            },
+        )
 }
 
 #[allow(clippy::unused_async)]
@@ -399,57 +395,60 @@ async fn show_book_route(
     State(state): State<AppState>,
     query: Query<BookQuery>,
 ) -> impl IntoResponse {
-    match state.scan.lock() {
-        Err(e) => {
-            error!("failed to render book {:?}", e);
-            Html(String::new())
-        }
-        Ok(scan) => {
-            let query = query.0;
-            let book = match scan.books.iter().find(|b| b.name == query.name) {
-                None => return Html("not found".to_string()),
-                Some(b) => b,
-            };
-            let t = BookTemplate {
-                book: book.clone(),
-                version: VERSION.to_string(),
-            };
-            match t.render() {
-                Ok(t) => Html(t),
-                Err(e) => {
-                    error!("failed to render template {:?}", e);
-                    Html(String::new())
-                }
-            }
-        }
-    }
+    state
+        .scan
+        .lock()
+        .map_err(|e| {
+            debug!("failed to render book {e:?}");
+            e
+        })
+        .map_or(
+            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
+            |scan| {
+                scan.books
+                    .iter()
+                    .find(|b| b.name == query.0.name)
+                    .map(|book| BookTemplate {
+                        book: book.clone(),
+                        version: VERSION.to_string(),
+                    })
+                    .and_then(|t| {
+                        t.render()
+                            .map_err(|e| {
+                                debug!("failed to render template {e:?}");
+                                e
+                            })
+                            .ok()
+                    })
+                    .map_or(
+                        (StatusCode::NOT_FOUND, Html("not found".to_string())),
+                        |rendered| (StatusCode::OK, Html(rendered)),
+                    )
+            },
+        )
 }
 
 #[allow(clippy::unused_async)]
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
-    match state.scan.lock() {
-        Err(e) => {
-            error!("failed to re-scan books {:?}", e);
-            Redirect::to("/")
-        }
-        Ok(mut scan) => {
-            let data_dir = &scan.data_dir;
-            match scan_books(data_dir) {
-                Err(e) => {
-                    error!("failed to re-scan books {:?}", e);
-                }
-                Ok(new_scan) => {
-                    info!(
-                        "re-scan in {}ms, {} books found",
-                        scan.scan_duration.num_milliseconds(),
-                        scan.books.len()
-                    );
-                    *scan = new_scan;
-                }
-            }
-            Redirect::to("/")
-        }
-    }
+    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
+        scan_books(&scan.data_dir)
+            .map(|new_scan| {
+                info!(
+                    "finished re-scan in {}ms, {} book(s), {} page(s) found",
+                    new_scan.scan_duration.num_milliseconds(),
+                    new_scan.books.len(),
+                    new_scan.pages_map.len()
+                );
+                *scan = new_scan;
+                Redirect::to("/")
+            })
+            .map_err(|e| {
+                debug!("failed to re-scan books {e:?}");
+                e
+            })
+            .ok()
+            .unwrap_or(Redirect::to("/"))
+    })
 }
 
 #[derive(Deserialize)]
@@ -465,13 +464,24 @@ async fn show_page_route(
     state
         .scan
         .lock()
+        .map_err(|e| {
+            error!("failed to render page {e:?}");
+            e
+        })
         .ok()
         .and_then(|scan| {
             scan.pages_map.get(&query.id).and_then(|(b_idx, p_idx)| {
                 scan.books
                     .get(*b_idx)
                     .and_then(|b| b.pages.get(*p_idx))
-                    .and_then(|p| fs::read(&p.path).ok())
+                    .and_then(|p| {
+                        fs::read(&p.path)
+                            .map_err(|e| {
+                                error!("failed to read page {e:?}");
+                                e
+                            })
+                            .ok()
+                    })
                     .map(|buf| (StatusCode::OK, buf))
             })
         })
@@ -481,10 +491,10 @@ async fn show_page_route(
 async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
     let scan = scan_books(&data_dir)?;
     info!(
-        "finished initial scan in {} ms, {} book(s), {} page(s) found",
+        "finished initial scan in {}ms, {} book(s), {} page(s) found",
         scan.scan_duration.num_milliseconds(),
         &scan.books.len(),
-        scan.pages_count()
+        scan.pages_map.len()
     );
     let state = AppState {
         scan: Arc::new(Mutex::new(scan)),
@@ -502,7 +512,7 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
             "/assets/water.css",
             get(|| async {
                 let mut headers = HeaderMap::new();
-                headers.insert(header::CONTENT_TYPE, "text/css".parse().unwrap());
+                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/css"));
                 (headers, WATER_CSS)
             }),
         )
@@ -512,10 +522,10 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state);
-    if get_authorization().is_none() {
+    if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
-    info!("running on {:?}", addr);
+    info!("running on {addr}");
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await?;
@@ -536,17 +546,17 @@ fn hash_password() -> MyResult<()> {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let default_directive = if cli.debug {
+        Level::DEBUG.into()
+    } else {
+        Level::INFO.into()
+    };
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(default_directive)
+        .from_env_lossy();
     tracing_subscriber::fmt()
         .with_ansi(std::env::var_os("NO_COLOR").is_none())
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(if cli.debug {
-                    Level::DEBUG.into()
-                } else {
-                    Level::INFO.into()
-                })
-                .from_env_lossy(),
-        )
+        .with_env_filter(env_filter)
         .with_target(false)
         .compact()
         .init();
@@ -555,13 +565,13 @@ async fn main() {
     match &cli.command {
         Some(Commands::HashPassword { .. }) => {
             if let Err(e) = hash_password() {
-                error!("failed to hash password: {}", e);
+                error!("failed to hash password: {e:?}");
             }
         }
         Some(Commands::List { .. }) => {
             let scan = match scan_books(&data_dir) {
                 Err(e) => {
-                    error!("failed to scan directory: {}", e);
+                    error!("failed to scan directory: {e:?}");
                     return;
                 }
                 Ok(b) => b,
@@ -572,20 +582,20 @@ async fn main() {
             println!(
                 "{} book(s), {} page(s), scanned in {}ms",
                 &scan.books.len(),
-                &scan.pages_count(),
+                &scan.pages_map.len(),
                 scan.scan_duration.num_milliseconds()
             );
         }
         Some(Commands::Serve { bind }) => {
             let bind: SocketAddr = match bind.parse() {
                 Err(e) => {
-                    error!("invalid host:port pair: {:?}", e);
+                    error!("invalid host:port pair: {e:?}");
                     return;
                 }
                 Ok(b) => b,
             };
             if let Err(e) = run_server(bind, data_dir).await {
-                error!("failed to start the server: {:?}", e);
+                error!("failed to start the server: {e:?}");
             };
         }
         None => {}
