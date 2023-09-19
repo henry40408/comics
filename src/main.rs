@@ -13,7 +13,6 @@ use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
-use rand::{distributions::Alphanumeric, Rng};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -27,9 +26,9 @@ use thiserror::Error;
 use tower_http::trace::{self, TraceLayer};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
-const PAGE_ID_LEN: usize = 10;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
 
@@ -98,14 +97,6 @@ struct Page {
     path: String,
 }
 
-fn generate_random_string(len: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(len)
-        .map(char::from)
-        .collect()
-}
-
 impl Page {
     fn new<P: AsRef<Path>>(path: P) -> MyResult<Self> {
         let path_ref = path.as_ref();
@@ -131,7 +122,7 @@ impl Page {
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
         Ok(Page {
             filename,
-            id: generate_random_string(PAGE_ID_LEN),
+            id: Uuid::new_v4().to_string(),
             path,
         })
     }
