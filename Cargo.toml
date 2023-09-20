@@ -3,6 +3,7 @@ name = "comics"
 version = "0.1.0"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
+description = "Simple file server for comic books"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,7 +13,7 @@ axum = "0.6.20"
 base64 = "0.21.4"
 bcrypt = "0.15.0"
 chrono = "0.4.31"
-clap = { version = "4.4.3", features = ["derive"] }
+clap = { version = "4.4.3", features = ["derive", "env"] }
 hyper = "0.14.27"
 indexmap = "2.0.0"
 infer = "0.15.0"
