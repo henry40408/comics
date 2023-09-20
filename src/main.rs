@@ -87,6 +87,7 @@ use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
+use rand::{seq::SliceRandom, thread_rng};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -207,6 +208,7 @@ struct Book {
     cover: Page,
     name: String,
     pages: Vec<Page>,
+    views: u128,
 }
 
 impl Book {
@@ -230,6 +232,7 @@ impl Book {
             cover,
             name: filename,
             pages,
+            views: 0,
         })
     }
 }
@@ -260,7 +263,7 @@ fn scan_pages<P: AsRef<Path>>(path: P) -> MyResult<Vec<Page>> {
 
 fn scan_books<P: AsRef<Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
-    let mut books: Vec<Book> = fs::read_dir(&path)?
+    let books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
                 debug!("skip because {:?}", entry);
@@ -280,22 +283,15 @@ fn scan_books<P: AsRef<Path>>(path: P) -> MyResult<BookScan> {
             book
         })
         .collect();
-    books.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let mut pages_map = HashMap::new();
-    for (i, book) in books.iter().enumerate() {
-        for (j, page) in book.pages.iter().enumerate() {
-            pages_map.insert(page.id.clone(), (i, j));
-        }
-    }
-
-    Ok(BookScan {
+    let mut scan = BookScan {
         books,
         data_dir: path.as_ref().to_path_buf(),
-        pages_map,
+        pages_map: HashMap::new(),
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,
-    })
+    };
+    scan.reorder();
+    Ok(scan)
 }
 
 #[derive(Clone)]
@@ -312,6 +308,20 @@ struct BookScan {
     scanned_at: chrono::DateTime<Utc>,
 }
 
+impl BookScan {
+    fn reorder(&mut self) {
+        self.books
+            .sort_by(|a, b| (a.views, &a.name).cmp(&(b.views, &b.name)));
+
+        self.pages_map.clear();
+        for (i, book) in self.books.iter().enumerate() {
+            for (j, page) in book.pages.iter().enumerate() {
+                self.pages_map.insert(page.id.clone(), (i, j));
+            }
+        }
+    }
+}
+
 #[derive(Clone, Template)]
 #[template(path = "index.html")]
 struct IndexTemplate {
@@ -325,6 +335,11 @@ struct IndexTemplate {
 #[derive(Deserialize)]
 struct BookQuery {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct ShuffleQuery {
+    name: Option<String>,
 }
 
 #[derive(Clone, Template)]
@@ -467,13 +482,16 @@ async fn show_book_route(
         })
         .map_or(
             (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
-            |scan| {
+            |mut scan| {
                 scan.books
-                    .iter()
+                    .iter_mut()
                     .find(|b| b.name == query.0.name)
-                    .map(|book| BookTemplate {
-                        book: book.clone(),
-                        version: VERSION.to_string(),
+                    .map(|book| {
+                        book.views += 1;
+                        BookTemplate {
+                            book: book.clone(),
+                            version: VERSION.to_string(),
+                        }
                     })
                     .and_then(|t| {
                         t.render()
@@ -510,6 +528,37 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
             })
             .ok()
             .unwrap_or(Redirect::to("/"))
+    })
+}
+
+async fn shuffle_book_route(
+    State(state): State<AppState>,
+    query: Query<ShuffleQuery>,
+) -> impl IntoResponse {
+    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
+        scan.reorder();
+
+        let n = (scan.books.len() as f64 * 0.1) as usize;
+        let mut rng = thread_rng();
+        scan.books
+            .iter()
+            .take(n.clamp(1, n))
+            .map(|book| {
+                let name = &book.name;
+                let view_count = &book.views;
+                debug!("book taken: {name} (view count: {view_count})");
+                book
+            })
+            .filter(|b| Some(&b.name) != query.name.as_ref())
+            .collect::<Vec<&Book>>()
+            .choose(&mut rng)
+            .map_or(Redirect::to("/"), |book| {
+                let name = &book.name;
+                debug!("pick {name}");
+
+                let encoded = urlencoding::encode(name);
+                Redirect::to(&format!("/book?name={encoded}"))
+            })
     })
 }
 
@@ -563,6 +612,7 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
     let app = Router::new()
         .route("/book", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
+        .route("/shuffle", post(shuffle_book_route))
         .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
         // to prevent timing attack, bcrypt is too slow

@@ -10,7 +10,9 @@
 
 <body>
   <main>
-    <h1>{{ book.name }} ({{ book.pages.len() }}P)</h1>
+    <h1>{{ book.name }}</h1>
+    <form method="POST" action="/shuffle?name={{ book.name|urlencode }}"><input type="submit" value="Shuffle" /></form>
+    <p>{{ book.pages.len() }} page(s), {{ book.views }} view(s)</p>
     {% for page in book.pages %}
     <figure>
       <img src="/data?id={{ page.id|urlencode }}" />
