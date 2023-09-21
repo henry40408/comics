@@ -1,30 +1,24 @@
-FROM golang:1.20.5-alpine3.18 AS build
+FROM rust:1.72.1-alpine AS builder
 
-ENV CGO_ENABLED=0
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 
-RUN apk add --no-cache git
+WORKDIR /usr/src/app
 
-ADD . /go/src/app
+RUN apk add --no-cache build-base
 
-WORKDIR /go/src/app
+COPY . .
 
-RUN go build \
-  -o comics \
-  -ldflags="-s -w -X 'main.Version=`git describe --tags --abbrev=0`' -X 'main.Commit=`git rev-parse --short HEAD`' -X 'main.BuildDate=`date +%FT%T%z`'" \
-  main.go
+RUN cargo build --release
 
-FROM alpine:3.18.2
+FROM alpine:3.18.3
 
-LABEL org.opencontainers.image.title=Comics
-LABEL org.opencontainers.image.description="Simple file server for comic books"
-LABEL org.opencontainers.image.vendor="henry40408"
-LABEL org.opencontainers.image.licenses=MIT
-LABEL org.opencontainers.image.url=https://github.com/henry40408/comics
-LABEL org.opencontainers.image.source=https://github.com/henry40408/comics
-LABEL org.opencontainers.image.documentation=https://github.com/henry40408/comics
+ENV BIND 0.0.0.0:8080
 
-EXPOSE 8080
-RUN apk --no-cache add ca-certificates tzdata
-COPY --from=build /go/src/app/comics /usr/bin/comics
-USER nobody
-CMD ["/usr/bin/comics", "serve"]
+RUN apk add --no-cache libgcc tini
+
+COPY --from=builder /usr/src/app/target/release/comics /bin/comics
+
+EXPOSE 8080/tcp
+
+ENTRYPOINT ["tini", "--"]
+CMD /bin/comics

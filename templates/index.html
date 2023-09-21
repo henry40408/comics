@@ -2,44 +2,34 @@
 <html lang="en">
 
 <head>
-  <title>Comics | {{.Books | len}} book(s)</title>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/assets/water.css" />
+  <title>{{ books_count }} book(s) | Comics {{ version }}</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/assets/water.css" rel="stylesheet" />
 </head>
 
 <body>
-  <h1>Comics</h1>
-  <div style="display:flex">
-    <form method="post" action="/shuffle">
-      <input type="submit" value="shuffle" />
-    </form>
-    <form method="post">
-      <input type="submit" value="{{ if .Scanning }}scanning...{{ else }}re-scan{{ end }}" {{ if .Scanning
-        }}disabled="disabled" {{ end }} />
-    </form>
-  </div>
-  <div style="justify-content:center">
-    {{ if not .Scanning }}
-    <small>
-      Last scanned: {{.LastScanned}},
-      Elapsed: {{.Elapsed}}ms
-    </small>
-    {{ end }}
-  </div>
-  {{range .Books}}
-  <p>
-    <a href="/book?name={{.Name | urlquery}}">
-      <figure>
-        <img src="/public/{{.PublicCover}}" alt="{{.Name}}" />
-        <figcaption>{{.Name}} ({{.Pages | len}}P)</figcaption>
-      </figure>
-    </a>
-  </p>
-  {{else}}
-  <p>No books found.</p>
-  {{end}}
-  <small>comics {{.Version}}</small>
+  <main>
+    <h1>Comics {{ version }}</h1>
+    <form method="POST" action="/rescan"><input type="submit" value="Re-scan" /></form>
+    <form method="POST" action="/shuffle"><input type="submit" value="Shuffle" /></form>
+    <p>Elapsed: {{ scan_duration }}ms | Scanned at: {{ scanned_at }}</p>
+    {% for b in books %}
+    <p>
+      <a href="/book/{{ b.id }}">
+        <figure>
+          <img src="/data/{{ b.cover.id }}" />
+          <figcaption>
+            <center>{{ b.title }}</center>
+          </figcaption>
+        </figure>
+      </a>
+    </p>
+    <p>
+      <center>{{ b.pages.len() }} page(s), {{ b.views }} view(s)</center>
+    </p>
+    {% endfor %}
+  </main>
 </body>
 
 </html>
