@@ -300,7 +300,7 @@ struct AppState {
 struct BookScan {
     books: Vec<Book>,
     data_dir: PathBuf,
-    pages_map: HashMap<String, (usize, usize)>,
+    pages_map: HashMap<String, Page>,
     scan_duration: Duration,
     scanned_at: chrono::DateTime<Utc>,
 }
@@ -311,9 +311,9 @@ impl BookScan {
             .sort_by(|a, b| (a.views, &a.name).cmp(&(b.views, &b.name)));
 
         self.pages_map.clear();
-        for (i, book) in self.books.iter().enumerate() {
-            for (j, page) in book.pages.iter().enumerate() {
-                self.pages_map.insert(page.id.clone(), (i, j));
+        for book in self.books.iter() {
+            for page in book.pages.iter() {
+                self.pages_map.insert(page.id.clone(), page.clone());
             }
         }
     }
@@ -577,19 +577,14 @@ async fn show_page_route(
         })
         .ok()
         .and_then(|scan| {
-            scan.pages_map.get(&query.id).and_then(|(b_idx, p_idx)| {
-                scan.books
-                    .get(*b_idx)
-                    .and_then(|b| b.pages.get(*p_idx))
-                    .and_then(|p| {
-                        fs::read(&p.path)
-                            .map_err(|e| {
-                                debug!("failed to read page {e:?}");
-                                e
-                            })
-                            .ok()
+            scan.pages_map.get(&query.id).and_then(|page| {
+                fs::read(&page.path)
+                    .map_err(|e| {
+                        debug!("failed to read page {e:?}");
+                        e
                     })
-                    .map(|buf| (StatusCode::OK, buf))
+                    .ok()
+                    .map(|content| (StatusCode::OK, content))
             })
         })
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
