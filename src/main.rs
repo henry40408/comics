@@ -108,8 +108,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about=None, arg_required_else_help(true))]
+#[command(author, version, about, long_about=None)]
 struct Cli {
+    /// Bind host & port
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
+    bind: String,
+
     /// Debug mode
     #[arg(long, short = 'd', env = "DEBUG")]
     debug: bool,
@@ -130,13 +134,6 @@ enum Commands {
     /// List books
     #[command(alias = "ls")]
     List {},
-    /// Serve books
-    #[command(alias = "s")]
-    Serve {
-        /// Bind host & port
-        #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
-        bind: String,
-    },
 }
 
 #[derive(Debug, Error)]
@@ -697,8 +694,8 @@ async fn main() {
                 scan.scan_duration.num_milliseconds()
             );
         }
-        Some(Commands::Serve { bind }) => {
-            let bind: SocketAddr = match bind.parse() {
+        None => {
+            let bind: SocketAddr = match cli.bind.parse() {
                 Err(e) => {
                     error!("invalid host:port pair: {e:?}");
                     return;
@@ -709,6 +706,5 @@ async fn main() {
                 error!("failed to start the server: {e:?}");
             };
         }
-        None => {}
     };
 }
