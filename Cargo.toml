@@ -19,7 +19,6 @@ hyper = "0.14.27"
 infer = "0.15.0"
 rand = "0.8.5"
 rpassword = "7.2.0"
-serde = { version = "1.0.188", features = ["derive"] }
 thiserror = "1.0.48"
 tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread"] }
 tower = "0.4.13"

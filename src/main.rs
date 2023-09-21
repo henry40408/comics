@@ -74,8 +74,9 @@
     rust_2018_idioms
 )]
 use askama::Template;
+use axum::extract::Path;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     http::{header, HeaderMap, HeaderValue, Request},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -87,13 +88,12 @@ use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
 use rand::{seq::SliceRandom, thread_rng};
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     ffi::OsString,
     fs,
     net::SocketAddr,
-    path::{self, Path, PathBuf},
+    path::{self, PathBuf},
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
@@ -172,7 +172,7 @@ struct Page {
 }
 
 impl Page {
-    fn new<P: AsRef<Path>>(path: P) -> MyResult<Self> {
+    fn new<P: AsRef<path::Path>>(path: P) -> MyResult<Self> {
         let path_ref = path.as_ref();
         if !path_ref.is_file() {
             return Err(MyError::NotFile(path_ref.to_path_buf()));
@@ -209,7 +209,7 @@ struct Book {
 }
 
 impl Book {
-    fn new<P: AsRef<Path>>(path: P) -> Result<Self, MyError> {
+    fn new<P: AsRef<path::Path>>(path: P) -> Result<Self, MyError> {
         let path_ref = path.as_ref();
         if !path_ref.is_dir() {
             return Err(MyError::NotDirectory(path_ref.to_path_buf()));
@@ -235,7 +235,7 @@ impl Book {
     }
 }
 
-fn scan_pages<P: AsRef<Path>>(path: P) -> MyResult<Vec<Page>> {
+fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
@@ -259,7 +259,7 @@ fn scan_pages<P: AsRef<Path>>(path: P) -> MyResult<Vec<Page>> {
     Ok(pages)
 }
 
-fn scan_books<P: AsRef<Path>>(path: P) -> MyResult<BookScan> {
+fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
     let books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
@@ -328,16 +328,6 @@ struct IndexTemplate {
     scan_duration: i64,
     scanned_at: String,
     version: String,
-}
-
-#[derive(Deserialize)]
-struct BookQuery {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct ShuffleQuery {
-    id: Option<String>,
 }
 
 #[derive(Clone, Template)]
@@ -469,7 +459,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn show_book_route(
     State(state): State<AppState>,
-    query: Query<BookQuery>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
     state
         .scan
@@ -483,7 +473,7 @@ async fn show_book_route(
             |mut scan| {
                 scan.books
                     .iter_mut()
-                    .find(|b| b.id == query.0.id)
+                    .find(|b| b.id == id)
                     .map(|book| {
                         book.views += 1;
                         BookTemplate {
@@ -529,10 +519,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
     })
 }
 
-async fn shuffle_book_route(
-    State(state): State<AppState>,
-    query: Query<ShuffleQuery>,
-) -> impl IntoResponse {
+async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
     state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
         scan.reorder();
 
@@ -540,7 +527,6 @@ async fn shuffle_book_route(
         let mut rng = thread_rng();
         scan.books
             .iter()
-            .filter(|b| Some(&b.id) != query.id.as_ref())
             .take(n.clamp(1, n))
             .map(|book| {
                 let name = &book.title;
@@ -555,19 +541,45 @@ async fn shuffle_book_route(
                 debug!("pick {name}");
 
                 let id = &book.id;
-                Redirect::to(&format!("/book?id={id}"))
+                Redirect::to(&format!("/book/{id}"))
             })
     })
 }
 
-#[derive(Deserialize)]
-struct DataQuery {
-    id: String,
+async fn shuffle_book_route(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
+        scan.reorder();
+
+        let n = (scan.books.len() as f64 * 0.1) as usize;
+        let mut rng = thread_rng();
+        scan.books
+            .iter()
+            .filter(|b| b.id != id)
+            .take(n.clamp(1, n))
+            .map(|book| {
+                let name = &book.title;
+                let view_count = &book.views;
+                debug!("book taken: {name} (view count: {view_count})");
+                book
+            })
+            .collect::<Vec<&Book>>()
+            .choose(&mut rng)
+            .map_or(Redirect::to("/"), |book| {
+                let name = &book.title;
+                debug!("pick {name}");
+
+                let id = &book.id;
+                Redirect::to(&format!("/book/{id}"))
+            })
+    })
 }
 
 async fn show_page_route(
     State(state): State<AppState>,
-    query: Query<DataQuery>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
     state
         .scan
@@ -578,7 +590,7 @@ async fn show_page_route(
         })
         .ok()
         .and_then(|scan| {
-            scan.pages_map.get(&query.id).and_then(|page| {
+            scan.pages_map.get(&id).and_then(|page| {
                 fs::read(&page.path)
                     .map_err(|e| {
                         debug!("failed to read page {e:?}");
@@ -591,7 +603,7 @@ async fn show_page_route(
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
 }
 
-async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
+async fn run_server<P: AsRef<path::Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
     let scan = scan_books(&data_dir)?;
     info!(
         "finished initial scan in {}ms, {} book(s), {} page(s) found",
@@ -603,14 +615,15 @@ async fn run_server<P: AsRef<Path>>(addr: SocketAddr, data_dir: P) -> MyResult<(
         scan: Arc::new(Mutex::new(scan)),
     };
     let app = Router::new()
-        .route("/book", get(show_book_route))
+        .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
-        .route("/shuffle", post(shuffle_book_route))
+        .route("/shuffle/:id", post(shuffle_book_route))
+        .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
         // to prevent timing attack, bcrypt is too slow
         // protected by randomly-generated string as page ID instead
-        .route("/data", get(show_page_route))
+        .route("/data/:id", get(show_page_route))
         .route("/healthz", get(|| async { "" }))
         .route(
             "/assets/water.css",

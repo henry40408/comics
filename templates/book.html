@@ -11,11 +11,11 @@
 <body>
   <main>
     <h1>{{ book.title }}</h1>
-    <form method="POST" action="/shuffle?id={{ book.id }}"><input type="submit" value="Shuffle" /></form>
+    <form method="POST" action="/shuffle/{{ book.id }}"><input type="submit" value="Shuffle" /></form>
     <p>{{ book.pages.len() }} page(s), {{ book.views }} view(s)</p>
     {% for page in book.pages %}
     <figure>
-      <img src="/data?id={{ page.id }}" />
+      <img src="/data/{{ page.id }}" />
       <figcaption>
         <center>{{ page.filename }}</center>
       </figcaption>

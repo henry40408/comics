@@ -16,9 +16,9 @@
     <p>Elapsed: {{ scan_duration }}ms | Scanned at: {{ scanned_at }}</p>
     {% for b in books %}
     <p>
-      <a href="/book?id={{ b.id }}">
+      <a href="/book/{{ b.id }}">
         <figure>
-          <img src="/data?id={{ b.cover.id }}" />
+          <img src="/data/{{ b.cover.id }}" />
           <figcaption>
             <center>{{ b.title }}</center>
           </figcaption>

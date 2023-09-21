@@ -409,7 +409,6 @@ dependencies = [
  "infer",
  "rand",
  "rpassword",
- "serde",
  "thiserror",
  "tokio",
  "tower",
