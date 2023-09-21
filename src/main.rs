@@ -73,7 +73,6 @@
     nonstandard_style,
     rust_2018_idioms
 )]
-
 use askama::Template;
 use axum::{
     extract::{Query, State},
@@ -101,7 +100,6 @@ use thiserror::Error;
 use tower_http::trace::{self, TraceLayer};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -121,6 +119,10 @@ struct Cli {
     /// Data directory
     #[arg(long, env = "DATA_DIR")]
     data_dir: Option<OsString>,
+
+    /// No color https://no-color.org/
+    #[arg(long, env = "NO_COLOR")]
+    no_color: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -180,6 +182,7 @@ impl Page {
             .to_str()
             .map(ToString::to_string)
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+        let id = blake3::hash(path.as_bytes()).to_string();
 
         let is_image = infer::get_from_path(path_ref)
             .ok()
@@ -192,18 +195,15 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-        Ok(Page {
-            filename,
-            id: Uuid::new_v4().to_string(),
-            path,
-        })
+        Ok(Page { filename, id, path })
     }
 }
 
 #[derive(Clone, Debug)]
 struct Book {
     cover: Page,
-    name: String,
+    id: String,
+    title: String,
     pages: Vec<Page>,
     views: u128,
 }
@@ -221,13 +221,14 @@ impl Book {
             .map(Clone::clone)
             .ok_or(MyError::EmptyDirectory(path_ref.to_path_buf()))?;
 
-        let filename = path_ref
+        let title = path_ref
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
         Ok(Book {
             cover,
-            name: filename,
+            id: blake3::hash(title.as_bytes()).to_string(),
+            title,
             pages,
             views: 0,
         })
@@ -276,7 +277,7 @@ fn scan_books<P: AsRef<Path>>(path: P) -> MyResult<BookScan> {
             Result::ok(book)
         })
         .map(|book| {
-            debug!("found a book {} ({}P)", &book.name, &book.pages.len());
+            debug!("found a book {} ({}P)", &book.title, &book.pages.len());
             book
         })
         .collect();
@@ -308,7 +309,7 @@ struct BookScan {
 impl BookScan {
     fn reorder(&mut self) {
         self.books
-            .sort_by(|a, b| (a.views, &a.name).cmp(&(b.views, &b.name)));
+            .sort_by(|a, b| (a.views, &a.title).cmp(&(b.views, &b.title)));
 
         self.pages_map.clear();
         for book in self.books.iter() {
@@ -331,12 +332,12 @@ struct IndexTemplate {
 
 #[derive(Deserialize)]
 struct BookQuery {
-    name: String,
+    id: String,
 }
 
 #[derive(Deserialize)]
 struct ShuffleQuery {
-    name: Option<String>,
+    id: Option<String>,
 }
 
 #[derive(Clone, Template)]
@@ -482,7 +483,7 @@ async fn show_book_route(
             |mut scan| {
                 scan.books
                     .iter_mut()
-                    .find(|b| b.name == query.0.name)
+                    .find(|b| b.id == query.0.id)
                     .map(|book| {
                         book.views += 1;
                         BookTemplate {
@@ -493,7 +494,7 @@ async fn show_book_route(
                     .and_then(|t| {
                         t.render()
                             .map_err(|e| {
-                                debug!("failed to render template {e:?}");
+                                debug!("failed to render book {e:?}");
                                 e
                             })
                             .ok()
@@ -539,22 +540,22 @@ async fn shuffle_book_route(
         let mut rng = thread_rng();
         scan.books
             .iter()
+            .filter(|b| Some(&b.id) != query.id.as_ref())
             .take(n.clamp(1, n))
             .map(|book| {
-                let name = &book.name;
+                let name = &book.title;
                 let view_count = &book.views;
                 debug!("book taken: {name} (view count: {view_count})");
                 book
             })
-            .filter(|b| Some(&b.name) != query.name.as_ref())
             .collect::<Vec<&Book>>()
             .choose(&mut rng)
             .map_or(Redirect::to("/"), |book| {
-                let name = &book.name;
+                let name = &book.title;
                 debug!("pick {name}");
 
-                let encoded = urlencoding::encode(name);
-                Redirect::to(&format!("/book?name={encoded}"))
+                let id = &book.id;
+                Redirect::to(&format!("/book?id={id}"))
             })
     })
 }
@@ -658,7 +659,7 @@ async fn main() {
         .with_default_directive(default_directive)
         .from_env_lossy();
     tracing_subscriber::fmt()
-        .with_ansi(std::env::var_os("NO_COLOR").is_none())
+        .with_ansi(!cli.no_color)
         .with_env_filter(env_filter)
         .with_target(false)
         .compact()
@@ -680,7 +681,7 @@ async fn main() {
                 Ok(b) => b,
             };
             for book in &scan.books {
-                println!("{} ({}P)", book.name, book.pages.len());
+                println!("{} ({}P)", book.title, book.pages.len());
             }
             println!(
                 "{} book(s), {} page(s), scanned in {}ms",

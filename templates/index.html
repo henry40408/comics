@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-  <title>{{ books_count }} books | Comics {{ version }}</title>
+  <title>{{ books_count }} book(s) | Comics {{ version }}</title>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="/assets/water.css" rel="stylesheet" />
@@ -15,14 +15,19 @@
     <form method="POST" action="/shuffle"><input type="submit" value="Shuffle" /></form>
     <p>Elapsed: {{ scan_duration }}ms | Scanned at: {{ scanned_at }}</p>
     {% for b in books %}
-    <a href="/book?name={{ b.name|urlencode }}">
-      <figure>
-        <img src="/data?id={{ b.cover.id|urlencode }}" />
-        <figcaption>
-          <center>{{ b.name }}</center>
-        </figcaption>
-      </figure>
-    </a>
+    <p>
+      <a href="/book?id={{ b.id }}">
+        <figure>
+          <img src="/data?id={{ b.cover.id }}" />
+          <figcaption>
+            <center>{{ b.title }}</center>
+          </figcaption>
+        </figure>
+      </a>
+    </p>
+    <p>
+      <center>{{ b.pages.len() }} page(s), {{ b.views }} view(s)</center>
+    </p>
     {% endfor %}
   </main>
 </body>

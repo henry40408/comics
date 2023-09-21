@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-  <title>{{ book.name }} ({{ book.pages.len() }}P) | Comics {{ version }}</title>
+  <title>{{ book.title }} ({{ book.pages.len() }}P) | Comics {{ version }}</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="/assets/water.css" rel="stylesheet">
@@ -10,12 +10,12 @@
 
 <body>
   <main>
-    <h1>{{ book.name }}</h1>
-    <form method="POST" action="/shuffle?name={{ book.name|urlencode }}"><input type="submit" value="Shuffle" /></form>
+    <h1>{{ book.title }}</h1>
+    <form method="POST" action="/shuffle?id={{ book.id }}"><input type="submit" value="Shuffle" /></form>
     <p>{{ book.pages.len() }} page(s), {{ book.views }} view(s)</p>
     {% for page in book.pages %}
     <figure>
-      <img src="/data?id={{ page.id|urlencode }}" />
+      <img src="/data?id={{ page.id }}" />
       <figcaption>
         <center>{{ page.filename }}</center>
       </figcaption>
