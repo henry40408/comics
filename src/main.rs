@@ -77,9 +77,9 @@ use askama::Template;
 use axum::extract::Path;
 use axum::{
     extract::State,
-    http::{header, HeaderMap, HeaderValue, Request},
+    http::{header, Request},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Redirect},
     routing::{get, post},
     Router,
 };
@@ -104,6 +104,10 @@ use tracing_subscriber::EnvFilter;
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
+
+type SingleHeader = [(header::HeaderName, &'static str); 1];
+const CSS_HEADER: SingleHeader = [(header::CONTENT_TYPE, "text/css")];
+const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic realm=comics")];
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about=None)]
@@ -406,20 +410,14 @@ fn authenticate<B>(request: &Request<B>) -> AuthState {
         })
 }
 
-async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> impl IntoResponse {
     let authenticated = authenticate(&request);
     let response = next.run(request).await;
     match authenticated {
-        AuthState::Public | AuthState::Success => Ok(response),
-        AuthState::Failed => Err(StatusCode::UNAUTHORIZED),
+        AuthState::Public | AuthState::Success => response,
+        AuthState::Failed => StatusCode::UNAUTHORIZED.into_response(),
         AuthState::Request => {
-            let mut response = Response::default();
-            response.headers_mut().insert(
-                "WWW-Authenticate",
-                HeaderValue::from_static("Basic realm=comics"),
-            );
-            *response.status_mut() = StatusCode::UNAUTHORIZED;
-            Ok(response)
+            (StatusCode::UNAUTHORIZED, WWW_AUTHENTICATE_HEADER, "").into_response()
         }
     }
 }
@@ -627,11 +625,7 @@ async fn run_server<P: AsRef<path::Path>>(addr: SocketAddr, data_dir: P) -> MyRe
         .route("/healthz", get(|| async { "" }))
         .route(
             "/assets/water.css",
-            get(|| async {
-                let mut headers = HeaderMap::new();
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/css"));
-                (headers, WATER_CSS)
-            }),
+            get(|| async { (CSS_HEADER, WATER_CSS) }),
         )
         .layer(
             TraceLayer::new_for_http()
