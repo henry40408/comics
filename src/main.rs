@@ -121,8 +121,8 @@ struct Cli {
     debug: bool,
 
     /// Data directory
-    #[arg(long, env = "DATA_DIR")]
-    data_dir: Option<OsString>,
+    #[arg(long, env = "DATA_DIR", default_value = "./data")]
+    data_dir: OsString,
 
     /// No color https://no-color.org/
     #[arg(long, env = "NO_COLOR")]
@@ -265,7 +265,7 @@ fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
 
 fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
-    let books: Vec<Book> = fs::read_dir(&path)?
+    let mut books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
             if entry.is_err() {
                 debug!("skip because {:?}", entry);
@@ -285,14 +285,20 @@ fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
             book
         })
         .collect();
-    let mut scan = BookScan {
+    books.sort_by(|a, b| a.title.cmp(&b.title));
+    let mut pages_map = HashMap::new();
+    for book in books.iter() {
+        for page in book.pages.iter() {
+            pages_map.insert(page.id.clone(), page.clone());
+        }
+    }
+    let scan = BookScan {
         books,
         data_dir: path.as_ref().to_path_buf(),
-        pages_map: HashMap::new(),
+        pages_map,
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,
     };
-    scan.reorder();
     Ok(scan)
 }
 
@@ -308,20 +314,6 @@ struct BookScan {
     pages_map: HashMap<String, Page>,
     scan_duration: Duration,
     scanned_at: chrono::DateTime<Utc>,
-}
-
-impl BookScan {
-    fn reorder(&mut self) {
-        self.books
-            .sort_by(|a, b| (a.views, &a.title).cmp(&(b.views, &b.title)));
-
-        self.pages_map.clear();
-        for book in self.books.iter() {
-            for page in book.pages.iter() {
-                self.pages_map.insert(page.id.clone(), page.clone());
-            }
-        }
-    }
 }
 
 #[derive(Clone, Template)]
@@ -518,14 +510,10 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
-    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
-        scan.reorder();
-
-        let n = (scan.books.len() as f64 * 0.1) as usize;
+    state.scan.lock().map_or(Redirect::to("/"), |scan| {
         let mut rng = thread_rng();
         scan.books
             .iter()
-            .take(n.clamp(1, n))
             .map(|book| {
                 let name = &book.title;
                 let view_count = &book.views;
@@ -548,15 +536,11 @@ async fn shuffle_book_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
-        scan.reorder();
-
-        let n = (scan.books.len() as f64 * 0.1) as usize;
+    state.scan.lock().map_or(Redirect::to("/"), |scan| {
         let mut rng = thread_rng();
         scan.books
             .iter()
             .filter(|b| b.id != id)
-            .take(n.clamp(1, n))
             .map(|book| {
                 let name = &book.title;
                 let view_count = &book.views;
@@ -601,8 +585,9 @@ async fn show_page_route(
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
 }
 
-async fn run_server<P: AsRef<path::Path>>(addr: SocketAddr, data_dir: P) -> MyResult<()> {
-    let scan = scan_books(&data_dir)?;
+fn init_route(cli: &Cli) -> MyResult<Router> {
+    let data_dir = &cli.data_dir;
+    let scan = scan_books(data_dir)?;
     info!(
         "finished initial scan in {}ms, {} book(s), {} page(s) found",
         scan.scan_duration.num_milliseconds(),
@@ -612,7 +597,7 @@ async fn run_server<P: AsRef<path::Path>>(addr: SocketAddr, data_dir: P) -> MyRe
     let state = AppState {
         scan: Arc::new(Mutex::new(scan)),
     };
-    let app = Router::new()
+    let router = Router::new()
         .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
         .route("/shuffle/:id", post(shuffle_book_route))
@@ -633,6 +618,11 @@ async fn run_server<P: AsRef<path::Path>>(addr: SocketAddr, data_dir: P) -> MyRe
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state);
+    Ok(router)
+}
+
+async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
+    let app = init_route(cli)?;
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
@@ -672,7 +662,6 @@ async fn main() {
         .compact()
         .init();
 
-    let data_dir = cli.data_dir.unwrap_or(OsString::from("./data"));
     match &cli.command {
         Some(Commands::HashPassword { .. }) => {
             if let Err(e) = hash_password() {
@@ -680,7 +669,7 @@ async fn main() {
             }
         }
         Some(Commands::List { .. }) => {
-            let scan = match scan_books(&data_dir) {
+            let scan = match scan_books(&cli.data_dir) {
                 Err(e) => {
                     error!("failed to scan directory: {e:?}");
                     return;
@@ -705,9 +694,97 @@ async fn main() {
                 }
                 Ok(b) => b,
             };
-            if let Err(e) = run_server(bind, data_dir).await {
+            if let Err(e) = run_server(bind, &cli).await {
                 error!("failed to start the server: {e:?}");
             };
         }
     };
+}
+
+#[cfg(test)]
+mod test {
+    use axum_test::{TestResponse, TestServer};
+    use clap::Parser;
+    use cucumber::{given, then, when, World as _};
+
+    use crate::{init_route, Cli};
+
+    #[derive(cucumber::World, Debug, Default)]
+    struct World {
+        server: Option<TestServer>,
+        response: Option<TestResponse>,
+    }
+
+    #[given(expr = "a comics server")]
+    fn given_several_comic_books(w: &mut World) {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        let router = init_route(&cli).unwrap();
+        w.server = Some(TestServer::new(router.into_make_service()).unwrap());
+    }
+
+    #[when(expr = "the user visits the front page")]
+    async fn visit_the_front_page(w: &mut World) {
+        let s = w.server.as_ref().unwrap();
+        w.response = Some(s.get("/").await);
+    }
+
+    #[then(expr = "they should see comic books")]
+    fn see_comic_books(w: &mut World) {
+        let res = w.response.as_ref().unwrap();
+        assert_eq!(200, res.status_code());
+
+        let t = res.text();
+        assert!(t.contains("3 book(s)"));
+        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+        assert!(t.contains("Quantum Quest Legacy of the Luminous League"));
+        assert!(t.contains("Sorcerers of the Silent Seas Tide of Treachery"));
+    }
+
+    #[when(expr = "the user visits a comic book")]
+    async fn visit_a_comic_book(w: &mut World) {
+        let s = w.server.as_ref().unwrap();
+        let p = "/book/abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573";
+        w.response = Some(s.get(p).await);
+    }
+
+    #[then(expr = "they should see pages of the comic book")]
+    fn see_comic_book(w: &mut World) {
+        let res = w.response.as_ref().unwrap();
+        assert_eq!(200, res.status_code());
+
+        let t = res.text();
+        assert!(t.contains("9 page(s)"));
+        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+    }
+
+    #[when(expr = "the user shuffles comic books")]
+    async fn shuffles_comic_books(w: &mut World) {
+        let s = w.server.as_ref().unwrap();
+        w.response = Some(s.post("/shuffle").await);
+    }
+
+    #[then(expr = "they should be redirected to a random book")]
+    async fn redirected_to_a_random_book(w: &mut World) {
+        let res = w.response.as_ref().unwrap();
+        assert_eq!(303, res.status_code());
+
+        let splitted = res
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split('/')
+            .collect::<Vec<&str>>();
+        assert_eq!("book", splitted[1]);
+        assert_eq!(64, splitted[2].len()); // book id
+    }
+
+    #[tokio::test]
+    async fn test_comics() {
+        World::run("features/000_initial.feature").await;
+    }
 }
