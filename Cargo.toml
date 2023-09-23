@@ -27,6 +27,7 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [dev-dependencies]
+axum-test = "12.4.0"
 cucumber = "0.20.0"
 
 [profile.release]
