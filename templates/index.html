@@ -11,9 +11,14 @@
 <body>
   <main>
     <h1>Comics {{ version }}</h1>
-    <form method="POST" action="/rescan"><input type="submit" value="Re-scan" /></form>
-    <form method="POST" action="/shuffle"><input type="submit" value="Shuffle" /></form>
-    <p>Elapsed: {{ scan_duration }}ms | Scanned at: {{ scanned_at }}</p>
+    <p>
+      {{ books.len() }} book(s) scanned at <time datetime="{{ scanned_at }}" class="timestamp">{{ scanned_at }}</time>
+      for <time datetime="P{{ scan_duration / 1000.0 }}S">{{ scan_duration }}ms</time>
+    </p>
+    <div style="display: flex">
+      <form method="POST" action="/rescan"><input type="submit" value="Re-scan" /></form>
+      <form method="POST" action="/shuffle"><input type="submit" value="Shuffle" /></form>
+    </div>
     {% for b in books %}
     <p>
       <a href="/book/{{ b.id }}">
@@ -25,11 +30,17 @@
         </figure>
       </a>
     </p>
-    <p>
-      <center>{{ b.pages.len() }} page(s), {{ b.views }} view(s)</center>
-    </p>
     {% endfor %}
   </main>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      for (const e of Array.from(document.querySelectorAll('time.timestamp'))) {
+        const d = new Date(e.innerText)
+        e.innerHTML = d.toLocaleString()
+      }
+    })
+  </script>
 </body>
 
 </html>
