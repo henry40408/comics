@@ -38,3 +38,7 @@ lto = true
 opt-level = "z"
 panic = "abort"
 strip = true
+
+[[test]]
+name = "comics"
+harness = false
