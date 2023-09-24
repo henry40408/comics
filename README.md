@@ -34,10 +34,6 @@ AUTH_USERNAME=john
 AUTH_PASSWORD_HASH=$2a$10$...Ot6
 ```
 
-## Out of scope
-
-* **Tests**: Due to the straightforward nature of this project, testing was deemed unnecessary at this stage. Feedback and contributions to improve the project are always appreciated.
-
 ## Setup and Usage
 
 1. **Getting Started**:
