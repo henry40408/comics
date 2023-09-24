@@ -5,7 +5,9 @@ use cucumber::{given, then, when, World as _};
 use comics::{init_route, Cli, Healthz};
 
 const DATA_IDS: [&str; 2] = [
+    // Netherworld Nomads Journey to the Jade Jungle
     "abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573",
+    // Quantum Quest Legacy of the Luminous League
     "582d93470a2a22f29ff9a27c7937969d32a1301943c3ed7e6654a4a6637d30a4",
 ];
 

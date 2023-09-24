@@ -101,6 +101,7 @@ use std::{
 use thiserror::Error;
 use tower_http::trace::{self, TraceLayer};
 use tracing::{debug, error, info, warn, Level};
+use uuid::Uuid;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -187,7 +188,6 @@ impl Page {
             .to_str()
             .map(ToString::to_string)
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-        let id = blake3::hash(path.as_bytes()).to_string();
 
         let is_image = infer::get_from_path(path_ref)
             .ok()
@@ -200,7 +200,11 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-        Ok(Page { filename, id, path })
+        Ok(Page {
+            filename,
+            id: Uuid::new_v4().to_string(),
+            path,
+        })
     }
 }
 
