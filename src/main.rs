@@ -75,6 +75,7 @@
 )]
 use askama::Template;
 use axum::extract::Path;
+use axum::Json;
 use axum::{
     extract::State,
     http::{header, Request},
@@ -88,6 +89,7 @@ use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
 use rand::{seq::SliceRandom, thread_rng};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -585,6 +587,20 @@ async fn show_page_route(
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
 }
 
+#[derive(Deserialize, Serialize)]
+struct Healthz {
+    scanned_at: i64,
+}
+
+async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
+    state.scan.lock().map_or(Json(()).into_response(), |scan| {
+        Json(Healthz {
+            scanned_at: scan.scanned_at.timestamp_millis(),
+        })
+        .into_response()
+    })
+}
+
 fn init_route(cli: &Cli) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
     let scan = scan_books(data_dir)?;
@@ -607,7 +623,7 @@ fn init_route(cli: &Cli) -> MyResult<Router> {
         // to prevent timing attack, bcrypt is too slow
         // protected by randomly-generated string as page ID instead
         .route("/data/:id", get(show_page_route))
-        .route("/healthz", get(|| async { "" }))
+        .route("/healthz", get(healthz_route))
         .route(
             "/assets/water.css",
             get(|| async { (CSS_HEADER, WATER_CSS) }),
@@ -707,12 +723,13 @@ mod test {
     use clap::Parser;
     use cucumber::{given, then, when, World as _};
 
-    use crate::{init_route, Cli};
+    use crate::{init_route, Cli, Healthz};
 
     #[derive(cucumber::World, Debug, Default)]
     struct World {
         server: Option<TestServer>,
         response: Option<TestResponse>,
+        previous_scanned_at: Option<i64>,
     }
 
     #[given(expr = "a comics server")]
@@ -781,6 +798,36 @@ mod test {
             .collect::<Vec<&str>>();
         assert_eq!("book", splitted[1]);
         assert_eq!(64, splitted[2].len()); // book id
+    }
+
+    async fn get_healthz(w: &mut World) -> Healthz {
+        let s = w.server.as_ref().unwrap();
+        let res = s.get("/healthz").await;
+        serde_json::from_str(&res.text()).unwrap()
+    }
+
+    #[when(expr = "the user re-scans comic books")]
+    async fn rescan_comic_books(w: &mut World) {
+        let healthz = get_healthz(w).await;
+        w.previous_scanned_at = Some(healthz.scanned_at);
+
+        let s = w.server.as_ref().unwrap();
+        w.response = Some(s.post("/rescan").await);
+    }
+
+    #[then(expr = "the server should re-scan comic books")]
+    async fn should_rescan_comic_books(w: &mut World) {
+        let healthz = get_healthz(w).await;
+        assert!(healthz.scanned_at > w.previous_scanned_at.unwrap());
+    }
+
+    #[then(expr = "they should be redirected to the front page")]
+    async fn should_be_redirected_to_the_front_page(w: &mut World) {
+        let res = w.response.as_ref().unwrap();
+        assert_eq!(303, res.status_code());
+
+        let location = res.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!("/", location);
     }
 
     #[tokio::test]

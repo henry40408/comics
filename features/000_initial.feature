@@ -14,3 +14,8 @@ Feature: Watch comic books
   Scenario: User shuffles comic books
     When the user shuffles comic books
     Then they should be redirected to a random book
+
+  Scenario: User re-scans comic books
+    When the user re-scans comic books
+    Then the server should re-scan comic books
+    And they should be redirected to the front page
