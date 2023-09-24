@@ -725,6 +725,11 @@ mod test {
 
     use crate::{init_route, Cli, Healthz};
 
+    const DATA_IDS: [&str; 2] = [
+        "abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573",
+        "582d93470a2a22f29ff9a27c7937969d32a1301943c3ed7e6654a4a6637d30a4",
+    ];
+
     #[derive(cucumber::World, Debug, Default)]
     struct World {
         server: Option<TestServer>,
@@ -754,17 +759,25 @@ mod test {
         assert_eq!(200, res.status_code());
 
         let t = res.text();
-        assert!(t.contains("3 book(s)"));
+        assert!(t.contains("2 book(s)"));
         assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
         assert!(t.contains("Quantum Quest Legacy of the Luminous League"));
-        assert!(t.contains("Sorcerers of the Silent Seas Tide of Treachery"));
     }
 
     #[when(expr = "the user visits a comic book")]
     async fn visit_a_comic_book(w: &mut World) {
+        let book_id = DATA_IDS.first().unwrap();
         let s = w.server.as_ref().unwrap();
-        let p = "/book/abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573";
-        w.response = Some(s.get(p).await);
+        let p = format!("/book/{book_id}");
+        w.response = Some(s.get(&p).await);
+    }
+
+    #[when(expr = "they shuffle comic books")]
+    async fn shuffles_comic_books_from_a_book(w: &mut World) {
+        let book_id = DATA_IDS.first().unwrap();
+        let s = w.server.as_ref().unwrap();
+        let p = format!("/shuffle/{book_id}");
+        w.response = Some(s.post(&p).await);
     }
 
     #[then(expr = "they should see pages of the comic book")]
@@ -796,8 +809,8 @@ mod test {
             .unwrap()
             .split('/')
             .collect::<Vec<&str>>();
-        assert_eq!("book", splitted[1]);
-        assert_eq!(64, splitted[2].len()); // book id
+        assert_eq!(&"book", splitted.get(1).unwrap());
+        assert_eq!(DATA_IDS.get(1).unwrap(), splitted.get(2).unwrap());
     }
 
     async fn get_healthz(w: &mut World) -> Healthz {
