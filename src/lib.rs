@@ -214,7 +214,6 @@ pub struct Book {
     pub id: String,
     pub title: String,
     pub pages: Vec<Page>,
-    pub views: u128,
 }
 
 impl Book {
@@ -239,7 +238,6 @@ impl Book {
             id: blake3::hash(title.as_bytes()).to_string(),
             title,
             pages,
-            views: 0,
         })
     }
 }
@@ -326,7 +324,7 @@ pub struct BookScan {
 struct IndexTemplate {
     books: Vec<Book>,
     books_count: usize,
-    scan_duration: i64,
+    scan_duration: f64,
     scanned_at: String,
     version: String,
 }
@@ -431,7 +429,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
         .map(|scan| IndexTemplate {
             books: scan.books.clone(),
             books_count: scan.books.len(),
-            scan_duration: scan.scan_duration.num_milliseconds(),
+            scan_duration: scan.scan_duration.num_milliseconds() as f64,
             scanned_at: scan.scanned_at.to_rfc2822(),
             version: VERSION.to_string(),
         })
@@ -465,16 +463,13 @@ async fn show_book_route(
         })
         .map_or(
             (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
-            |mut scan| {
+            |scan| {
                 scan.books
-                    .iter_mut()
+                    .iter()
                     .find(|b| b.id == id)
-                    .map(|book| {
-                        book.views += 1;
-                        BookTemplate {
-                            book: book.clone(),
-                            version: VERSION.to_string(),
-                        }
+                    .map(|book| BookTemplate {
+                        book: book.clone(),
+                        version: VERSION.to_string(),
                     })
                     .and_then(|t| {
                         t.render()
@@ -521,8 +516,7 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
             .iter()
             .map(|book| {
                 let name = &book.title;
-                let view_count = &book.views;
-                debug!("book taken: {name} (view count: {view_count})");
+                debug!("book taken: {name}");
                 book
             })
             .collect::<Vec<&Book>>()
@@ -548,8 +542,7 @@ async fn shuffle_book_route(
             .filter(|b| b.id != id)
             .map(|book| {
                 let name = &book.title;
-                let view_count = &book.views;
-                debug!("book taken: {name} (view count: {view_count})");
+                debug!("book taken: {name}");
                 book
             })
             .collect::<Vec<&Book>>()

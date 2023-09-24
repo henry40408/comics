@@ -67,8 +67,7 @@ fn see_comic_book(w: &mut World) {
     assert_eq!(200, res.status_code());
 
     let t = res.text();
-    assert!(t.contains("9 page(s)"));
-    assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+    assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle (9P)"));
 }
 
 #[when(expr = "the user shuffles comic books")]
