@@ -18,7 +18,7 @@ struct World {
     previous_scanned_at: Option<i64>,
 }
 
-#[given(expr = "a comics server")]
+#[given("a comics server")]
 fn given_several_comic_books(w: &mut World) {
     std::env::remove_var("AUTH_USERNAME");
     std::env::remove_var("AUTH_PASSWORD_HASH");
@@ -28,13 +28,13 @@ fn given_several_comic_books(w: &mut World) {
     w.server = Some(TestServer::new(router.into_make_service()).unwrap());
 }
 
-#[when(expr = "the user visits the front page")]
+#[when("the user visits the front page")]
 async fn visit_the_front_page(w: &mut World) {
     let s = w.server.as_ref().unwrap();
     w.response = Some(s.get("/").await);
 }
 
-#[then(expr = "they should see comic books")]
+#[then("they should see comic books")]
 fn see_comic_books(w: &mut World) {
     let res = w.response.as_ref().unwrap();
     assert_eq!(200, res.status_code());
@@ -45,7 +45,7 @@ fn see_comic_books(w: &mut World) {
     assert!(t.contains("Quantum Quest Legacy of the Luminous League"));
 }
 
-#[when(expr = "the user visits a comic book")]
+#[when("the user visits a comic book")]
 async fn visit_a_comic_book(w: &mut World) {
     let book_id = DATA_IDS.first().unwrap();
     let s = w.server.as_ref().unwrap();
@@ -53,7 +53,7 @@ async fn visit_a_comic_book(w: &mut World) {
     w.response = Some(s.get(&p).await);
 }
 
-#[when(expr = "they shuffle comic books")]
+#[when("they shuffle comic books")]
 async fn shuffles_comic_books_from_a_book(w: &mut World) {
     let book_id = DATA_IDS.first().unwrap();
     let s = w.server.as_ref().unwrap();
@@ -61,7 +61,7 @@ async fn shuffles_comic_books_from_a_book(w: &mut World) {
     w.response = Some(s.post(&p).await);
 }
 
-#[then(expr = "they should see pages of the comic book")]
+#[then("they should see pages of the comic book")]
 fn see_comic_book(w: &mut World) {
     let res = w.response.as_ref().unwrap();
     assert_eq!(200, res.status_code());
@@ -70,13 +70,13 @@ fn see_comic_book(w: &mut World) {
     assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle (9P)"));
 }
 
-#[when(expr = "the user shuffles comic books")]
+#[when("the user shuffles comic books")]
 async fn shuffles_comic_books(w: &mut World) {
     let s = w.server.as_ref().unwrap();
     w.response = Some(s.post("/shuffle").await);
 }
 
-#[then(expr = "they should be redirected to a random book")]
+#[then("they should be redirected to a random book")]
 async fn redirected_to_a_random_book(w: &mut World) {
     let res = w.response.as_ref().unwrap();
     assert_eq!(303, res.status_code());
@@ -99,7 +99,7 @@ async fn get_healthz(w: &mut World) -> Healthz {
     serde_json::from_str(&res.text()).unwrap()
 }
 
-#[when(expr = "the user re-scans comic books")]
+#[when("the user re-scans comic books")]
 async fn rescan_comic_books(w: &mut World) {
     let healthz = get_healthz(w).await;
     w.previous_scanned_at = Some(healthz.scanned_at);
@@ -108,13 +108,13 @@ async fn rescan_comic_books(w: &mut World) {
     w.response = Some(s.post("/rescan").await);
 }
 
-#[then(expr = "the server should re-scan comic books")]
+#[then("the server should re-scan comic books")]
 async fn should_rescan_comic_books(w: &mut World) {
     let healthz = get_healthz(w).await;
     assert!(healthz.scanned_at > w.previous_scanned_at.unwrap());
 }
 
-#[then(expr = "they should be redirected to the front page")]
+#[then("they should be redirected to the front page")]
 async fn should_be_redirected_to_the_front_page(w: &mut World) {
     let res = w.response.as_ref().unwrap();
     assert_eq!(303, res.status_code());
@@ -125,5 +125,5 @@ async fn should_be_redirected_to_the_front_page(w: &mut World) {
 
 #[tokio::main]
 async fn main() {
-    World::run("features/000_initial.feature").await;
+    World::run("tests/features/000_initial.feature").await;
 }
