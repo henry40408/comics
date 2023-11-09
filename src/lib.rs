@@ -150,6 +150,8 @@ pub enum MyError {
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("directory is empty: {0}")]
     EmptyDirectory(PathBuf),
+    #[error("image error: {0}")]
+    ImageError(#[from] image::ImageError),
     #[error("invalid path: {0}")]
     InvalidPath(PathBuf),
     #[error("IO error: {0}")]
@@ -175,6 +177,8 @@ pub struct Page {
     pub filename: String,
     pub id: String,
     pub path: String,
+    // (width, height)
+    pub dimensions: (u32, u32),
 }
 
 impl Page {
@@ -200,10 +204,12 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+        let dimensions = image::image_dimensions(path_ref)?;
         Ok(Page {
             filename,
             id: Uuid::new_v4().to_string(),
             path,
+            dimensions,
         })
     }
 }

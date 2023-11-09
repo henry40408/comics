@@ -23,7 +23,8 @@
     <p>
       <a href="/book/{{ b.id }}">
         <figure>
-          <img src="/data/{{ b.cover.id }}" />
+          <img src="/data/{{ b.cover.id }}" width="{{ b.cover.dimensions.0 }}" height="{{ b.cover.dimensions.1 }}"
+            loading="lazy" />
           <figcaption>
             <center>{{ b.title }}</center>
           </figcaption>
