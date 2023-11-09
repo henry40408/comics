@@ -16,7 +16,10 @@ blake3 = "1.5.0"
 chrono = "0.4.31"
 clap = { version = "4.4.3", features = ["derive", "env"] }
 hyper = "0.14.27"
-image = "0.24.7"
+image = { version = "0.24.7", default-features = false, features = [
+  "gif",
+  "jpeg",
+] }
 infer = "0.15.0"
 rand = "0.8.5"
 rpassword = "7.2.0"
