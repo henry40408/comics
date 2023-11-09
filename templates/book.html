@@ -14,7 +14,7 @@
     <form method="POST" action="/shuffle/{{ book.id }}"><input type="submit" value="Shuffle" /></form>
     {% for page in book.pages %}
     <figure>
-      <img src="/data/{{ page.id }}" />
+      <img src="/data/{{ page.id }}" width="{{ page.dimensions.0 }}" height="{{ page.dimensions.1 }}" loading="lazy" />
       <figcaption>
         <center>{{ page.filename }}</center>
       </figcaption>
