@@ -74,15 +74,13 @@
     rust_2018_idioms
 )]
 use askama::Template;
-use axum::extract::Path;
-use axum::Json;
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{header, Request},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
@@ -97,6 +95,7 @@ use std::{
     net::SocketAddr,
     path::{self, PathBuf},
     sync::{Arc, Mutex},
+    thread,
 };
 use thiserror::Error;
 use tower_http::trace::{self, TraceLayer};
@@ -303,7 +302,6 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
     }
     let scan = BookScan {
         books,
-        data_dir: path.as_ref().to_path_buf(),
         pages_map,
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,
@@ -313,13 +311,13 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
 
 #[derive(Clone)]
 struct AppState {
-    scan: Arc<Mutex<BookScan>>,
+    data_dir: OsString,
+    scan: Arc<Mutex<Option<BookScan>>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BookScan {
     pub books: Vec<Book>,
-    pub data_dir: PathBuf,
     pub pages_map: HashMap<String, Page>,
     pub scan_duration: Duration,
     pub scanned_at: chrono::DateTime<Utc>,
@@ -432,24 +430,27 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
             e
         })
         .ok()
-        .map(|scan| IndexTemplate {
-            books: scan.books.clone(),
-            books_count: scan.books.len(),
-            scan_duration: scan.scan_duration.num_milliseconds() as f64,
-            scanned_at: scan.scanned_at.to_rfc2822(),
-            version: VERSION.to_string(),
-        })
         .map_or(
             (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
-            |t| {
-                t.render()
-                    .map_err(|e| {
-                        debug!("failed to render index {e:?}");
-                        e
+            |scan| {
+                scan.clone()
+                    .map(|scan| IndexTemplate {
+                        books: scan.books.clone(),
+                        books_count: scan.books.len(),
+                        scan_duration: scan.scan_duration.num_milliseconds() as f64,
+                        scanned_at: scan.scanned_at.to_rfc2822(),
+                        version: VERSION.to_string(),
                     })
-                    .ok()
+                    .and_then(|t| {
+                        t.render()
+                            .map_err(|e| {
+                                debug!("failed to render index {e:?}");
+                                e
+                            })
+                            .ok()
+                    })
                     .map_or(
-                        (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
+                        (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
                         |rendered| (StatusCode::OK, Html(rendered)),
                     )
             },
@@ -470,32 +471,37 @@ async fn show_book_route(
         .map_or(
             (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
             |scan| {
-                scan.books
-                    .iter()
-                    .find(|b| b.id == id)
-                    .map(|book| BookTemplate {
-                        book: book.clone(),
-                        version: VERSION.to_string(),
-                    })
-                    .and_then(|t| {
-                        t.render()
-                            .map_err(|e| {
-                                debug!("failed to render book {e:?}");
-                                e
+                scan.clone().map_or(
+                    (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
+                    |scan| {
+                        scan.books
+                            .iter()
+                            .find(|b| b.id == id)
+                            .map(|book| BookTemplate {
+                                book: book.clone(),
+                                version: VERSION.to_string(),
                             })
-                            .ok()
-                    })
-                    .map_or(
-                        (StatusCode::NOT_FOUND, Html("not found".to_string())),
-                        |rendered| (StatusCode::OK, Html(rendered)),
-                    )
+                            .and_then(|t| {
+                                t.render()
+                                    .map_err(|e| {
+                                        debug!("failed to render book {e:?}");
+                                        e
+                                    })
+                                    .ok()
+                            })
+                            .map_or(
+                                (StatusCode::NOT_FOUND, Html("not found".to_string())),
+                                |rendered| (StatusCode::OK, Html(rendered)),
+                            )
+                    },
+                )
             },
         )
 }
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
     state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
-        scan_books(&scan.data_dir)
+        scan_books(&state.data_dir)
             .map(|new_scan| {
                 info!(
                     "finished re-scan in {}ms, {} book(s), {} page(s) found",
@@ -503,7 +509,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
                     new_scan.books.len(),
                     new_scan.pages_map.len()
                 );
-                *scan = new_scan;
+                *scan = Some(new_scan);
                 Redirect::to("/")
             })
             .map_err(|e| {
@@ -517,23 +523,25 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
-        let mut rng = thread_rng();
-        scan.books
-            .iter()
-            .map(|book| {
-                let name = &book.title;
-                debug!("book taken: {name}");
-                book
-            })
-            .collect::<Vec<&Book>>()
-            .choose(&mut rng)
-            .map_or(Redirect::to("/"), |book| {
-                let name = &book.title;
-                debug!("pick {name}");
+        scan.clone().map_or(Redirect::to("/"), |scan| {
+            let mut rng = thread_rng();
+            scan.books
+                .iter()
+                .map(|book| {
+                    let name = &book.title;
+                    debug!("book taken: {name}");
+                    book
+                })
+                .collect::<Vec<&Book>>()
+                .choose(&mut rng)
+                .map_or(Redirect::to("/"), |book| {
+                    let name = &book.title;
+                    debug!("pick {name}");
 
-                let id = &book.id;
-                Redirect::to(&format!("/book/{id}"))
-            })
+                    let id = &book.id;
+                    Redirect::to(&format!("/book/{id}"))
+                })
+        })
     })
 }
 
@@ -542,24 +550,26 @@ async fn shuffle_book_route(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
-        let mut rng = thread_rng();
-        scan.books
-            .iter()
-            .filter(|b| b.id != id)
-            .map(|book| {
-                let name = &book.title;
-                debug!("book taken: {name}");
-                book
-            })
-            .collect::<Vec<&Book>>()
-            .choose(&mut rng)
-            .map_or(Redirect::to("/"), |book| {
-                let name = &book.title;
-                debug!("pick {name}");
+        scan.clone().map_or(Redirect::to("/"), |scan| {
+            let mut rng = thread_rng();
+            scan.books
+                .iter()
+                .filter(|b| b.id != id)
+                .map(|book| {
+                    let name = &book.title;
+                    debug!("book taken: {name}");
+                    book
+                })
+                .collect::<Vec<&Book>>()
+                .choose(&mut rng)
+                .map_or(Redirect::to("/"), |book| {
+                    let name = &book.title;
+                    debug!("pick {name}");
 
-                let id = &book.id;
-                Redirect::to(&format!("/book/{id}"))
-            })
+                    let id = &book.id;
+                    Redirect::to(&format!("/book/{id}"))
+                })
+        })
     })
 }
 
@@ -576,14 +586,19 @@ async fn show_page_route(
         })
         .ok()
         .and_then(|scan| {
-            scan.pages_map.get(&id).and_then(|page| {
-                fs::read(&page.path)
-                    .map_err(|e| {
-                        debug!("failed to read page {e:?}");
-                        e
+            scan.clone().map(|scan| {
+                scan.pages_map
+                    .get(&id)
+                    .and_then(|page| {
+                        fs::read(&page.path)
+                            .map_err(|e| {
+                                debug!("failed to read page {e:?}");
+                                e
+                            })
+                            .ok()
+                            .map(|content| (StatusCode::OK, content))
                     })
-                    .ok()
-                    .map(|content| (StatusCode::OK, content))
+                    .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
             })
         })
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
@@ -596,25 +611,27 @@ pub struct Healthz {
 
 async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
     state.scan.lock().map_or(Json(()).into_response(), |scan| {
-        Json(Healthz {
-            scanned_at: scan.scanned_at.timestamp_millis(),
-        })
-        .into_response()
+        scan.clone().map_or(
+            (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
+            |scan| {
+                Json(Healthz {
+                    scanned_at: scan.scanned_at.timestamp_millis(),
+                })
+                .into_response()
+            },
+        )
     })
 }
 
 pub fn init_route(cli: &Cli) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
-    let scan = scan_books(data_dir)?;
-    info!(
-        "finished initial scan in {}ms, {} book(s), {} page(s) found",
-        scan.scan_duration.num_milliseconds(),
-        &scan.books.len(),
-        scan.pages_map.len()
-    );
+
     let state = AppState {
-        scan: Arc::new(Mutex::new(scan)),
+        data_dir: data_dir.clone(),
+        scan: Arc::new(Mutex::new(None)),
     };
+    let state_clone = state.clone();
+
     let router = Router::new()
         .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
@@ -636,6 +653,22 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state);
+
+    thread::spawn(move || {
+        let data_dir = state_clone.data_dir;
+        let new_scan = scan_books(data_dir).expect("initial scan failed");
+        info!(
+            "finished initial scan in {}ms, {} book(s), {} page(s) found",
+            new_scan.scan_duration.num_milliseconds(),
+            &new_scan.books.len(),
+            new_scan.pages_map.len()
+        );
+        {
+            let mut state = state_clone.scan.lock().unwrap();
+            *state = Some(new_scan);
+        }
+    });
+
     Ok(router)
 }
 

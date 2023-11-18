@@ -19,13 +19,24 @@ struct World {
 }
 
 #[given("a comics server")]
-fn given_several_comic_books(w: &mut World) {
+async fn given_several_comic_books(w: &mut World) {
+    use std::{thread, time};
+
     std::env::remove_var("AUTH_USERNAME");
     std::env::remove_var("AUTH_PASSWORD_HASH");
 
     let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
     let router = init_route(&cli).unwrap();
     w.server = Some(TestServer::new(router.into_make_service()).unwrap());
+
+    for _ in 0..10 {
+        let s = w.server.as_ref().unwrap();
+        let res = s.get("/healthz").await;
+        if res.status_code() == 200 {
+            break;
+        }
+        thread::sleep(time::Duration::from_millis(10));
+    }
 }
 
 #[when("the user visits the front page")]
