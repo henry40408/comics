@@ -1,6 +1,6 @@
 [package]
 name = "comics"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
