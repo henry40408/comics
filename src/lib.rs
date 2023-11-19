@@ -76,7 +76,7 @@
 use askama::Template;
 use axum::{
     extract::{Path, State},
-    http::{header, Request},
+    http::{header, Request, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
@@ -85,7 +85,6 @@ use axum::{
 use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
-use hyper::StatusCode;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -163,8 +162,6 @@ pub enum MyError {
     NotImage(PathBuf),
     #[error("password mismatched")]
     PasswordMismatched,
-    #[error("server error: {0}")]
-    ServerError(#[from] hyper::Error),
     #[error("failed to strip prefix")]
     StripPrefixError(#[from] path::StripPrefixError),
 }
@@ -680,7 +677,8 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
     info!("running on {addr}");
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .await?;
+        .await
+        .expect("failed to start the server");
     Ok(())
 }
 

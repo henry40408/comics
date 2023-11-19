@@ -1,6 +1,6 @@
 [package]
 name = "comics"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
@@ -15,7 +15,6 @@ bcrypt = "0.15.0"
 blake3 = "1.5.0"
 chrono = "0.4.31"
 clap = { version = "4.4.3", features = ["derive", "env"] }
-hyper = "0.14.27"
 image = { version = "0.24.7", default-features = false, features = [
   "png",
   "jpeg",
