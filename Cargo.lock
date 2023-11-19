@@ -482,7 +482,6 @@ dependencies = [
  "chrono",
  "clap",
  "cucumber",
- "hyper",
  "image",
  "infer",
  "rand",
