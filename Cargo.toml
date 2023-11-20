@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 uuid = { version = "1.5.0", features = ["v4"] }
 
 [dev-dependencies]
-axum-test = "13.1.1"
+axum-test = "13.4.1"
 cucumber = "0.20.0"
 
 [profile.release]
