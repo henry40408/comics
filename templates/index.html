@@ -1,47 +1,62 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+  <head>
+    <title>{{ books_count }} book(s) | Comics {{ version }}</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="/assets/water.css" rel="stylesheet" />
+  </head>
 
-<head>
-  <title>{{ books_count }} book(s) | Comics {{ version }}</title>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link href="/assets/water.css" rel="stylesheet" />
-</head>
+  <body>
+    <main>
+      <h1>Comics {{ version }}</h1>
+      <p>
+        {{ books.len() }} book(s) scanned at
+        <time is="x-time" datetime="{{ scanned_at }}">{{ scanned_at }}</time>
+        for
+        <time datetime="P{{ scan_duration / 1000.0 }}S"
+          >{{ scan_duration }}ms</time
+        >
+      </p>
+      <div style="display: flex">
+        <form method="POST" action="/rescan">
+          <input type="submit" value="Re-scan" />
+        </form>
+        <form method="POST" action="/shuffle">
+          <input type="submit" value="Shuffle" />
+        </form>
+      </div>
+      {% for b in books %}
+      <p>
+        <a href="/book/{{ b.id }}">
+          <figure>
+            <img
+              src="/data/{{ b.cover.id }}"
+              width="{{ b.cover.dimensions.0 }}"
+              height="{{ b.cover.dimensions.1 }}"
+              loading="lazy"
+            />
+            <figcaption>
+              <center>{{ b.title }}</center>
+            </figcaption>
+          </figure>
+        </a>
+      </p>
+      {% endfor %}
+    </main>
 
-<body>
-  <main>
-    <h1>Comics {{ version }}</h1>
-    <p>
-      {{ books.len() }} book(s) scanned at <time datetime="{{ scanned_at }}" class="timestamp">{{ scanned_at }}</time>
-      for <time datetime="P{{ scan_duration / 1000.0 }}S">{{ scan_duration }}ms</time>
-    </p>
-    <div style="display: flex">
-      <form method="POST" action="/rescan"><input type="submit" value="Re-scan" /></form>
-      <form method="POST" action="/shuffle"><input type="submit" value="Shuffle" /></form>
-    </div>
-    {% for b in books %}
-    <p>
-      <a href="/book/{{ b.id }}">
-        <figure>
-          <img src="/data/{{ b.cover.id }}" width="{{ b.cover.dimensions.0 }}" height="{{ b.cover.dimensions.1 }}"
-            loading="lazy" />
-          <figcaption>
-            <center>{{ b.title }}</center>
-          </figcaption>
-        </figure>
-      </a>
-    </p>
-    {% endfor %}
-  </main>
-
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      for (const e of Array.from(document.querySelectorAll('time.timestamp'))) {
-        const d = new Date(e.innerText)
-        e.innerHTML = d.toLocaleString()
+    <script>
+      class TimeComponent extends HTMLTimeElement {
+        connectedCallback() {
+          const d = new Date(this.getAttribute("datetime"));
+          const formatter = new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "medium",
+          });
+          this.innerHTML = formatter.format(d);
+        }
       }
-    })
-  </script>
-</body>
-
+      customElements.define("x-time", TimeComponent, { extends: "time" });
+    </script>
+  </body>
 </html>
