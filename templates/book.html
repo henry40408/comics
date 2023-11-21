@@ -1,26 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+  <head>
+    <title>
+      {{ book.title }} ({{ book.pages.len() }}P) | Comics {{ version }}
+    </title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="/assets/water.css" rel="stylesheet" />
+  </head>
 
-<head>
-  <title>{{ book.title }} ({{ book.pages.len() }}P) | Comics {{ version }}</title>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="/assets/water.css" rel="stylesheet">
-</head>
-
-<body>
-  <main>
-    <h1>{{ book.title }} ({{ book.pages.len() }}P)</h1>
-    <form method="POST" action="/shuffle/{{ book.id }}"><input type="submit" value="Shuffle" /></form>
-    {% for page in book.pages %}
-    <figure>
-      <img src="/data/{{ page.id }}" width="{{ page.dimensions.0 }}" height="{{ page.dimensions.1 }}" loading="lazy" />
-      <figcaption>
-        <center>{{ page.filename }}</center>
-      </figcaption>
-    </figure>
-    {% endfor %}
-  </main>
-</body>
-
+  <body>
+    <main>
+      <h1>{{ book.title }} ({{ book.pages.len() }}P)</h1>
+      <form method="POST" action="/shuffle/{{ book.id }}">
+        <input type="submit" value="Shuffle" />
+      </form>
+      {% for page in book.pages %}
+      <figure>
+        <img
+          src="/data/{{ page.id }}"
+          width="{{ page.dimensions.0 }}"
+          height="{{ page.dimensions.1 }}"
+          loading="lazy"
+        />
+        <figcaption>
+          <center>{{ page.filename }}</center>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </main>
+  </body>
 </html>
