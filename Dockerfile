@@ -1,4 +1,4 @@
-FROM rust:1.74.0-alpine AS builder
+FROM rust:1.74.1-alpine AS builder
 
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 

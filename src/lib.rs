@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
-    extract::{Path, State},
-    http::{header, Request, StatusCode},
+    extract::{Path, Request, State},
+    http::{header, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
@@ -22,6 +22,7 @@ use std::{
     thread,
 };
 use thiserror::Error;
+use tokio::net::TcpListener;
 use tower_http::trace::{self, TraceLayer};
 use tracing::{debug, error, info, warn, Level};
 use uuid::Uuid;
@@ -275,7 +276,7 @@ enum AuthState {
     Failed,
 }
 
-fn authenticate<B>(request: &Request<B>) -> AuthState {
+fn authenticate(request: &Request) -> AuthState {
     let expected = match get_expected_credentials() {
         None => {
             debug!("authentication is disabled");
@@ -331,7 +332,7 @@ fn authenticate<B>(request: &Request<B>) -> AuthState {
         })
 }
 
-async fn auth_middleware_fn<B>(request: Request<B>, next: Next<B>) -> impl IntoResponse {
+async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
     let authenticated = authenticate(&request);
     let response = next.run(request).await;
     match authenticated {
@@ -600,8 +601,8 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
         warn!("no authrization enabled, server is publicly accessible");
     }
     info!("running on {addr}");
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+    let listener = TcpListener::bind(&addr).await?;
+    axum::serve(listener, app)
         .await
         .expect("failed to start the server");
     Ok(())
