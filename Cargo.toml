@@ -1,6 +1,6 @@
 [package]
 name = "comics"
-version = "2.2.6"
+version = "2.2.7"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
@@ -14,27 +14,27 @@ base64 = "0.21.5"
 bcrypt = "0.15.0"
 blake3 = "1.5.0"
 chrono = "0.4.31"
-clap = { version = "4.4.3", features = ["derive", "env"] }
+clap = { version = "4.4.11", features = ["derive", "env"] }
 image = { version = "0.24.7", default-features = false, features = [
   "png",
   "jpeg",
 ] }
 infer = "0.15.0"
 rand = "0.8.5"
-rpassword = "7.2.0"
-serde = { version = "1.0.192", features = ["derive"] }
-serde_json = "1.0.107"
-thiserror = "1.0.50"
-tokio = { version = "1.33.0", features = ["macros", "rt-multi-thread"] }
+rpassword = "7.3.1"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+thiserror = "1.0.51"
+tokio = { version = "1.35.1", features = ["macros", "rt-multi-thread"] }
 tower = "0.4.13"
 tower-http = { version = "0.5.0", features = ["trace"] }
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-uuid = { version = "1.5.0", features = ["v4"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+uuid = { version = "1.6.1", features = ["v4"] }
 
 [dev-dependencies]
 axum-test = "14.0.0"
-cucumber = "0.20.0"
+cucumber = "0.20.2"
 
 [profile.release]
 codegen-units = 1
