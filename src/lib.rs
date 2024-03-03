@@ -618,3 +618,114 @@ pub fn hash_password() -> MyResult<()> {
     println!("{hashed}");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use axum_test::TestServer;
+    use clap::Parser as _;
+
+    use crate::{init_route, Cli};
+
+    const DATA_IDS: [&str; 2] = [
+        // Netherworld Nomads Journey to the Jade Jungle
+        "abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573",
+        // Quantum Quest Legacy of the Luminous League
+        "582d93470a2a22f29ff9a27c7937969d32a1301943c3ed7e6654a4a6637d30a4",
+    ];
+
+    async fn build_server() -> TestServer {
+        use std::{thread, time};
+
+        let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        let router = init_route(&cli).unwrap();
+        let server = TestServer::new(router.into_make_service()).unwrap();
+        for _ in 0..10 {
+            let res = server.get("/healthz").await;
+            if res.status_code() == 200 {
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        server
+    }
+
+    #[tokio::test]
+    async fn test_index_route() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let server = build_server().await;
+        let res = server.get("/").await;
+        assert_eq!(res.status_code(), 200);
+
+        let t = res.text();
+        assert!(t.contains("2 book(s)"));
+        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+        assert!(t.contains("Quantum Quest Legacy of the Luminous League"));
+    }
+
+    #[tokio::test]
+    async fn test_get_route() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let book_id = DATA_IDS.first().unwrap();
+        let path = format!("/book/{book_id}");
+        let server = build_server().await;
+        let res = server.get(&path).await;
+        assert_eq!(res.status_code(), 200);
+
+        let t = res.text();
+        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+    }
+
+    #[tokio::test]
+    async fn test_shuffle_route() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let server = build_server().await;
+        let res = server.post("/shuffle").await;
+        assert_eq!(res.status_code(), 303);
+
+        let splitted = res
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split('/')
+            .collect::<Vec<&str>>();
+        assert!(DATA_IDS.contains(splitted.get(2).unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_shuffle_route_from_a_book() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let book_id = DATA_IDS.first().unwrap();
+        let path = format!("/shuffle/{book_id}");
+        let server = build_server().await;
+        let res = server.post(&path).await;
+        assert_eq!(res.status_code(), 303);
+
+        let location = res.headers().get("location").unwrap().to_str().unwrap();
+        let book_id = DATA_IDS.last().unwrap();
+        let expected = format!("/book/{book_id}");
+        assert_eq!(location, expected);
+    }
+
+    #[tokio::test]
+    async fn test_rescan_route() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let server = build_server().await;
+        let res = server.post("/rescan").await;
+        assert_eq!(res.status_code(), 303);
+
+        let location = res.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(location, "/");
+    }
+}

@@ -10,7 +10,7 @@ description = "Simple file server for comic books"
 [dependencies]
 askama = "0.12.1"
 axum = "0.7.2"
-base64 = "0.21.5"
+base64 = "0.22.0"
 bcrypt = "0.15.0"
 blake3 = "1.5.0"
 chrono = "0.4.31"
@@ -34,7 +34,6 @@ uuid = { version = "1.6.1", features = ["v4"] }
 
 [dev-dependencies]
 axum-test = "14.0.0"
-cucumber = "0.20.2"
 
 [profile.release]
 codegen-units = 1
@@ -42,10 +41,6 @@ lto = true
 opt-level = "z"
 panic = "abort"
 strip = true
-
-[[test]]
-name = "comics"
-harness = false
 
 # https://github.com/EmbarkStudios/rust-ecosystem/blob/732513edfd9172f4eda358b2d0cefc6cad1585ee/lints.rs
 [lints.rust]
