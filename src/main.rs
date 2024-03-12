@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use comics::{hash_password, run_server, scan_books, Cli, Commands};
 use tracing::{error, Level};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 #[tokio::main]
 async fn main() {
@@ -19,6 +19,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_ansi(!cli.no_color)
         .with_env_filter(env_filter)
+        .with_span_events(FmtSpan::CLOSE)
         .with_target(false)
         .compact()
         .init();
