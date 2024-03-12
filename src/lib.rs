@@ -24,7 +24,7 @@ use std::{
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tower_http::trace::{self, TraceLayer};
-use tracing::{debug, error, info, warn, Level};
+use tracing::{debug, error, info, span, warn, Level};
 use uuid::Uuid;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -173,20 +173,20 @@ impl Book {
 fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .filter_map(|entry| {
-            if entry.is_err() {
-                debug!("skip because {:?}", entry);
+            if let Err(ref e) = entry {
+                error!(err = e.to_string(), "skip file");
             }
             Result::ok(entry)
         })
         .filter_map(|entry| {
             let page = Page::new(entry.path().as_path());
             if let Err(ref e) = page {
-                debug!("{}", e);
+                error!(err = e.to_string(), "failed to create page");
             }
             Result::ok(page)
         })
         .map(|page| {
-            debug!("found a page {}", page.path);
+            debug!(path = page.path, "found a page");
             page
         })
         .collect();
@@ -198,21 +198,28 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
     let mut books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
-            if entry.is_err() {
-                debug!("skip because {:?}", entry);
+            if let Err(ref e) = entry {
+                error!(err = e.to_string(), "skip directory");
             }
             Result::ok(entry)
         })
         .filter_map(|entry| {
-            debug!("found a directory: {}", entry.path().to_string_lossy());
+            debug!(
+                path = entry.path().to_string_lossy().to_string(),
+                "found a directory"
+            );
             let book = Book::new(entry.path().as_path());
             if let Err(ref e) = book {
-                debug!("{}", e);
+                error!(err = e.to_string(), "failed to create book");
             }
             Result::ok(book)
         })
         .map(|book| {
-            debug!("found a book {} ({}P)", &book.title, &book.pages.len());
+            debug!(
+                title = &book.title,
+                pages = &book.pages.len(),
+                "found a book"
+            );
             book
         })
         .collect();
@@ -349,7 +356,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
         .scan
         .lock()
         .map_err(|e| {
-            debug!("failed to render index {e:?}");
+            error!(err = e.to_string(), "failed to render index");
             e
         })
         .ok()
@@ -367,7 +374,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
                     .and_then(|t| {
                         t.render()
                             .map_err(|e| {
-                                debug!("failed to render index {e:?}");
+                                error!(err = e.to_string(), "failed to render index");
                                 e
                             })
                             .ok()
@@ -388,7 +395,7 @@ async fn show_book_route(
         .scan
         .lock()
         .map_err(|e| {
-            debug!("failed to render book {e:?}");
+            error!(err = e.to_string(), "failed to render book");
             e
         })
         .map_or(
@@ -407,7 +414,7 @@ async fn show_book_route(
                             .and_then(|t| {
                                 t.render()
                                     .map_err(|e| {
-                                        debug!("failed to render book {e:?}");
+                                        error!(err = e.to_string(), "failed to render book");
                                         e
                                     })
                                     .ok()
@@ -423,20 +430,21 @@ async fn show_book_route(
 }
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
+    let s = span!(Level::DEBUG, "rescan books").entered();
     state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
         scan_books(&state.data_dir)
             .map(|new_scan| {
                 info!(
-                    "finished re-scan in {}ms, {} book(s), {} page(s) found",
-                    new_scan.scan_duration.num_milliseconds(),
-                    new_scan.books.len(),
-                    new_scan.pages_map.len()
+                    books = new_scan.books.len(),
+                    pages = new_scan.pages_map.len(),
+                    "finished re-scan",
                 );
+                s.exit();
                 *scan = Some(new_scan);
                 Redirect::to("/")
             })
             .map_err(|e| {
-                debug!("failed to re-scan books {e:?}");
+                error!(err = e.to_string(), "failed to re-scan books");
                 e
             })
             .ok()
@@ -445,21 +453,21 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
+    let s = span!(Level::DEBUG, "shuffle").entered();
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
         scan.clone().map_or(Redirect::to("/"), |scan| {
             let mut rng = thread_rng();
             scan.books
                 .iter()
                 .map(|book| {
-                    let name = &book.title;
-                    debug!("book taken: {name}");
+                    debug!(title = &book.title, "book taken");
                     book
                 })
                 .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    let name = &book.title;
-                    debug!("pick {name}");
+                    debug!(title = &book.title, "pick book");
+                    s.exit();
 
                     let id = &book.id;
                     Redirect::to(&format!("/book/{id}"))
@@ -472,6 +480,7 @@ async fn shuffle_book_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    let s = span!(Level::DEBUG, "shuffle from a book").entered();
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
         scan.clone().map_or(Redirect::to("/"), |scan| {
             let mut rng = thread_rng();
@@ -479,15 +488,14 @@ async fn shuffle_book_route(
                 .iter()
                 .filter(|b| b.id != id)
                 .map(|book| {
-                    let name = &book.title;
-                    debug!("book taken: {name}");
+                    debug!(title = &book.title, "book taken");
                     book
                 })
                 .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    let name = &book.title;
-                    debug!("pick {name}");
+                    debug!(title = &book.title, "pick book");
+                    s.exit();
 
                     let id = &book.id;
                     Redirect::to(&format!("/book/{id}"))
@@ -504,7 +512,7 @@ async fn show_page_route(
         .scan
         .lock()
         .map_err(|e| {
-            debug!("failed to render page {e:?}");
+            error!(err = e.to_string(), "failed to render page");
             e
         })
         .ok()
@@ -515,7 +523,7 @@ async fn show_page_route(
                     .and_then(|page| {
                         fs::read(&page.path)
                             .map_err(|e| {
-                                debug!("failed to read page {e:?}");
+                                error!(err = e.to_string(), "failed to read page");
                                 e
                             })
                             .ok()
@@ -579,13 +587,14 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
 
     thread::spawn(move || {
         let data_dir = state_clone.data_dir;
+        let s = span!(Level::DEBUG, "initial scan").entered();
         let new_scan = scan_books(data_dir).expect("initial scan failed");
         info!(
-            "finished initial scan in {}ms, {} book(s), {} page(s) found",
-            new_scan.scan_duration.num_milliseconds(),
-            &new_scan.books.len(),
-            new_scan.pages_map.len()
+            books = &new_scan.books.len(),
+            pages = new_scan.pages_map.len(),
+            "finished initial scan",
         );
+        s.exit();
         {
             let mut state = state_clone.scan.lock().unwrap();
             *state = Some(new_scan);
