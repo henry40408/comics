@@ -16,10 +16,17 @@ async fn main() {
     let env_filter = EnvFilter::builder()
         .with_default_directive(default_directive)
         .from_env_lossy();
+    let span_events = env_filter.max_level_hint().map_or(FmtSpan::CLOSE, |l| {
+        if l >= Level::DEBUG {
+            FmtSpan::CLOSE
+        } else {
+            FmtSpan::NONE
+        }
+    });
     tracing_subscriber::fmt()
         .with_ansi(!cli.no_color)
         .with_env_filter(env_filter)
-        .with_span_events(FmtSpan::CLOSE)
+        .with_span_events(span_events)
         .with_target(false)
         .compact()
         .init();
