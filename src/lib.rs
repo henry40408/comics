@@ -646,7 +646,7 @@ mod tests {
             if res.status_code() == 200 {
                 break;
             }
-            thread::sleep(time::Duration::from_millis(10));
+            thread::sleep(time::Duration::from_millis(100));
         }
         server
     }
