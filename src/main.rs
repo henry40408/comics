@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{AddrParseError, SocketAddr};
 
 use clap::Parser;
 use comics::{hash_password, run_server, scan_books, Cli, Commands};
@@ -27,13 +27,13 @@ async fn main() {
     match &cli.command {
         Some(Commands::HashPassword { .. }) => {
             if let Err(e) = hash_password() {
-                error!("failed to hash password: {e:?}");
+                error!(err = e.to_string(), "failed to hash password");
             }
         }
         Some(Commands::List { .. }) => {
             let scan = match scan_books(&cli.data_dir) {
                 Err(e) => {
-                    error!("failed to scan directory: {e:?}");
+                    error!(err = e.to_string(), "failed to scan directory");
                     return;
                 }
                 Ok(b) => b,
@@ -51,13 +51,18 @@ async fn main() {
         None => {
             let bind: SocketAddr = match cli.bind.parse() {
                 Err(e) => {
-                    error!("invalid host:port pair: {e:?}");
+                    let e: AddrParseError = e;
+                    error!(
+                        bind = cli.bind,
+                        err = e.to_string(),
+                        "invalid host:port pair"
+                    );
                     return;
                 }
                 Ok(b) => b,
             };
             if let Err(e) = run_server(bind, &cli).await {
-                error!("failed to start the server: {e:?}");
+                error!(err = e.to_string(), "failed to start the server");
             };
         }
     };

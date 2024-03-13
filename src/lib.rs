@@ -609,7 +609,7 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
-    info!("running on {addr}");
+    info!(addr = addr.to_string(), "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .await
