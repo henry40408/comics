@@ -74,8 +74,8 @@ pub enum MyError {
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("directory is empty: {0}")]
     EmptyDirectory(PathBuf),
-    #[error("image error: {0}")]
-    ImageError(#[from] image::ImageError),
+    #[error("imsz error: {0}")]
+    ImszError(#[from] imsz::ImError),
     #[error("invalid path: {0}")]
     InvalidPath(PathBuf),
     #[error("IO error: {0}")]
@@ -100,7 +100,7 @@ pub struct Page {
     pub id: String,
     pub path: String,
     // (width, height)
-    pub dimensions: (u32, u32),
+    pub dimensions: (u64, u64),
 }
 
 impl Page {
@@ -115,23 +115,16 @@ impl Page {
             .map(ToString::to_string)
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
 
-        let is_image = infer::get_from_path(path_ref)
-            .ok()
-            .is_some_and(|i| i.is_some_and(|i| i.matcher_type() == infer::MatcherType::Image));
-        if !is_image {
-            return Err(MyError::NotImage(path_ref.to_path_buf()));
-        }
-
         let filename = path_ref
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-        let dimensions = image::image_dimensions(path_ref)?;
+        let image_info = imsz::imsz(&path)?;
         Ok(Page {
             filename,
             id: Uuid::new_v4().to_string(),
             path,
-            dimensions,
+            dimensions: (image_info.width, image_info.height),
         })
     }
 }
