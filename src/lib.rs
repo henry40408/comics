@@ -10,11 +10,11 @@ use axum::{
 use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
+use imsz::ImInfo;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    ffi::OsString,
     fs,
     net::SocketAddr,
     path::{self, PathBuf},
@@ -23,8 +23,9 @@ use std::{
 };
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tower_http::trace::{self, TraceLayer};
-use tracing::{debug, error, info, span, warn, Level};
+use tower_http::trace::TraceLayer;
+use tracing::instrument;
+use tracing::{error, info, trace, warn, Level};
 use uuid::Uuid;
 
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -48,7 +49,7 @@ pub struct Cli {
 
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
-    pub data_dir: OsString,
+    pub data_dir: PathBuf,
 
     /// No color https://no-color.org/
     #[arg(long, env = "NO_COLOR")]
@@ -95,36 +96,43 @@ pub enum MyError {
 type MyResult<T> = Result<T, MyError>;
 
 #[derive(Clone, Debug)]
+pub struct Dimension {
+    pub height: u64,
+    pub width: u64,
+}
+
+impl Dimension {
+    fn from_imsz(info: &ImInfo) -> Self {
+        Self {
+            height: info.height,
+            width: info.width,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Page {
     pub filename: String,
     pub id: String,
     pub path: String,
-    // (width, height)
-    pub dimensions: (u64, u64),
+    pub dimension: Dimension,
 }
 
 impl Page {
-    fn new<P: AsRef<path::Path>>(path: P) -> MyResult<Self> {
-        let path_ref = path.as_ref();
-        if !path_ref.is_file() {
-            return Err(MyError::NotFile(path_ref.to_path_buf()));
+    fn new(path: &path::Path) -> MyResult<Self> {
+        if !path.is_file() {
+            return Err(MyError::NotFile(path.to_path_buf()));
         }
-
-        let path = path_ref
-            .to_str()
-            .map(ToString::to_string)
-            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-
-        let filename = path_ref
+        let filename = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
-        let image_info = imsz::imsz(&path)?;
+            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
+        let dimension = Dimension::from_imsz(&imsz::imsz(path)?);
         Ok(Page {
             filename,
             id: Uuid::new_v4().to_string(),
-            path,
-            dimensions: (image_info.width, image_info.height),
+            path: path.to_string_lossy().to_string(),
+            dimension,
         })
     }
 }
@@ -138,22 +146,19 @@ pub struct Book {
 }
 
 impl Book {
-    fn new<P: AsRef<path::Path>>(path: P) -> Result<Self, MyError> {
-        let path_ref = path.as_ref();
-        if !path_ref.is_dir() {
-            return Err(MyError::NotDirectory(path_ref.to_path_buf()));
+    fn new(path: &path::Path) -> Result<Self, MyError> {
+        if !path.is_dir() {
+            return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-
-        let pages = scan_pages(path_ref)?;
+        let pages = scan_pages(path.to_path_buf())?;
         let cover = pages
             .first()
             .map(Clone::clone)
-            .ok_or(MyError::EmptyDirectory(path_ref.to_path_buf()))?;
-
-        let title = path_ref
+            .ok_or(MyError::EmptyDirectory(path.to_path_buf()))?;
+        let title = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path_ref.to_path_buf()))?;
+            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
             cover,
             id: blake3::hash(title.as_bytes()).to_string(),
@@ -163,8 +168,9 @@ impl Book {
     }
 }
 
-fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
-    let mut pages: Vec<Page> = fs::read_dir(&path)?
+#[instrument(level = Level::TRACE)]
+fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
+    let mut pages: Vec<Page> = fs::read_dir(&book_path)?
         .filter_map(|entry| {
             if let Err(ref err) = entry {
                 error!(?err, "skip file");
@@ -175,24 +181,21 @@ fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
             let path = entry.path();
             let page = Page::new(&path);
             if let Err(ref err) = page {
-                let path = path.to_string_lossy().to_string();
-                error!(?err, path, "failed to create page");
+                error!(?err, ?path, "failed to create page");
+            } else {
+                trace!(?path, "found a page");
             }
             Result::ok(page)
-        })
-        .map(|page| {
-            let path = &page.path;
-            debug!(path, "found a page");
-            page
         })
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(pages)
 }
 
-pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
+#[instrument(level = Level::TRACE)]
+pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
-    let mut books: Vec<Book> = fs::read_dir(&path)?
+    let mut books: Vec<Book> = fs::read_dir(&data_path)?
         .filter_map(|entry| {
             if let Err(ref err) = entry {
                 error!(?err, "skip directory");
@@ -200,19 +203,18 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
             Result::ok(entry)
         })
         .filter_map(|entry| {
-            let path = entry.path().to_string_lossy().to_string();
-            debug!(path, "found a directory");
-            let book = Book::new(entry.path().as_path());
-            if let Err(ref err) = book {
-                error!(?err, "failed to create book");
-            }
+            let path = entry.path();
+            let book = Book::new(path.as_path());
+            match book {
+                Err(ref err) => error!(?err, "failed to create book"),
+                Ok(ref book) => {
+                    let pages = book.pages.len();
+                    let title = &book.title;
+                    let cover = &book.cover.path;
+                    trace!(?path, cover, pages, title, "found a book");
+                }
+            };
             Result::ok(book)
-        })
-        .map(|book| {
-            let title = &book.title;
-            let pages = book.pages.len();
-            debug!(title, pages, "found a book");
-            book
         })
         .collect();
     books.sort_by(|a, b| a.title.cmp(&b.title));
@@ -222,18 +224,17 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
             pages_map.insert(page.id.clone(), page.clone());
         }
     }
-    let scan = BookScan {
+    Ok(BookScan {
         books,
         pages_map,
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,
-    };
-    Ok(scan)
+    })
 }
 
 #[derive(Clone)]
 struct AppState {
-    data_dir: OsString,
+    data_dir: PathBuf,
     scan: Arc<Mutex<Option<BookScan>>>,
 }
 
@@ -249,7 +250,6 @@ pub struct BookScan {
 #[template(path = "index.html")]
 struct IndexTemplate {
     books: Vec<Book>,
-    books_count: usize,
     scan_duration: f64,
     scanned_at: String,
     version: String,
@@ -278,7 +278,6 @@ enum AuthState {
 fn authenticate(request: &Request) -> AuthState {
     let expected = match get_expected_credentials() {
         None => {
-            debug!("authentication is disabled");
             return AuthState::Public;
         }
         Some(e) => e,
@@ -286,7 +285,6 @@ fn authenticate(request: &Request) -> AuthState {
 
     let header_value = request.headers().get("authorization");
     if header_value.is_none() {
-        debug!("request authentication");
         return AuthState::Request;
     }
 
@@ -316,17 +314,12 @@ fn authenticate(request: &Request) -> AuthState {
                     .ok()
                     .map_or(AuthState::Failed, |matched| {
                         if matched {
-                            debug!("authenticated");
                             AuthState::Success
                         } else {
-                            debug!("password mismatched");
                             AuthState::Failed
                         }
                     }),
-                _ => {
-                    debug!("username mismatched");
-                    AuthState::Failed
-                }
+                _ => AuthState::Failed,
             }
         })
 }
@@ -358,7 +351,6 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
                 scan.clone()
                     .map(|scan| IndexTemplate {
                         books: scan.books.clone(),
-                        books_count: scan.books.len(),
                         scan_duration: scan.scan_duration.num_milliseconds() as f64,
                         scanned_at: scan.scanned_at.to_rfc2822(),
                         version: VERSION.to_string(),
@@ -422,15 +414,13 @@ async fn show_book_route(
 }
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
-    let s = span!(Level::DEBUG, "rescan books").entered();
     state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
-        scan_books(&state.data_dir)
+        scan_books(state.data_dir)
             .map(|new_scan| {
                 let books = new_scan.books.len();
                 let pages = new_scan.pages_map.len();
                 let ms = new_scan.scan_duration.num_milliseconds();
                 info!(books, pages, ms, "finished re-scan");
-                s.exit();
                 *scan = Some(new_scan);
                 Redirect::to("/")
             })
@@ -444,24 +434,12 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
-    let s = span!(Level::DEBUG, "shuffle").entered();
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
         scan.clone().map_or(Redirect::to("/"), |scan| {
             let mut rng = thread_rng();
             scan.books
-                .iter()
-                .map(|book| {
-                    let title = &book.title;
-                    debug!(title, "book taken");
-                    book
-                })
-                .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    let title = &book.title;
-                    debug!(title, "pick book");
-                    s.exit();
-
                     let id = &book.id;
                     Redirect::to(&format!("/book/{id}"))
                 })
@@ -473,25 +451,15 @@ async fn shuffle_book_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let s = span!(Level::DEBUG, "shuffle from a book").entered();
     state.scan.lock().map_or(Redirect::to("/"), |scan| {
         scan.clone().map_or(Redirect::to("/"), |scan| {
             let mut rng = thread_rng();
             scan.books
                 .iter()
                 .filter(|b| b.id != id)
-                .map(|book| {
-                    let title = &book.title;
-                    debug!(title, "book taken");
-                    book
-                })
                 .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    let title = &book.title;
-                    debug!(title, "pick book");
-                    s.exit();
-
                     let id = &book.id;
                     Redirect::to(&format!("/book/{id}"))
                 })
@@ -556,8 +524,8 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         data_dir: data_dir.clone(),
         scan: Arc::new(Mutex::new(None)),
     };
-    let state_clone = state.clone();
 
+    let state_c = state.clone();
     let router = Router::new()
         .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
@@ -575,22 +543,21 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         )
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(state);
+        .with_state(state_c);
 
+    let state_c = state.clone();
     thread::spawn(move || {
-        let data_dir = state_clone.data_dir;
-        let s = span!(Level::DEBUG, "initial scan").entered();
+        let data_dir = state_c.data_dir;
         let new_scan = scan_books(data_dir).expect("initial scan failed");
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
         let ms = &new_scan.scan_duration.num_milliseconds();
         info!(books, pages, ms, "finished initial scan");
-        s.exit();
         {
-            let mut state = state_clone.scan.lock().unwrap();
+            let mut state = state_c.scan.lock().unwrap();
             *state = Some(new_scan);
         }
     });

@@ -38,7 +38,7 @@ async fn main() {
             }
         }
         Some(Commands::List { .. }) => {
-            let scan = match scan_books(&cli.data_dir) {
+            let scan = match scan_books(cli.data_dir) {
                 Err(err) => {
                     error!(?err, "failed to scan directory");
                     return;
