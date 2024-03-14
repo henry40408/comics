@@ -12,9 +12,12 @@
   <body>
     <main>
       <h1>{{ book.title }} ({{ book.pages.len() }}P)</h1>
-      <form method="POST" action="/shuffle/{{ book.id }}">
-        <input type="submit" value="Shuffle" />
-      </form>
+      <div style="display: flex">
+        <a href="/"><button>Home</button></a>
+        <form method="POST" action="/shuffle/{{ book.id }}">
+          <input type="submit" value="Shuffle" />
+        </form>
+      </div>
       {% for page in book.pages %}
       <figure>
         <img

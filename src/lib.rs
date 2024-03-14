@@ -166,20 +166,23 @@ impl Book {
 fn scan_pages<P: AsRef<path::Path>>(path: P) -> MyResult<Vec<Page>> {
     let mut pages: Vec<Page> = fs::read_dir(&path)?
         .filter_map(|entry| {
-            if let Err(ref e) = entry {
-                error!(err = e.to_string(), "skip file");
+            if let Err(ref err) = entry {
+                error!(?err, "skip file");
             }
             Result::ok(entry)
         })
         .filter_map(|entry| {
-            let page = Page::new(entry.path().as_path());
-            if let Err(ref e) = page {
-                error!(err = e.to_string(), "failed to create page");
+            let path = entry.path();
+            let page = Page::new(&path);
+            if let Err(ref err) = page {
+                let path = path.to_string_lossy().to_string();
+                error!(?err, path, "failed to create page");
             }
             Result::ok(page)
         })
         .map(|page| {
-            debug!(path = page.path, "found a page");
+            let path = &page.path;
+            debug!(path, "found a page");
             page
         })
         .collect();
@@ -191,28 +194,24 @@ pub fn scan_books<P: AsRef<path::Path>>(path: P) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
     let mut books: Vec<Book> = fs::read_dir(&path)?
         .filter_map(|entry| {
-            if let Err(ref e) = entry {
-                error!(err = e.to_string(), "skip directory");
+            if let Err(ref err) = entry {
+                error!(?err, "skip directory");
             }
             Result::ok(entry)
         })
         .filter_map(|entry| {
-            debug!(
-                path = entry.path().to_string_lossy().to_string(),
-                "found a directory"
-            );
+            let path = entry.path().to_string_lossy().to_string();
+            debug!(path, "found a directory");
             let book = Book::new(entry.path().as_path());
-            if let Err(ref e) = book {
-                error!(err = e.to_string(), "failed to create book");
+            if let Err(ref err) = book {
+                error!(?err, "failed to create book");
             }
             Result::ok(book)
         })
         .map(|book| {
-            debug!(
-                title = &book.title,
-                pages = &book.pages.len(),
-                "found a book"
-            );
+            let title = &book.title;
+            let pages = book.pages.len();
+            debug!(title, pages, "found a book");
             book
         })
         .collect();
@@ -348,9 +347,9 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
     state
         .scan
         .lock()
-        .map_err(|e| {
-            error!(err = e.to_string(), "failed to render index");
-            e
+        .map_err(|err| {
+            error!(?err, "failed to render index");
+            err
         })
         .ok()
         .map_or(
@@ -366,9 +365,9 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
                     })
                     .and_then(|t| {
                         t.render()
-                            .map_err(|e| {
-                                error!(err = e.to_string(), "failed to render index");
-                                e
+                            .map_err(|err| {
+                                error!(?err, "failed to render index");
+                                err
                             })
                             .ok()
                     })
@@ -387,9 +386,9 @@ async fn show_book_route(
     state
         .scan
         .lock()
-        .map_err(|e| {
-            error!(err = e.to_string(), "failed to render book");
-            e
+        .map_err(|err| {
+            error!(?err, "failed to render book");
+            err
         })
         .map_or(
             (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
@@ -406,9 +405,9 @@ async fn show_book_route(
                             })
                             .and_then(|t| {
                                 t.render()
-                                    .map_err(|e| {
-                                        error!(err = e.to_string(), "failed to render book");
-                                        e
+                                    .map_err(|err| {
+                                        error!(?err, "failed to render book");
+                                        err
                                     })
                                     .ok()
                             })
@@ -427,18 +426,17 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
     state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
         scan_books(&state.data_dir)
             .map(|new_scan| {
-                info!(
-                    books = new_scan.books.len(),
-                    pages = new_scan.pages_map.len(),
-                    "finished re-scan",
-                );
+                let books = new_scan.books.len();
+                let pages = new_scan.pages_map.len();
+                let ms = new_scan.scan_duration.num_milliseconds();
+                info!(books, pages, ms, "finished re-scan");
                 s.exit();
                 *scan = Some(new_scan);
                 Redirect::to("/")
             })
-            .map_err(|e| {
-                error!(err = e.to_string(), "failed to re-scan books");
-                e
+            .map_err(|err| {
+                error!(?err, "failed to re-scan books");
+                err
             })
             .ok()
             .unwrap_or(Redirect::to("/"))
@@ -453,13 +451,15 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
             scan.books
                 .iter()
                 .map(|book| {
-                    debug!(title = &book.title, "book taken");
+                    let title = &book.title;
+                    debug!(title, "book taken");
                     book
                 })
                 .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    debug!(title = &book.title, "pick book");
+                    let title = &book.title;
+                    debug!(title, "pick book");
                     s.exit();
 
                     let id = &book.id;
@@ -481,13 +481,15 @@ async fn shuffle_book_route(
                 .iter()
                 .filter(|b| b.id != id)
                 .map(|book| {
-                    debug!(title = &book.title, "book taken");
+                    let title = &book.title;
+                    debug!(title, "book taken");
                     book
                 })
                 .collect::<Vec<&Book>>()
                 .choose(&mut rng)
                 .map_or(Redirect::to("/"), |book| {
-                    debug!(title = &book.title, "pick book");
+                    let title = &book.title;
+                    debug!(title, "pick book");
                     s.exit();
 
                     let id = &book.id;
@@ -504,9 +506,9 @@ async fn show_page_route(
     state
         .scan
         .lock()
-        .map_err(|e| {
-            error!(err = e.to_string(), "failed to render page");
-            e
+        .map_err(|err| {
+            error!(?err, "failed to render page");
+            err
         })
         .ok()
         .and_then(|scan| {
@@ -515,9 +517,9 @@ async fn show_page_route(
                     .get(&id)
                     .and_then(|page| {
                         fs::read(&page.path)
-                            .map_err(|e| {
-                                error!(err = e.to_string(), "failed to read page");
-                                e
+                            .map_err(|err| {
+                                error!(?err, "failed to read page");
+                                err
                             })
                             .ok()
                             .map(|content| (StatusCode::OK, content))
@@ -582,11 +584,10 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         let data_dir = state_clone.data_dir;
         let s = span!(Level::DEBUG, "initial scan").entered();
         let new_scan = scan_books(data_dir).expect("initial scan failed");
-        info!(
-            books = &new_scan.books.len(),
-            pages = new_scan.pages_map.len(),
-            "finished initial scan",
-        );
+        let books = &new_scan.books.len();
+        let pages = &new_scan.pages_map.len();
+        let ms = &new_scan.scan_duration.num_milliseconds();
+        info!(books, pages, ms, "finished initial scan");
         s.exit();
         {
             let mut state = state_clone.scan.lock().unwrap();
@@ -602,7 +603,7 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
-    info!(addr = addr.to_string(), "server started");
+    info!(?addr, "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .await
