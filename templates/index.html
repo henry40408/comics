@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <title>{{ books_count }} book(s) | Comics {{ version }}</title>
+    <title>{{ books.len() }} book(s) | Comics {{ version }}</title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="/assets/water.css" rel="stylesheet" />
@@ -32,8 +32,8 @@
           <figure>
             <img
               src="/data/{{ b.cover.id }}"
-              width="{{ b.cover.dimensions.0 }}"
-              height="{{ b.cover.dimensions.1 }}"
+              width="{{ b.cover.dimension.width }}"
+              height="{{ b.cover.dimension.height }}"
               loading="lazy"
             />
             <figcaption>
