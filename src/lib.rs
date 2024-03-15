@@ -11,6 +11,7 @@ use base64::{engine::GeneralPurpose, Engine};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use imsz::ImInfo;
+use parking_lot::Mutex;
 use rand::{seq::SliceRandom, thread_rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use std::{
     fs,
     net::SocketAddr,
     path::{self, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread,
 };
 use thiserror::Error;
@@ -342,163 +343,130 @@ async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
 }
 
 async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
-    state
-        .scan
-        .lock()
-        .map_err(|err| {
-            error!(%err, "failed to render index");
-            err
-        })
-        .ok()
-        .map_or(
-            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
-            |scan| {
-                scan.clone()
-                    .map(|scan| IndexTemplate {
-                        books: scan.books.clone(),
-                        scan_duration: scan.scan_duration.num_milliseconds() as f64,
-                        scanned_at: scan.scanned_at.to_rfc2822(),
-                        version: VERSION.to_string(),
-                    })
-                    .and_then(|t| {
-                        t.render()
-                            .map_err(|err| {
-                                error!(%err, "failed to render index");
-                                err
-                            })
-                            .ok()
-                    })
-                    .map_or(
-                        (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-                        |rendered| (StatusCode::OK, Html(rendered)),
-                    )
-            },
-        )
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
+        Some(ref scan) => scan,
+    };
+    let t = IndexTemplate {
+        books: scan.books.clone(),
+        scan_duration: scan.scan_duration.num_milliseconds() as f64,
+        scanned_at: scan.scanned_at.to_rfc2822(),
+        version: VERSION.to_string(),
+    };
+    t.render().map_or_else(
+        |err| {
+            error!(%err,"faile to render index");
+            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()))
+        },
+        |rendered| (StatusCode::OK, Html(rendered)),
+    )
 }
 
 async fn show_book_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    state
-        .scan
-        .lock()
-        .map_err(|err| {
-            error!(%err, "failed to render book");
-            err
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
+        Some(ref scan) => scan,
+    };
+    scan.books
+        .iter()
+        .find(|b| b.id == id)
+        .map(|book| BookTemplate {
+            book: book.clone(),
+            version: VERSION.to_string(),
+        })
+        .and_then(|t| {
+            t.render()
+                .map_err(|err| {
+                    error!(%err, "failed to render book");
+                    err
+                })
+                .ok()
         })
         .map_or(
-            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new())),
-            |scan| {
-                scan.clone().map_or(
-                    (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-                    |scan| {
-                        scan.books
-                            .iter()
-                            .find(|b| b.id == id)
-                            .map(|book| BookTemplate {
-                                book: book.clone(),
-                                version: VERSION.to_string(),
-                            })
-                            .and_then(|t| {
-                                t.render()
-                                    .map_err(|err| {
-                                        error!(%err, "failed to render book");
-                                        err
-                                    })
-                                    .ok()
-                            })
-                            .map_or(
-                                (StatusCode::NOT_FOUND, Html("not found".to_string())),
-                                |rendered| (StatusCode::OK, Html(rendered)),
-                            )
-                    },
-                )
-            },
+            (StatusCode::NOT_FOUND, Html("not found".to_string())),
+            |rendered| (StatusCode::OK, Html(rendered)),
         )
 }
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
-    state.scan.lock().map_or(Redirect::to("/"), |mut scan| {
-        scan_books(state.data_dir)
-            .map(|new_scan| {
-                let books = new_scan.books.len();
-                let pages = new_scan.pages_map.len();
-                let ms = new_scan.scan_duration.num_milliseconds();
-                info!(books, pages, ms, "finished re-scan");
-                *scan = Some(new_scan);
-                Redirect::to("/")
-            })
-            .map_err(|err| {
-                error!(%err, "failed to re-scan books");
-                err
-            })
-            .ok()
-            .unwrap_or(Redirect::to("/"))
-    })
+    let mut locked = state.scan.lock();
+    scan_books(state.data_dir)
+        .map(|new_scan| {
+            let books = new_scan.books.len();
+            let pages = new_scan.pages_map.len();
+            let ms = new_scan.scan_duration.num_milliseconds();
+            info!(books, pages, ms, "finished re-scan");
+            *locked = Some(new_scan);
+            Redirect::to("/")
+        })
+        .map_err(|err| {
+            error!(%err, "failed to re-scan books");
+            err
+        })
+        .ok()
+        .unwrap_or(Redirect::to("/"))
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
-    state.scan.lock().map_or(Redirect::to("/"), |scan| {
-        scan.clone().map_or(Redirect::to("/"), |scan| {
-            let mut rng = thread_rng();
-            scan.books
-                .choose(&mut rng)
-                .map_or(Redirect::to("/"), |book| {
-                    let id = &book.id;
-                    Redirect::to(&format!("/book/{id}"))
-                })
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return Redirect::to("/"),
+        Some(ref scan) => scan,
+    };
+    let mut rng = thread_rng();
+    scan.books
+        .choose(&mut rng)
+        .map_or(Redirect::to("/"), |book| {
+            let id = &book.id;
+            Redirect::to(&format!("/book/{id}"))
         })
-    })
 }
 
 async fn shuffle_book_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    state.scan.lock().map_or(Redirect::to("/"), |scan| {
-        scan.clone().map_or(Redirect::to("/"), |scan| {
-            let mut rng = thread_rng();
-            scan.books
-                .iter()
-                .filter(|b| b.id != id)
-                .collect::<Vec<&Book>>()
-                .choose(&mut rng)
-                .map_or(Redirect::to("/"), |book| {
-                    let id = &book.id;
-                    Redirect::to(&format!("/book/{id}"))
-                })
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return Redirect::to("/"),
+        Some(ref scan) => scan,
+    };
+    let mut rng = thread_rng();
+    scan.books
+        .iter()
+        .filter(|b| b.id != id)
+        .collect::<Vec<&Book>>()
+        .choose(&mut rng)
+        .map_or(Redirect::to("/"), |book| {
+            let id = &book.id;
+            Redirect::to(&format!("/book/{id}"))
         })
-    })
 }
 
 async fn show_page_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    state
-        .scan
-        .lock()
-        .map_err(|err| {
-            error!(%err, "failed to render page");
-            err
-        })
-        .ok()
-        .and_then(|scan| {
-            scan.clone().map(|scan| {
-                scan.pages_map
-                    .get(&id)
-                    .and_then(|page| {
-                        fs::read(&page.path)
-                            .map_err(|err| {
-                                error!(%err, "failed to read page");
-                                err
-                            })
-                            .ok()
-                            .map(|content| (StatusCode::OK, content))
-                    })
-                    .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
-            })
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return (StatusCode::NOT_FOUND, Vec::new()),
+        Some(ref scan) => scan,
+    };
+    scan.pages_map
+        .get(&id)
+        .and_then(|page| {
+            fs::read(&page.path)
+                .map_err(|err| {
+                    error!(%err, "failed to read page");
+                    err
+                })
+                .ok()
+                .map(|content| (StatusCode::OK, content))
         })
         .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
 }
@@ -509,17 +477,15 @@ pub struct Healthz {
 }
 
 async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
-    state.scan.lock().map_or(Json(()).into_response(), |scan| {
-        scan.clone().map_or(
-            (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
-            |scan| {
-                Json(Healthz {
-                    scanned_at: scan.scanned_at.timestamp_millis(),
-                })
-                .into_response()
-            },
-        )
+    let locked = state.scan.lock();
+    let scan = match *locked {
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
+        Some(ref scan) => scan,
+    };
+    Json(Healthz {
+        scanned_at: scan.scanned_at.timestamp_millis(),
     })
+    .into_response()
 }
 
 pub fn init_route(cli: &Cli) -> MyResult<Router> {
@@ -562,7 +528,7 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         let ms = &new_scan.scan_duration.num_milliseconds();
         info!(books, pages, ms, "finished initial scan");
         {
-            let mut state = state_c.scan.lock().unwrap();
+            let mut state = state_c.scan.lock();
             *state = Some(new_scan);
         }
     });
