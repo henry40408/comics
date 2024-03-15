@@ -12,6 +12,7 @@ use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use imsz::ImInfo;
 use rand::{seq::SliceRandom, thread_rng};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -170,7 +171,9 @@ impl Book {
 
 #[instrument(level = Level::TRACE)]
 fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
-    let mut pages: Vec<Page> = fs::read_dir(&book_path)?
+    let entries: Vec<_> = fs::read_dir(&book_path)?.collect();
+    let mut pages: Vec<Page> = entries
+        .into_par_iter()
         .filter_map(|entry| {
             if let Err(ref err) = entry {
                 error!(?err, "skip file");
@@ -195,7 +198,9 @@ fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
 #[instrument(level = Level::TRACE)]
 pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
     let scanned_at = Utc::now();
-    let mut books: Vec<Book> = fs::read_dir(&data_path)?
+    let entries: Vec<_> = fs::read_dir(&data_path)?.collect();
+    let mut books: Vec<Book> = entries
+        .into_par_iter()
         .filter_map(|entry| {
             if let Err(ref err) = entry {
                 error!(?err, "skip directory");
