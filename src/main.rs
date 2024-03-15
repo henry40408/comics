@@ -34,13 +34,13 @@ async fn main() {
     match &cli.command {
         Some(Commands::HashPassword { .. }) => {
             if let Err(err) = hash_password() {
-                error!(?err, "failed to hash password");
+                error!(%err, "failed to hash password");
             }
         }
         Some(Commands::List { .. }) => {
             let scan = match scan_books(cli.data_dir) {
                 Err(err) => {
-                    error!(?err, "failed to scan directory");
+                    error!(%err, "failed to scan directory");
                     return;
                 }
                 Ok(b) => b,
@@ -59,13 +59,13 @@ async fn main() {
             let bind: SocketAddr = match cli.bind.parse() {
                 Err(err) => {
                     let bind = cli.bind;
-                    error!(bind, ?err, "invalid host:port pair");
+                    error!(bind, %err, "invalid host:port pair");
                     return;
                 }
                 Ok(b) => b,
             };
             if let Err(err) = run_server(bind, &cli).await {
-                error!(?err, "failed to start the server");
+                error!(%err, "failed to start the server");
             };
         }
     };

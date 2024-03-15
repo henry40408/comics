@@ -176,7 +176,7 @@ fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
         .into_par_iter()
         .filter_map(|entry| {
             if let Err(ref err) = entry {
-                error!(?err, "skip file");
+                error!(%err, "skip file");
             }
             Result::ok(entry)
         })
@@ -184,7 +184,7 @@ fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
             let path = entry.path();
             let page = Page::new(&path);
             if let Err(ref err) = page {
-                error!(?err, ?path, "failed to create page");
+                error!(%err, ?path, "failed to create page");
             } else {
                 trace!(?path, "found a page");
             }
@@ -203,7 +203,7 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
         .into_par_iter()
         .filter_map(|entry| {
             if let Err(ref err) = entry {
-                error!(?err, "skip directory");
+                error!(%err, "skip directory");
             }
             Result::ok(entry)
         })
@@ -211,7 +211,7 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
             let path = entry.path();
             let book = Book::new(path.as_path());
             match book {
-                Err(ref err) => error!(?err, "failed to create book"),
+                Err(ref err) => error!(%err, "failed to create book"),
                 Ok(ref book) => {
                     let pages = book.pages.len();
                     let title = &book.title;
@@ -346,7 +346,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
         .scan
         .lock()
         .map_err(|err| {
-            error!(?err, "failed to render index");
+            error!(%err, "failed to render index");
             err
         })
         .ok()
@@ -363,7 +363,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
                     .and_then(|t| {
                         t.render()
                             .map_err(|err| {
-                                error!(?err, "failed to render index");
+                                error!(%err, "failed to render index");
                                 err
                             })
                             .ok()
@@ -384,7 +384,7 @@ async fn show_book_route(
         .scan
         .lock()
         .map_err(|err| {
-            error!(?err, "failed to render book");
+            error!(%err, "failed to render book");
             err
         })
         .map_or(
@@ -403,7 +403,7 @@ async fn show_book_route(
                             .and_then(|t| {
                                 t.render()
                                     .map_err(|err| {
-                                        error!(?err, "failed to render book");
+                                        error!(%err, "failed to render book");
                                         err
                                     })
                                     .ok()
@@ -430,7 +430,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
                 Redirect::to("/")
             })
             .map_err(|err| {
-                error!(?err, "failed to re-scan books");
+                error!(%err, "failed to re-scan books");
                 err
             })
             .ok()
@@ -480,7 +480,7 @@ async fn show_page_route(
         .scan
         .lock()
         .map_err(|err| {
-            error!(?err, "failed to render page");
+            error!(%err, "failed to render page");
             err
         })
         .ok()
@@ -491,7 +491,7 @@ async fn show_page_route(
                     .and_then(|page| {
                         fs::read(&page.path)
                             .map_err(|err| {
-                                error!(?err, "failed to read page");
+                                error!(%err, "failed to read page");
                                 err
                             })
                             .ok()
@@ -575,7 +575,7 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
-    info!(?addr, "server started");
+    info!(%addr, "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .await
