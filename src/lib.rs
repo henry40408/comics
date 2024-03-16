@@ -179,7 +179,7 @@ fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
             if let Err(ref err) = entry {
                 error!(%err, "skip file");
             }
-            Result::ok(entry)
+            entry.ok()
         })
         .filter_map(|entry| {
             let path = entry.path();
@@ -189,7 +189,7 @@ fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
             } else {
                 trace!(?path, "found a page");
             }
-            Result::ok(page)
+            page.ok()
         })
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
@@ -206,7 +206,7 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
             if let Err(ref err) = entry {
                 error!(%err, "skip directory");
             }
-            Result::ok(entry)
+            entry.ok()
         })
         .filter_map(|entry| {
             let path = entry.path();
@@ -220,7 +220,7 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
                     trace!(?path, cover, pages, title, "found a book");
                 }
             };
-            Result::ok(book)
+            book.ok()
         })
         .collect();
     books.sort_by(|a, b| a.title.cmp(&b.title));
