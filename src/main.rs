@@ -38,6 +38,7 @@ async fn main() {
             }
         }
         Some(Commands::List { .. }) => {
+            use std::io::Write as _;
             let scan = match scan_books(cli.data_dir) {
                 Err(err) => {
                     error!(%err, "failed to scan directory");
@@ -45,10 +46,12 @@ async fn main() {
                 }
                 Ok(b) => b,
             };
+            let mut stdout = std::io::stdout().lock();
             for book in &scan.books {
-                println!("{} ({}P)", book.title, book.pages.len());
+                _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
             }
-            println!(
+            _ = writeln!(
+                stdout,
                 "{} book(s), {} page(s), scanned in {}ms",
                 &scan.books.len(),
                 &scan.pages_map.len(),
