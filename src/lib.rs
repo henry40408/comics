@@ -257,14 +257,14 @@ struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
     scanned_at: String,
-    version: String,
+    version: &'static str,
 }
 
 #[derive(Template)]
 #[template(path = "book.html")]
 struct BookTemplate<'a> {
     book: &'a Book,
-    version: String,
+    version: &'static str,
 }
 
 fn get_expected_credentials() -> Option<(String, String)> {
@@ -348,7 +348,7 @@ async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         books: &scan.books,
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
-        version: VERSION.to_string(),
+        version: VERSION,
     };
     t.render().map_or_else(
         |err| {
@@ -373,7 +373,7 @@ async fn show_book_route(
         .find(|b| b.id == id)
         .map(|book| BookTemplate {
             book,
-            version: VERSION.to_string(),
+            version: VERSION,
         })
         .and_then(|t| {
             t.render()
