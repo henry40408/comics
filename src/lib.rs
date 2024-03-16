@@ -153,7 +153,7 @@ impl Book {
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(path.to_path_buf())?;
+        let pages = scan_pages(&path)?;
         let cover = pages
             .first()
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
@@ -171,7 +171,7 @@ impl Book {
 }
 
 #[instrument(level = Level::TRACE)]
-fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
+fn scan_pages(book_path: &path::Path) -> MyResult<Vec<Page>> {
     let entries: Vec<_> = fs::read_dir(&book_path)?.collect();
     let mut pages: Vec<Page> = entries
         .into_par_iter()
