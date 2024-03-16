@@ -129,7 +129,7 @@ impl Page {
         let filename = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         let dimension = Dimension::from_imsz(&imsz::imsz(path)?);
         Ok(Page {
             filename,
@@ -156,11 +156,11 @@ impl Book {
         let pages = scan_pages(path.to_path_buf())?;
         let cover = pages
             .first()
-            .ok_or(MyError::EmptyDirectory(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
         let title = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
             cover: cover.clone(),
             id: blake3::hash(title.as_bytes()).to_string(),
@@ -383,8 +383,8 @@ async fn show_book_route(
                 })
                 .ok()
         })
-        .map_or(
-            (StatusCode::NOT_FOUND, Html("not found".to_string())),
+        .map_or_else(
+            || (StatusCode::NOT_FOUND, Html("not found".to_string())),
             |rendered| (StatusCode::OK, Html(rendered)),
         )
 }
@@ -405,7 +405,7 @@ async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResp
             err
         })
         .ok()
-        .unwrap_or(Redirect::to("/"))
+        .unwrap_or_else(|| Redirect::to("/"))
 }
 
 async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -415,12 +415,13 @@ async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         Some(ref scan) => scan,
     };
     let mut rng = thread_rng();
-    scan.books
-        .choose(&mut rng)
-        .map_or(Redirect::to("/").into_response(), |book| {
+    scan.books.choose(&mut rng).map_or_else(
+        || Redirect::to("/").into_response(),
+        |book| {
             let id = &book.id;
             Redirect::to(&format!("/book/{id}")).into_response()
-        })
+        },
+    )
 }
 
 async fn shuffle_book_route(
@@ -438,10 +439,13 @@ async fn shuffle_book_route(
         .filter(|b| b.id != id)
         .collect::<Vec<&Book>>()
         .choose(&mut rng)
-        .map_or(Redirect::to("/").into_response(), |book| {
-            let id = &book.id;
-            Redirect::to(&format!("/book/{id}")).into_response()
-        })
+        .map_or_else(
+            || Redirect::to("/").into_response(),
+            |book| {
+                let id = &book.id;
+                Redirect::to(&format!("/book/{id}")).into_response()
+            },
+        )
 }
 
 async fn show_page_route(
