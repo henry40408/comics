@@ -238,6 +238,7 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
     })
 }
 
+#[derive(Clone)]
 struct AppState {
     data_dir: PathBuf,
     scan: Arc<Mutex<Option<BookScan>>>,
@@ -338,7 +339,7 @@ async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
     }
 }
 
-async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
@@ -360,7 +361,7 @@ async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn show_book_route(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -389,7 +390,7 @@ async fn show_book_route(
         )
 }
 
-async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
     scan_books(state.data_dir.clone())
         .map(|new_scan| {
@@ -408,7 +409,7 @@ async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResp
         .unwrap_or(Redirect::to("/"))
 }
 
-async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
@@ -424,7 +425,7 @@ async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 }
 
 async fn shuffle_book_route(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -445,7 +446,7 @@ async fn shuffle_book_route(
 }
 
 async fn show_page_route(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -472,7 +473,7 @@ pub struct Healthz {
     pub scanned_at: i64,
 }
 
-async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
@@ -487,10 +488,10 @@ async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 pub fn init_route(cli: &Cli) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
 
-    let state = Arc::new(AppState {
+    let state = AppState {
         data_dir: data_dir.clone(),
         scan: Arc::new(Mutex::new(None)),
-    });
+    };
 
     let state_c = state.clone();
     let router = Router::new()
