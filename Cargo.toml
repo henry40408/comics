@@ -1,6 +1,6 @@
 [package]
 name = "comics"
-version = "2.2.16"
+version = "2.2.17"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
@@ -10,7 +10,6 @@ description = "Simple file server for comic books"
 [dependencies]
 askama = "0.12.1"
 axum = "0.7.4"
-axum-extra = { version = "0.9.2", features = ["typed-header"] }
 base64 = "0.22.0"
 bcrypt = "0.15.0"
 blake3 = "1.5.1"
