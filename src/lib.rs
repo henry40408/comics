@@ -30,6 +30,7 @@ use tracing::instrument;
 use tracing::{error, info, trace, warn, Level};
 use uuid::Uuid;
 
+const BCRYPT_COST: u32 = 11u32;
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const WATER_CSS: &str = include_str!("../assets/water.css");
@@ -139,7 +140,7 @@ impl Page {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Book {
     pub cover: Page,
     pub id: String,
@@ -155,14 +156,13 @@ impl Book {
         let pages = scan_pages(path.to_path_buf())?;
         let cover = pages
             .first()
-            .map(Clone::clone)
             .ok_or(MyError::EmptyDirectory(path.to_path_buf()))?;
         let title = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
-            cover,
+            cover: cover.clone(),
             id: blake3::hash(title.as_bytes()).to_string(),
             title,
             pages,
@@ -238,13 +238,12 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
     })
 }
 
-#[derive(Clone)]
 struct AppState {
     data_dir: PathBuf,
     scan: Arc<Mutex<Option<BookScan>>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BookScan {
     pub books: Vec<Book>,
     pub pages_map: HashMap<String, Page>,
@@ -252,19 +251,19 @@ pub struct BookScan {
     pub scanned_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Clone, Template)]
+#[derive(Template)]
 #[template(path = "index.html")]
-struct IndexTemplate {
-    books: Vec<Book>,
+struct IndexTemplate<'a> {
+    books: &'a Vec<Book>,
     scan_duration: f64,
     scanned_at: String,
     version: String,
 }
 
-#[derive(Clone, Template)]
+#[derive(Template)]
 #[template(path = "book.html")]
-struct BookTemplate {
-    book: Book,
+struct BookTemplate<'a> {
+    book: &'a Book,
     version: String,
 }
 
@@ -283,9 +282,7 @@ enum AuthState {
 
 fn authenticate(request: &Request) -> AuthState {
     let expected = match get_expected_credentials() {
-        None => {
-            return AuthState::Public;
-        }
+        None => return AuthState::Public,
         Some(e) => e,
     };
 
@@ -317,6 +314,7 @@ fn authenticate(request: &Request) -> AuthState {
         .map_or(AuthState::Failed, |splitted| {
             match (splitted.first(), splitted.get(1)) {
                 (Some(u), Some(p)) if u == &expected.0 => bcrypt::verify(p, &expected.1)
+                    .map_err(|err| error!(?err, "failed to verify password"))
                     .ok()
                     .map_or(AuthState::Failed, |matched| {
                         if matched {
@@ -331,10 +329,8 @@ fn authenticate(request: &Request) -> AuthState {
 }
 
 async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
-    let authenticated = authenticate(&request);
-    let response = next.run(request).await;
-    match authenticated {
-        AuthState::Public | AuthState::Success => response,
+    match authenticate(&request) {
+        AuthState::Public | AuthState::Success => next.run(request).await,
         AuthState::Failed => StatusCode::UNAUTHORIZED.into_response(),
         AuthState::Request => {
             (StatusCode::UNAUTHORIZED, WWW_AUTHENTICATE_HEADER, "").into_response()
@@ -342,14 +338,14 @@ async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
     }
 }
 
-async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
         Some(ref scan) => scan,
     };
     let t = IndexTemplate {
-        books: scan.books.clone(),
+        books: &scan.books,
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
         version: VERSION.to_string(),
@@ -364,7 +360,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn show_book_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -376,7 +372,7 @@ async fn show_book_route(
         .iter()
         .find(|b| b.id == id)
         .map(|book| BookTemplate {
-            book: book.clone(),
+            book,
             version: VERSION.to_string(),
         })
         .and_then(|t| {
@@ -393,9 +389,9 @@ async fn show_book_route(
         )
 }
 
-async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
-    scan_books(state.data_dir)
+    scan_books(state.data_dir.clone())
         .map(|new_scan| {
             let books = new_scan.books.len();
             let pages = new_scan.pages_map.len();
@@ -412,28 +408,28 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
         .unwrap_or(Redirect::to("/"))
 }
 
-async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
-        None => return Redirect::to("/"),
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(ref scan) => scan,
     };
     let mut rng = thread_rng();
     scan.books
         .choose(&mut rng)
-        .map_or(Redirect::to("/"), |book| {
+        .map_or(Redirect::to("/").into_response(), |book| {
             let id = &book.id;
-            Redirect::to(&format!("/book/{id}"))
+            Redirect::to(&format!("/book/{id}")).into_response()
         })
 }
 
 async fn shuffle_book_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
-        None => return Redirect::to("/"),
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(ref scan) => scan,
     };
     let mut rng = thread_rng();
@@ -442,19 +438,19 @@ async fn shuffle_book_route(
         .filter(|b| b.id != id)
         .collect::<Vec<&Book>>()
         .choose(&mut rng)
-        .map_or(Redirect::to("/"), |book| {
+        .map_or(Redirect::to("/").into_response(), |book| {
             let id = &book.id;
-            Redirect::to(&format!("/book/{id}"))
+            Redirect::to(&format!("/book/{id}")).into_response()
         })
 }
 
 async fn show_page_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
-        None => return (StatusCode::NOT_FOUND, Vec::new()),
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(ref scan) => scan,
     };
     scan.pages_map
@@ -466,9 +462,9 @@ async fn show_page_route(
                     err
                 })
                 .ok()
-                .map(|content| (StatusCode::OK, content))
+                .map(|content| (StatusCode::OK, content).into_response())
         })
-        .unwrap_or((StatusCode::NOT_FOUND, Vec::new()))
+        .unwrap_or((StatusCode::NOT_FOUND, Vec::new()).into_response())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -476,7 +472,7 @@ pub struct Healthz {
     pub scanned_at: i64,
 }
 
-async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match *locked {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
@@ -491,10 +487,10 @@ async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
 pub fn init_route(cli: &Cli) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
 
-    let state = AppState {
+    let state = Arc::new(AppState {
         data_dir: data_dir.clone(),
         scan: Arc::new(Mutex::new(None)),
-    };
+    });
 
     let state_c = state.clone();
     let router = Router::new()
@@ -521,7 +517,7 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
 
     let state_c = state.clone();
     thread::spawn(move || {
-        let data_dir = state_c.data_dir;
+        let data_dir = state_c.data_dir.clone();
         let new_scan = scan_books(data_dir).expect("initial scan failed");
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
@@ -555,7 +551,7 @@ pub fn hash_password() -> MyResult<()> {
     if password != confirmation {
         return Err(MyError::PasswordMismatched);
     }
-    let hashed = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
+    let hashed = bcrypt::hash(password, BCRYPT_COST)?;
     println!("{hashed}");
     Ok(())
 }
