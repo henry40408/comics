@@ -129,7 +129,7 @@ impl Page {
         let filename = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         let dimension = Dimension::from_imsz(&imsz::imsz(path)?);
         Ok(Page {
             filename,
@@ -153,14 +153,14 @@ impl Book {
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(path.to_path_buf())?;
+        let pages = scan_pages(&path)?;
         let cover = pages
             .first()
-            .ok_or(MyError::EmptyDirectory(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
         let title = path
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
-            .ok_or(MyError::InvalidPath(path.to_path_buf()))?;
+            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
             cover: cover.clone(),
             id: blake3::hash(title.as_bytes()).to_string(),
@@ -171,7 +171,7 @@ impl Book {
 }
 
 #[instrument(level = Level::TRACE)]
-fn scan_pages(book_path: PathBuf) -> MyResult<Vec<Page>> {
+fn scan_pages(book_path: &path::Path) -> MyResult<Vec<Page>> {
     let entries: Vec<_> = fs::read_dir(&book_path)?.collect();
     let mut pages: Vec<Page> = entries
         .into_par_iter()
@@ -258,14 +258,14 @@ struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
     scanned_at: String,
-    version: String,
+    version: &'static str,
 }
 
 #[derive(Template)]
 #[template(path = "book.html")]
 struct BookTemplate<'a> {
     book: &'a Book,
-    version: String,
+    version: &'static str,
 }
 
 fn get_expected_credentials() -> Option<(String, String)> {
@@ -349,7 +349,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
         books: &scan.books,
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
-        version: VERSION.to_string(),
+        version: VERSION,
     };
     t.render().map_or_else(
         |err| {
@@ -374,7 +374,7 @@ async fn show_book_route(
         .find(|b| b.id == id)
         .map(|book| BookTemplate {
             book,
-            version: VERSION.to_string(),
+            version: VERSION,
         })
         .and_then(|t| {
             t.render()
@@ -384,8 +384,8 @@ async fn show_book_route(
                 })
                 .ok()
         })
-        .map_or(
-            (StatusCode::NOT_FOUND, Html("not found".to_string())),
+        .map_or_else(
+            || (StatusCode::NOT_FOUND, Html("not found".to_string())),
             |rendered| (StatusCode::OK, Html(rendered)),
         )
 }
@@ -406,7 +406,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
             err
         })
         .ok()
-        .unwrap_or(Redirect::to("/"))
+        .unwrap_or_else(|| Redirect::to("/"))
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
@@ -416,12 +416,13 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
         Some(ref scan) => scan,
     };
     let mut rng = thread_rng();
-    scan.books
-        .choose(&mut rng)
-        .map_or(Redirect::to("/").into_response(), |book| {
+    scan.books.choose(&mut rng).map_or_else(
+        || Redirect::to("/").into_response(),
+        |book| {
             let id = &book.id;
             Redirect::to(&format!("/book/{id}")).into_response()
-        })
+        },
+    )
 }
 
 async fn shuffle_book_route(
@@ -439,10 +440,13 @@ async fn shuffle_book_route(
         .filter(|b| b.id != id)
         .collect::<Vec<&Book>>()
         .choose(&mut rng)
-        .map_or(Redirect::to("/").into_response(), |book| {
-            let id = &book.id;
-            Redirect::to(&format!("/book/{id}")).into_response()
-        })
+        .map_or_else(
+            || Redirect::to("/").into_response(),
+            |book| {
+                let id = &book.id;
+                Redirect::to(&format!("/book/{id}")).into_response()
+            },
+        )
 }
 
 async fn show_page_route(
