@@ -153,7 +153,7 @@ impl Book {
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(&path)?;
+        let pages = scan_pages(path)?;
         let cover = pages
             .first()
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
@@ -172,7 +172,7 @@ impl Book {
 
 #[instrument(level = Level::TRACE)]
 fn scan_pages(book_path: &path::Path) -> MyResult<Vec<Page>> {
-    let entries: Vec<_> = fs::read_dir(&book_path)?.collect();
+    let entries: Vec<_> = fs::read_dir(book_path)?.collect();
     let mut pages: Vec<Page> = entries
         .into_par_iter()
         .filter_map(|entry| {
@@ -522,16 +522,13 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
 
     let state_c = state.clone();
     thread::spawn(move || {
-        let data_dir = state_c.data_dir.clone();
-        let new_scan = scan_books(data_dir).expect("initial scan failed");
+        let mut state = state_c.scan.lock();
+        let new_scan = scan_books(state_c.data_dir).expect("initial scan failed");
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
         let ms = &new_scan.scan_duration.num_milliseconds();
         info!(books, pages, ms, "finished initial scan");
-        {
-            let mut state = state_c.scan.lock();
-            *state = Some(new_scan);
-        }
+        *state = Some(new_scan);
     });
 
     Ok(router)
