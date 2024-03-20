@@ -211,9 +211,9 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
         .filter_map(|entry| {
             let path = entry.path();
             let book = Book::new(path.as_path());
-            match book {
-                Err(ref err) => error!(%err, "failed to create book"),
-                Ok(ref book) => {
+            match &book {
+                Err(err) => error!(%err, "failed to create book"),
+                Ok(book) => {
                     let pages = book.pages.len();
                     let title = &book.title;
                     let cover = &book.cover.path;
@@ -297,10 +297,10 @@ fn authenticate(request: &Request) -> AuthState {
         .map(|s| s.split_ascii_whitespace().collect::<Vec<&str>>())
         .and_then(|splitted| {
             match (
-                splitted.first().map(|s| s.to_ascii_lowercase()),
+                &splitted.first().map(|s| s.to_ascii_lowercase()),
                 splitted.get(1).copied(),
             ) {
-                (Some(ref scheme), Some(digest)) if scheme == "basic" => Some(digest),
+                (Some(scheme), Some(digest)) if scheme == "basic" => Some(digest),
                 _ => None,
             }
         })
@@ -341,9 +341,9 @@ async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
 
 async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     let t = IndexTemplate {
         books: &scan.books,
@@ -365,9 +365,9 @@ async fn show_book_route(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     scan.books
         .iter()
@@ -411,9 +411,9 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     let mut rng = thread_rng();
     scan.books.choose(&mut rng).map_or_else(
@@ -430,9 +430,9 @@ async fn shuffle_book_route(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     let mut rng = thread_rng();
     scan.books
@@ -454,9 +454,9 @@ async fn show_page_route(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     scan.pages_map
         .get(&id)
@@ -479,9 +479,9 @@ pub struct Healthz {
 
 async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
     let locked = state.scan.lock();
-    let scan = match *locked {
+    let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
-        Some(ref scan) => scan,
+        Some(scan) => scan,
     };
     Json(Healthz {
         scanned_at: scan.scanned_at.timestamp_millis(),
