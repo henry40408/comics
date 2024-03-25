@@ -28,7 +28,7 @@ tower = "0.4.13"
 tower-http = { version = "0.5.2", features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-uuid = { version = "1.7.0", features = ["v4"] }
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [dev-dependencies]
 axum-test = "14.4.0"
