@@ -9,7 +9,7 @@ description = "Simple file server for comic books"
 
 [dependencies]
 askama = "0.12.1"
-axum = "0.7.4"
+axum = "0.7.5"
 base64 = "0.22.0"
 bcrypt = "0.15.0"
 blake3 = "1.5.1"
