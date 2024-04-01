@@ -31,7 +31,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 uuid = { version = "1.7.0", features = ["v4"] }
 
 [dev-dependencies]
-axum-test = "14.4.0"
+axum-test = "14.7.0"
 
 [profile.release]
 codegen-units = 1
