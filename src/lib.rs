@@ -26,8 +26,7 @@ use std::{
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing::instrument;
-use tracing::{error, info, trace, warn, Level};
+use tracing::{error, field, info, trace_span, warn, Level, Span};
 use uuid::Uuid;
 
 const BCRYPT_COST: u32 = 11u32;
@@ -149,11 +148,12 @@ pub struct Book {
 }
 
 impl Book {
-    fn new(path: &path::Path) -> Result<Self, MyError> {
+    fn new(span: &Span, path: &path::Path) -> Result<Self, MyError> {
+        let s = trace_span!(parent: span, "scan book", ?path).entered();
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(path)?;
+        let pages = scan_pages(&s, path)?;
         let cover = pages
             .first()
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
@@ -170,8 +170,8 @@ impl Book {
     }
 }
 
-#[instrument(level = Level::TRACE)]
-fn scan_pages(book_path: &path::Path) -> MyResult<Vec<Page>> {
+fn scan_pages(span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
+    let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
     let entries: Vec<_> = fs::read_dir(book_path)?.collect();
     let mut pages: Vec<Page> = entries
         .into_par_iter()
@@ -186,20 +186,19 @@ fn scan_pages(book_path: &path::Path) -> MyResult<Vec<Page>> {
             let page = Page::new(&path);
             if let Err(ref err) = page {
                 error!(%err, ?path, "failed to create page");
-            } else {
-                trace!(?path, "found a page");
             }
             page.ok()
         })
         .collect();
     pages.sort_by(|a, b| a.path.cmp(&b.path));
+    s.record("pages", pages.len());
     Ok(pages)
 }
 
-#[instrument(level = Level::TRACE)]
-pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
+pub fn scan_books(data_path: &path::Path) -> MyResult<BookScan> {
+    let span = trace_span!("scan books").entered();
     let scanned_at = Utc::now();
-    let entries: Vec<_> = fs::read_dir(&data_path)?.collect();
+    let entries: Vec<_> = fs::read_dir(data_path)?.collect();
     let mut books: Vec<Book> = entries
         .into_par_iter()
         .filter_map(|entry| {
@@ -210,15 +209,9 @@ pub fn scan_books(data_path: PathBuf) -> MyResult<BookScan> {
         })
         .filter_map(|entry| {
             let path = entry.path();
-            let book = Book::new(path.as_path());
-            match &book {
-                Err(err) => error!(%err, "failed to create book"),
-                Ok(book) => {
-                    let pages = book.pages.len();
-                    let title = &book.title;
-                    let cover = &book.cover.path;
-                    trace!(?path, cover, pages, title, "found a book");
-                }
+            let book = Book::new(&span, path.as_path());
+            if let Err(err) = &book {
+                error!(%err, "failed to create book");
             };
             book.ok()
         })
@@ -392,7 +385,7 @@ async fn show_book_route(
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
-    scan_books(state.data_dir.clone())
+    scan_books(state.data_dir.as_path())
         .map(|new_scan| {
             let books = new_scan.books.len();
             let pages = new_scan.pages_map.len();
@@ -523,7 +516,7 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
     let state_c = state.clone();
     thread::spawn(move || {
         let mut state = state_c.scan.lock();
-        let new_scan = scan_books(state_c.data_dir).expect("initial scan failed");
+        let new_scan = scan_books(&state_c.data_dir).expect("initial scan failed");
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
         let ms = &new_scan.scan_duration.num_milliseconds();
@@ -560,10 +553,9 @@ pub fn hash_password() -> MyResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{init_route, Cli};
     use axum_test::TestServer;
     use clap::Parser as _;
-
-    use crate::{init_route, Cli};
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
@@ -577,6 +569,7 @@ mod tests {
 
         let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
         let router = init_route(&cli).unwrap();
+
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
             let res = server.get("/healthz").await;

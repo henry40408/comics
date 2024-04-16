@@ -39,7 +39,7 @@ async fn main() {
         }
         Some(Commands::List { .. }) => {
             use std::io::Write as _;
-            let scan = match scan_books(cli.data_dir) {
+            let scan = match scan_books(&cli.data_dir) {
                 Err(err) => {
                     error!(%err, "failed to scan directory");
                     return;
