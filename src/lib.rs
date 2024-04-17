@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::GeneralPurpose, Engine};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use clap::{Parser, Subcommand};
 use imsz::ImInfo;
 use parking_lot::Mutex;
@@ -103,11 +103,11 @@ pub struct Dimension {
     pub width: u64,
 }
 
-impl Dimension {
-    fn from_imsz(info: &ImInfo) -> Self {
+impl From<&ImInfo> for Dimension {
+    fn from(value: &ImInfo) -> Self {
         Self {
-            height: info.height,
-            width: info.width,
+            height: value.height,
+            width: value.width,
         }
     }
 }
@@ -129,7 +129,7 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
-        let dimension = Dimension::from_imsz(&imsz::imsz(path)?);
+        let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
             filename,
             id: Uuid::new_v4().to_string(),
@@ -242,7 +242,7 @@ pub struct BookScan {
     pub books: Vec<Book>,
     pub pages_map: HashMap<String, Page>,
     pub scan_duration: Duration,
-    pub scanned_at: chrono::DateTime<Utc>,
+    pub scanned_at: DateTime<Utc>,
 }
 
 #[derive(Template)]
@@ -519,8 +519,11 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
 
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
-        let ms = &new_scan.scan_duration.num_milliseconds();
-        info!(books, pages, ms, "finished initial scan");
+        let duration = new_scan
+            .scan_duration
+            .to_std()
+            .expect("failed to convert duration");
+        info!(books, pages, ?duration, "finished initial scan");
 
         *state_c.scan.lock() = Some(new_scan);
     });

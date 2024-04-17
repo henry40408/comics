@@ -52,10 +52,12 @@ async fn main() {
             }
             _ = writeln!(
                 stdout,
-                "{} book(s), {} page(s), scanned in {}ms",
+                "{} book(s), {} page(s), scanned in {:?}",
                 &scan.books.len(),
                 &scan.pages_map.len(),
-                scan.scan_duration.num_milliseconds()
+                scan.scan_duration
+                    .to_std()
+                    .expect("failed to convert duration")
             );
         }
         None => {
