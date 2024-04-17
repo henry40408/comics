@@ -515,13 +515,14 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
 
     let state_c = state.clone();
     thread::spawn(move || {
-        let mut state = state_c.scan.lock();
         let new_scan = scan_books(&state_c.data_dir).expect("initial scan failed");
+
         let books = &new_scan.books.len();
         let pages = &new_scan.pages_map.len();
         let ms = &new_scan.scan_duration.num_milliseconds();
         info!(books, pages, ms, "finished initial scan");
-        *state = Some(new_scan);
+
+        *state_c.scan.lock() = Some(new_scan);
     });
 
     Ok(router)
