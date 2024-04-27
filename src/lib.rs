@@ -32,7 +32,7 @@ use uuid::Uuid;
 const BCRYPT_COST: u32 = 11u32;
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const WATER_CSS: &str = include_str!("../assets/water.css");
+const WATER_CSS: &str = include_str!("../vendor/assets/water.css");
 
 type SingleHeader = [(header::HeaderName, &'static str); 1];
 const CSS_HEADER: SingleHeader = [(header::CONTENT_TYPE, "text/css")];
