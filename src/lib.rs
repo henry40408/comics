@@ -246,7 +246,7 @@ pub struct BookScan {
 }
 
 #[derive(Template)]
-#[template(path = "index.html")]
+#[template(path = "../vendor/templates/index.html")]
 struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
@@ -255,7 +255,7 @@ struct IndexTemplate<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "book.html")]
+#[template(path = "../vendor/templates/book.html")]
 struct BookTemplate<'a> {
     book: &'a Book,
     version: &'static str,
