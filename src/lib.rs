@@ -607,13 +607,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_index_route() {
+    async fn get_books() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.get("/").await;
-        assert_eq!(res.status_code(), 200);
+        assert_eq!(200, res.status_code());
 
         let t = res.text();
         assert!(t.contains("2 book(s)"));
@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_route() {
+    async fn get_book() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
@@ -630,20 +630,20 @@ mod tests {
         let path = format!("/book/{book_id}");
         let server = build_server().await;
         let res = server.get(&path).await;
-        assert_eq!(res.status_code(), 200);
+        assert_eq!(200, res.status_code());
 
         let t = res.text();
         assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
     }
 
     #[tokio::test]
-    async fn test_shuffle_route() {
+    async fn shuffle() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.post("/shuffle").await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let splitted = res
             .headers()
@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_shuffle_route_from_a_book() {
+    async fn shuffle_from_a_book() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
@@ -665,24 +665,34 @@ mod tests {
         let path = format!("/shuffle/{book_id}");
         let server = build_server().await;
         let res = server.post(&path).await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let location = res.headers().get("location").unwrap().to_str().unwrap();
         let book_id = DATA_IDS.last().unwrap();
         let expected = format!("/book/{book_id}");
-        assert_eq!(location, expected);
+        assert_eq!(expected, location);
     }
 
     #[tokio::test]
-    async fn test_rescan_route() {
+    async fn rescan() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.post("/rescan").await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let location = res.headers().get("location").unwrap().to_str().unwrap();
-        assert_eq!(location, "/");
+        assert_eq!("/", location);
+    }
+
+    #[tokio::test]
+    async fn healthz() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let server = build_server().await;
+        let res = server.get("/healthz").await;
+        assert_eq!(200, res.status_code());
     }
 }
