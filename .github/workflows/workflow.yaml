@@ -25,6 +25,23 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy
       - run: cargo test
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - uses: dtolnay/rust-toolchain@1.77.2
+      - uses: actions/cache@v4.0.2
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: cargo-bins/cargo-binstall@v1.6.4
+      - run: cargo binstall --no-confirm cargo-tarpaulin@0.28.0
+      - run: cargo tarpaulin
   build-and-publish:
     runs-on: ubuntu-latest
     steps:
