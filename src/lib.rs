@@ -24,7 +24,10 @@ use std::{
     thread,
 };
 use thiserror::Error;
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::oneshot::{self, Sender},
+};
 use tower_http::trace::TraceLayer;
 use tracing::{error, field, info, trace_span, warn, Level, Span};
 use uuid::Uuid;
@@ -482,7 +485,7 @@ async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
     .into_response()
 }
 
-pub fn init_route(cli: &Cli) -> MyResult<Router> {
+pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
 
     let state = AppState {
@@ -490,7 +493,6 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         scan: Arc::new(Mutex::new(None)),
     };
 
-    let state_c = state.clone();
     let router = Router::new()
         .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
@@ -511,34 +513,51 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
                 .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(tower_http::trace::DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(state_c);
+        .with_state(state.clone());
 
-    let state_c = state.clone();
-    thread::spawn(move || {
-        let new_scan = scan_books(&state_c.data_dir).expect("initial scan failed");
+    thread::spawn({
+        let state = state.clone();
+        move || {
+            let new_scan = match scan_books(&state.data_dir) {
+                Ok(s) => s,
+                Err(err) => {
+                    error!(?err, "failed to scan initially");
+                    let _ = tx.send(());
+                    return;
+                }
+            };
 
-        let books = &new_scan.books.len();
-        let pages = &new_scan.pages_map.len();
-        let duration = new_scan
-            .scan_duration
-            .to_std()
-            .expect("failed to convert duration");
-        info!(books, pages, ?duration, "finished initial scan");
+            let books = &new_scan.books.len();
+            let pages = &new_scan.pages_map.len();
+            let duration = new_scan
+                .scan_duration
+                .to_std()
+                .map(|d| format!("{d:?}"))
+                .unwrap_or(String::new());
+            info!(books, pages, duration, "finished initial scan");
 
-        *state_c.scan.lock() = Some(new_scan);
+            *state.scan.lock() = Some(new_scan);
+        }
     });
 
     Ok(router)
 }
 
 pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
-    let app = init_route(cli)?;
+    let (tx, rx) = oneshot::channel::<()>();
+    let app = init_route(cli, tx)?;
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
     info!(%addr, "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            if (rx.await).is_err() {
+                std::future::pending::<()>().await;
+            }
+            warn!("fatal error occurred, shutdown the server");
+        })
         .await
         .expect("failed to start the server");
     Ok(())
@@ -560,6 +579,7 @@ mod tests {
     use crate::{init_route, Cli};
     use axum_test::TestServer;
     use clap::Parser as _;
+    use tokio::sync::oneshot;
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
@@ -571,8 +591,9 @@ mod tests {
     async fn build_server() -> TestServer {
         use std::{thread, time};
 
+        let (tx, _) = oneshot::channel::<()>();
         let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
-        let router = init_route(&cli).unwrap();
+        let router = init_route(&cli, tx).unwrap();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
