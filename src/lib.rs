@@ -521,7 +521,7 @@ pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
             let new_scan = match scan_books(&state.data_dir) {
                 Ok(s) => s,
                 Err(err) => {
-                    error!(?err, "failed to scan initially");
+                    error!(?err, "initial scan failed");
                     let _ = tx.send(());
                     return;
                 }
@@ -534,7 +534,7 @@ pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
                 .to_std()
                 .map(|d| format!("{d:?}"))
                 .unwrap_or(String::new());
-            info!(books, pages, duration, "finished initial scan");
+            info!(books, pages, duration, "initial scan finished");
 
             *state.scan.lock() = Some(new_scan);
         }
