@@ -24,7 +24,10 @@ use std::{
     thread,
 };
 use thiserror::Error;
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::oneshot::{self, Sender},
+};
 use tower_http::trace::TraceLayer;
 use tracing::{error, field, info, trace_span, warn, Level, Span};
 use uuid::Uuid;
@@ -246,7 +249,7 @@ pub struct BookScan {
 }
 
 #[derive(Template)]
-#[template(path = "../vendor/templates/index.html")]
+#[template(path = "index.html")]
 struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
@@ -255,7 +258,7 @@ struct IndexTemplate<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "../vendor/templates/book.html")]
+#[template(path = "book.html")]
 struct BookTemplate<'a> {
     book: &'a Book,
     version: &'static str,
@@ -482,7 +485,7 @@ async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
     .into_response()
 }
 
-pub fn init_route(cli: &Cli) -> MyResult<Router> {
+pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
 
     let state = AppState {
@@ -490,7 +493,6 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
         scan: Arc::new(Mutex::new(None)),
     };
 
-    let state_c = state.clone();
     let router = Router::new()
         .route("/book/:id", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
@@ -511,34 +513,51 @@ pub fn init_route(cli: &Cli) -> MyResult<Router> {
                 .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(tower_http::trace::DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(state_c);
+        .with_state(state.clone());
 
-    let state_c = state.clone();
-    thread::spawn(move || {
-        let new_scan = scan_books(&state_c.data_dir).expect("initial scan failed");
+    thread::spawn({
+        let state = state.clone();
+        move || {
+            let new_scan = match scan_books(&state.data_dir) {
+                Ok(s) => s,
+                Err(err) => {
+                    error!(?err, "initial scan failed");
+                    let _ = tx.send(());
+                    return;
+                }
+            };
 
-        let books = &new_scan.books.len();
-        let pages = &new_scan.pages_map.len();
-        let duration = new_scan
-            .scan_duration
-            .to_std()
-            .expect("failed to convert duration");
-        info!(books, pages, ?duration, "finished initial scan");
+            let books = &new_scan.books.len();
+            let pages = &new_scan.pages_map.len();
+            let duration = new_scan
+                .scan_duration
+                .to_std()
+                .map(|d| format!("{d:?}"))
+                .unwrap_or(String::new());
+            info!(books, pages, %duration, "initial scan finished");
 
-        *state_c.scan.lock() = Some(new_scan);
+            *state.scan.lock() = Some(new_scan);
+        }
     });
 
     Ok(router)
 }
 
 pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
-    let app = init_route(cli)?;
+    let (tx, rx) = oneshot::channel::<()>();
+    let app = init_route(cli, tx)?;
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
     info!(%addr, "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            if (rx.await).is_err() {
+                std::future::pending::<()>().await;
+            }
+            warn!("fatal error occurred, shutdown the server");
+        })
         .await
         .expect("failed to start the server");
     Ok(())
@@ -560,6 +579,7 @@ mod tests {
     use crate::{init_route, Cli};
     use axum_test::TestServer;
     use clap::Parser as _;
+    use tokio::sync::oneshot;
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
@@ -571,8 +591,9 @@ mod tests {
     async fn build_server() -> TestServer {
         use std::{thread, time};
 
+        let (tx, _) = oneshot::channel::<()>();
         let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
-        let router = init_route(&cli).unwrap();
+        let router = init_route(&cli, tx).unwrap();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
@@ -586,13 +607,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_index_route() {
+    async fn get_books() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.get("/").await;
-        assert_eq!(res.status_code(), 200);
+        assert_eq!(200, res.status_code());
 
         let t = res.text();
         assert!(t.contains("2 book(s)"));
@@ -601,7 +622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_route() {
+    async fn get_book() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
@@ -609,20 +630,20 @@ mod tests {
         let path = format!("/book/{book_id}");
         let server = build_server().await;
         let res = server.get(&path).await;
-        assert_eq!(res.status_code(), 200);
+        assert_eq!(200, res.status_code());
 
         let t = res.text();
         assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
     }
 
     #[tokio::test]
-    async fn test_shuffle_route() {
+    async fn shuffle() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.post("/shuffle").await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let splitted = res
             .headers()
@@ -636,7 +657,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_shuffle_route_from_a_book() {
+    async fn shuffle_from_a_book() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
@@ -644,24 +665,34 @@ mod tests {
         let path = format!("/shuffle/{book_id}");
         let server = build_server().await;
         let res = server.post(&path).await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let location = res.headers().get("location").unwrap().to_str().unwrap();
         let book_id = DATA_IDS.last().unwrap();
         let expected = format!("/book/{book_id}");
-        assert_eq!(location, expected);
+        assert_eq!(expected, location);
     }
 
     #[tokio::test]
-    async fn test_rescan_route() {
+    async fn rescan() {
         std::env::remove_var("AUTH_USERNAME");
         std::env::remove_var("AUTH_PASSWORD_HASH");
 
         let server = build_server().await;
         let res = server.post("/rescan").await;
-        assert_eq!(res.status_code(), 303);
+        assert_eq!(303, res.status_code());
 
         let location = res.headers().get("location").unwrap().to_str().unwrap();
-        assert_eq!(location, "/");
+        assert_eq!("/", location);
+    }
+
+    #[tokio::test]
+    async fn healthz() {
+        std::env::remove_var("AUTH_USERNAME");
+        std::env::remove_var("AUTH_PASSWORD_HASH");
+
+        let server = build_server().await;
+        let res = server.get("/healthz").await;
+        assert_eq!(200, res.status_code());
     }
 }
