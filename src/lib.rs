@@ -534,7 +534,7 @@ pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
                 .to_std()
                 .map(|d| format!("{d:?}"))
                 .unwrap_or(String::new());
-            info!(books, pages, duration, "initial scan finished");
+            info!(books, pages, %duration, "initial scan finished");
 
             *state.scan.lock() = Some(new_scan);
         }
