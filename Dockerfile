@@ -1,10 +1,10 @@
-FROM rust:1.76.0-alpine AS builder
+FROM rust:1.77.2-alpine AS builder
 
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 
 WORKDIR /usr/src/app
 
-RUN apk add --no-cache build-base
+RUN apk add --no-cache build-base git
 
 COPY . .
 
