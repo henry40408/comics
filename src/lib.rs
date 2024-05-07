@@ -34,7 +34,7 @@ use uuid::Uuid;
 
 const BCRYPT_COST: u32 = 11u32;
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("APP_VERSION");
 const WATER_CSS: &str = include_str!("../vendor/assets/water.css");
 
 type SingleHeader = [(header::HeaderName, &'static str); 1];
@@ -42,7 +42,7 @@ const CSS_HEADER: SingleHeader = [(header::CONTENT_TYPE, "text/css")];
 const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic realm=comics")];
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about=None)]
+#[command(author, version=VERSION, about, long_about=None)]
 pub struct Cli {
     /// Bind host & port
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
@@ -549,7 +549,8 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
     if get_expected_credentials().is_none() {
         warn!("no authrization enabled, server is publicly accessible");
     }
-    info!(%addr, "server started");
+    let version = VERSION;
+    info!(%addr, %version, "server started");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

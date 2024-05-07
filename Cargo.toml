@@ -1,9 +1,10 @@
 [package]
 name = "comics"
-version = "2.3.0"
+version = "0.0.0-dev"
 edition = "2021"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -33,6 +34,9 @@ tower-http = { version = "0.5.2", features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 uuid = { version = "1.7.0", features = ["v4"] }
+
+[build-dependencies]
+git-version = "0.3.9"
 
 [dev-dependencies]
 assert_cmd = "2.0.14"
