@@ -308,21 +308,25 @@ fn authenticate(request: &Request) -> AuthState {
                 .map(String::from)
                 .collect::<Vec<String>>()
         })
-        .map_or(AuthState::Failed, |splitted| {
-            match (splitted.first(), splitted.get(1)) {
+        .map_or_else(
+            || AuthState::Failed,
+            |splitted| match (splitted.first(), splitted.get(1)) {
                 (Some(u), Some(p)) if u == &expected.0 => bcrypt::verify(p, &expected.1)
                     .map_err(|err| error!(?err, "failed to verify password"))
                     .ok()
-                    .map_or(AuthState::Failed, |matched| {
-                        if matched {
-                            AuthState::Success
-                        } else {
-                            AuthState::Failed
-                        }
-                    }),
+                    .map_or_else(
+                        || AuthState::Failed,
+                        |matched| {
+                            if matched {
+                                AuthState::Success
+                            } else {
+                                AuthState::Failed
+                            }
+                        },
+                    ),
                 _ => AuthState::Failed,
-            }
-        })
+            },
+        )
 }
 
 async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
