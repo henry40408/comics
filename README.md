@@ -6,6 +6,7 @@
 ![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/henry40408/comics/.github%2Fworkflows%2Fworkflow.yaml)
 ![GitHub](https://img.shields.io/github/license/henry40408/comics)
 ![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/henry40408/comics)
+[![codecov](https://codecov.io/gh/henry40408/comics/graph/badge.svg?token=26VSHOGXLN)](https://codecov.io/gh/henry40408/comics)
 
 ## Overview
 
@@ -17,8 +18,8 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 
 ## Features
 
-* **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
-* **Basic Authentication**: Safeguard your comics with a simple username-password protection. 
+- **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
+- **Basic Authentication**: Safeguard your comics with a simple username-password protection.
 
 To set up the authentication:
 
@@ -28,6 +29,7 @@ Password:
 Confirmation:
 $2a$10$...Ot6
 ```
+
 Next, configure your environment variables:
 
 ```bash
@@ -38,10 +40,11 @@ AUTH_PASSWORD_HASH=$2a$10$...Ot6
 ## Setup and Usage
 
 1. **Getting Started**:
+
    - Clone the repository to your local machine.
    - Navigate to the project directory and install any required dependencies (if applicable).
 
-2. **Organize Your Comics**: 
+2. **Organize Your Comics**:
 
 Make sure you have your comics structured as shown below:
 
