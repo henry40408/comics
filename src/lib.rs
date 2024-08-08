@@ -135,7 +135,7 @@ impl Page {
         let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
             filename,
-            id: Uuid::new_v4().to_string(),
+            id: Uuid::now_v7().to_string(),
             path: path.to_string_lossy().to_string(),
             dimension,
         })
@@ -613,9 +613,6 @@ mod tests {
 
     #[tokio::test]
     async fn get_books() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.get("/").await;
         assert_eq!(200, res.status_code());
@@ -628,9 +625,6 @@ mod tests {
 
     #[tokio::test]
     async fn get_book() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let book_id = DATA_IDS.first().unwrap();
         let path = format!("/book/{book_id}");
         let server = build_server().await;
@@ -643,9 +637,6 @@ mod tests {
 
     #[tokio::test]
     async fn shuffle() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.post("/shuffle").await;
         assert_eq!(303, res.status_code());
@@ -663,9 +654,6 @@ mod tests {
 
     #[tokio::test]
     async fn shuffle_from_a_book() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let book_id = DATA_IDS.first().unwrap();
         let path = format!("/shuffle/{book_id}");
         let server = build_server().await;
@@ -680,9 +668,6 @@ mod tests {
 
     #[tokio::test]
     async fn rescan() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.post("/rescan").await;
         assert_eq!(303, res.status_code());
@@ -693,9 +678,6 @@ mod tests {
 
     #[tokio::test]
     async fn healthz() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.get("/healthz").await;
         assert_eq!(200, res.status_code());
