@@ -22,6 +22,7 @@ use std::{
     path::{self, PathBuf},
     sync::Arc,
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use tokio::{
@@ -30,7 +31,7 @@ use tokio::{
 };
 use tower_http::trace::TraceLayer;
 use tracing::{error, field, info, trace_span, warn, Level, Span};
-use uuid::Uuid;
+use xxhash_rust::xxh3::Xxh3;
 
 const BCRYPT_COST: u32 = 11u32;
 const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -59,6 +60,10 @@ pub struct Cli {
     /// No color https://no-color.org/
     #[arg(long, env = "NO_COLOR")]
     pub no_color: bool,
+
+    /// Seed to generate hashed IDs
+    #[arg(long, env = "SEED")]
+    pub seed: Option<u64>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -123,8 +128,14 @@ pub struct Page {
     pub dimension: Dimension,
 }
 
+fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
+    let mut hasher = Xxh3::with_seed(seed);
+    hasher.update(s.as_ref().as_bytes());
+    format!("{:x}", hasher.digest())
+}
+
 impl Page {
-    fn new(path: &path::Path) -> MyResult<Self> {
+    fn new(seed: u64, path: &path::Path) -> MyResult<Self> {
         if !path.is_file() {
             return Err(MyError::NotFile(path.to_path_buf()));
         }
@@ -132,10 +143,11 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(ToString::to_string))
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
+        let path_str = path.to_string_lossy().to_string();
         let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
             filename,
-            id: Uuid::new_v4().to_string(),
+            id: hash_string(seed, path_str),
             path: path.to_string_lossy().to_string(),
             dimension,
         })
@@ -151,12 +163,12 @@ pub struct Book {
 }
 
 impl Book {
-    fn new(span: &Span, path: &path::Path) -> Result<Self, MyError> {
+    fn new(seed: u64, span: &Span, path: &path::Path) -> Result<Self, MyError> {
         let s = trace_span!(parent: span, "scan book", ?path).entered();
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(&s, path)?;
+        let pages = scan_pages(seed, &s, path)?;
         let cover = pages
             .first()
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
@@ -166,14 +178,14 @@ impl Book {
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
             cover: cover.clone(),
-            id: blake3::hash(title.as_bytes()).to_string(),
+            id: hash_string(seed, &title),
             title,
             pages,
         })
     }
 }
 
-fn scan_pages(span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
+fn scan_pages(seed: u64, span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
     let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
     let entries: Vec<_> = fs::read_dir(book_path)?.collect();
     let mut pages: Vec<Page> = entries
@@ -186,7 +198,7 @@ fn scan_pages(span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
         })
         .filter_map(|entry| {
             let path = entry.path();
-            let page = Page::new(&path);
+            let page = Page::new(seed, &path);
             if let Err(ref err) = page {
                 error!(%err, ?path, "failed to create page");
             }
@@ -198,7 +210,7 @@ fn scan_pages(span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
     Ok(pages)
 }
 
-pub fn scan_books(data_path: &path::Path) -> MyResult<BookScan> {
+pub fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
     let span = trace_span!("scan books").entered();
     let scanned_at = Utc::now();
     let entries: Vec<_> = fs::read_dir(data_path)?.collect();
@@ -212,7 +224,7 @@ pub fn scan_books(data_path: &path::Path) -> MyResult<BookScan> {
         })
         .filter_map(|entry| {
             let path = entry.path();
-            let book = Book::new(&span, path.as_path());
+            let book = Book::new(seed, &span, path.as_path());
             if let Err(err) = &book {
                 error!(%err, "failed to create book");
             };
@@ -238,6 +250,7 @@ pub fn scan_books(data_path: &path::Path) -> MyResult<BookScan> {
 struct AppState {
     data_dir: PathBuf,
     scan: Arc<Mutex<Option<BookScan>>>,
+    seed: u64,
 }
 
 #[derive(Debug)]
@@ -392,7 +405,7 @@ async fn show_book_route(
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
-    scan_books(state.data_dir.as_path())
+    scan_books(state.seed, state.data_dir.as_path())
         .map(|new_scan| {
             let books = new_scan.books.len();
             let pages = new_scan.pages_map.len();
@@ -492,9 +505,17 @@ async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
 pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
     let data_dir = &cli.data_dir;
 
+    let seed = cli.seed.unwrap_or_else(|| {
+        warn!("no seed provided, use seconds since UNIX epoch as seed");
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs()
+    });
     let state = AppState {
         data_dir: data_dir.clone(),
         scan: Arc::new(Mutex::new(None)),
+        seed,
     };
 
     let router = Router::new()
@@ -522,7 +543,7 @@ pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
     thread::spawn({
         let state = state.clone();
         move || {
-            let new_scan = match scan_books(&state.data_dir) {
+            let new_scan = match scan_books(state.seed, &state.data_dir) {
                 Ok(s) => s,
                 Err(err) => {
                     error!(?err, "initial scan failed");
@@ -588,16 +609,17 @@ mod tests {
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
-        "abf12a09b5103c972a3893d1b0edcd84850520c9c5056e48bcabca43501da573",
+        "8e81107a0fb24286",
         // Quantum Quest Legacy of the Luminous League
-        "582d93470a2a22f29ff9a27c7937969d32a1301943c3ed7e6654a4a6637d30a4",
+        "1500ed4c58b05a85",
     ];
 
     async fn build_server() -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        let mut cli = Cli::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        cli.seed = Some(1);
         let router = init_route(&cli, tx).unwrap();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
@@ -613,9 +635,6 @@ mod tests {
 
     #[tokio::test]
     async fn get_books() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.get("/").await;
         assert_eq!(200, res.status_code());
@@ -628,9 +647,6 @@ mod tests {
 
     #[tokio::test]
     async fn get_book() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let book_id = DATA_IDS.first().unwrap();
         let path = format!("/book/{book_id}");
         let server = build_server().await;
@@ -643,9 +659,6 @@ mod tests {
 
     #[tokio::test]
     async fn shuffle() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.post("/shuffle").await;
         assert_eq!(303, res.status_code());
@@ -663,9 +676,6 @@ mod tests {
 
     #[tokio::test]
     async fn shuffle_from_a_book() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let book_id = DATA_IDS.first().unwrap();
         let path = format!("/shuffle/{book_id}");
         let server = build_server().await;
@@ -680,9 +690,6 @@ mod tests {
 
     #[tokio::test]
     async fn rescan() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.post("/rescan").await;
         assert_eq!(303, res.status_code());
@@ -693,9 +700,6 @@ mod tests {
 
     #[tokio::test]
     async fn healthz() {
-        std::env::remove_var("AUTH_USERNAME");
-        std::env::remove_var("AUTH_PASSWORD_HASH");
-
         let server = build_server().await;
         let res = server.get("/healthz").await;
         assert_eq!(200, res.status_code());
