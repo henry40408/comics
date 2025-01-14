@@ -57,7 +57,7 @@ pub struct Cli {
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
     pub data_dir: PathBuf,
 
-    /// No color https://no-color.org/
+    /// No color <https://no-color.org/>
     #[arg(long, env = "NO_COLOR")]
     pub no_color: bool,
 
