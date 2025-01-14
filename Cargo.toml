@@ -10,9 +10,9 @@ build = "build.rs"
 
 [dependencies]
 askama = "0.12.1"
-axum = "0.7.4"
+axum = "0.8.1"
 base64 = "0.22.0"
-bcrypt = "0.15.0"
+bcrypt = "0.16.0"
 chrono = "0.4.35"
 clap = { version = "4.5.2", features = ["derive", "env"] }
 imsz = "0.3.1"
@@ -22,14 +22,14 @@ rayon = "1.9.0"
 rpassword = "7.3.1"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
-thiserror = "1.0.58"
+thiserror = "2.0.11"
 tokio = { version = "1.36.0", features = [
   "macros",
   "rt-multi-thread",
   "signal",
 ] }
-tower = "0.4.13"
-tower-http = { version = "0.5.2", features = ["trace"] }
+tower = "0.5.1"
+tower-http = { version = "0.6.2", features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
@@ -39,7 +39,7 @@ git-version = "0.3.9"
 
 [dev-dependencies]
 assert_cmd = "2.0.14"
-axum-test = "15.7.3"
+axum-test = "17.0.2"
 predicates = "3.1.0"
 tempdir = "0.3.7"
 
@@ -52,9 +52,7 @@ strip = true
 
 # https://github.com/EmbarkStudios/rust-ecosystem/blob/732513edfd9172f4eda358b2d0cefc6cad1585ee/lints.rs
 [lints.rust]
-future_incompatible = "warn"
-nonstandard_style = "warn"
-rust_2018_idioms = "warn"
+unexpected_cfgs = "deny"
 unsafe_code = "deny"
 
 [lints.clippy]
@@ -98,7 +96,6 @@ match_same_arms = "warn"
 match_wild_err_arm = "warn"
 match_wildcard_for_single_variants = "warn"
 mem_forget = "warn"
-mismatched_target_os = "warn"
 missing_enforced_import_renames = "warn"
 mut_mut = "warn"
 mutex_integer = "warn"
