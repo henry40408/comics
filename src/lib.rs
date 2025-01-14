@@ -575,8 +575,9 @@ pub async fn run_server(addr: SocketAddr, cli: &Cli) -> MyResult<()> {
         warn!("no authrization enabled, server is publicly accessible");
     }
     let version = VERSION;
-    info!(%addr, %version, "server started");
     let listener = TcpListener::bind(&addr).await?;
+    let local_addr: SocketAddr = listener.local_addr()?;
+    info!(addr = %local_addr, %version, "server started");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             if (rx.await).is_err() {
