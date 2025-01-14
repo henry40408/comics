@@ -519,15 +519,15 @@ pub fn init_route(cli: &Cli, tx: Sender<()>) -> MyResult<Router> {
     };
 
     let router = Router::new()
-        .route("/book/:id", get(show_book_route))
+        .route("/book/{id}", get(show_book_route))
         .route("/rescan", post(rescan_books_route))
-        .route("/shuffle/:id", post(shuffle_book_route))
+        .route("/shuffle/{id}", post(shuffle_book_route))
         .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
         .route_layer(middleware::from_fn(auth_middleware_fn))
         // to prevent timing attack, bcrypt is too slow
         // protected by randomly-generated string as page ID instead
-        .route("/data/:id", get(show_page_route))
+        .route("/data/{id}", get(show_page_route))
         .route("/healthz", get(healthz_route))
         .route(
             "/assets/water.css",

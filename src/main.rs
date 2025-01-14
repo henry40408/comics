@@ -5,7 +5,6 @@ use comics::{hash_password, run_server, scan_books, Cli, Commands};
 use tracing::{error, Level};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
-#[cfg(not(tarpaulin_include))]
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
