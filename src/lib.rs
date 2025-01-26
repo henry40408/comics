@@ -149,12 +149,12 @@ impl Page {
             .file_name()
             .and_then(|s| s.to_str().map(|s| s.to_string().into_boxed_str()))
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().to_string().into_boxed_str();
         let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
             filename,
-            id: hash_string(seed, path_str),
-            path: path.to_string_lossy().to_string().into_boxed_str(),
+            id: hash_string(seed, &path_str),
+            path: path_str,
             dimension,
         })
     }
@@ -314,15 +314,18 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
         _ => return Ok(AuthState::Failed),
     };
     let decoded = BASE64_ENGINE.decode(digest)?;
-    let decoded_str = String::from_utf8(decoded)?;
-    let actual: Vec<String> = decoded_str.split(':').map(String::from).collect();
+    let decoded_str = String::from_utf8(decoded)?.into_boxed_str();
+    let actual: Vec<Box<str>> = decoded_str
+        .split(':')
+        .map(|s| s.to_string().into_boxed_str())
+        .collect();
     let (username, password) = match (actual.first(), actual.get(1)) {
         (Some(u), Some(p)) if &**u == &*expected_username => (u, p),
         _ => return Ok(AuthState::Failed),
     };
     match (
-        username == &*expected_username,
-        bcrypt::verify(password, &expected_password),
+        **username == *expected_username,
+        bcrypt::verify(&**password, &*expected_password),
     ) {
         (true, Ok(true)) => Ok(AuthState::Success),
         (true, Ok(false)) => Ok(AuthState::Failed),
@@ -360,13 +363,14 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
         scanned_at: scan.scanned_at.to_rfc2822().into_boxed_str(),
         version: VERSION,
     };
-    t.render().map_or_else(
-        |err| {
-            error!(%err,"faile to render index");
-            (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()))
-        },
-        |rendered| (StatusCode::OK, Html(rendered)),
-    )
+    let rendered = match t.render() {
+        Ok(html) => html,
+        Err(err) => {
+            error!(%err, "faile to render index");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()));
+        }
+    };
+    (StatusCode::OK, Html(rendered))
 }
 
 async fn show_book_route(
@@ -378,44 +382,38 @@ async fn show_book_route(
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
         Some(scan) => scan,
     };
-    scan.books
-        .iter()
-        .find(|b| b.id == id)
-        .map(|book| BookTemplate {
-            book,
-            version: VERSION,
-        })
-        .and_then(|t| {
-            t.render()
-                .map_err(|err| {
-                    error!(%err, "failed to render book");
-                    err
-                })
-                .ok()
-        })
-        .map_or_else(
-            || (StatusCode::NOT_FOUND, Html("not found".to_string())),
-            |rendered| (StatusCode::OK, Html(rendered)),
-        )
+    let book = match scan.books.iter().find(|b| b.id == id) {
+        None => return (StatusCode::NOT_FOUND, Html("not found".to_string())),
+        Some(book) => book,
+    };
+    let template = BookTemplate {
+        book,
+        version: VERSION,
+    };
+    let rendered = match template.render() {
+        Ok(html) => html,
+        Err(err) => {
+            error!(%err, "failed to render book");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()));
+        }
+    };
+    (StatusCode::OK, Html(rendered))
 }
 
 async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
-    scan_books(state.seed, state.data_dir.as_path())
-        .map(|new_scan| {
-            let books = new_scan.books.len();
-            let pages = new_scan.pages_map.len();
-            let ms = new_scan.scan_duration.num_milliseconds();
-            info!(books, pages, ms, "finished re-scan");
-            *locked = Some(new_scan);
-            Redirect::to("/")
-        })
-        .map_err(|err| {
-            error!(%err, "failed to re-scan books");
-            err
-        })
-        .ok()
-        .unwrap_or_else(|| Redirect::to("/"))
+    let scan_result = scan_books(state.seed, state.data_dir.as_path());
+    if let Err(err) = scan_result {
+        error!(%err, "failed to re-scan books");
+        return Redirect::to("/");
+    }
+    let new_scan = scan_result.unwrap();
+    let books = new_scan.books.len();
+    let pages = new_scan.pages_map.len();
+    let ms = new_scan.scan_duration.num_milliseconds();
+    info!(books, pages, ms, "finished re-scan");
+    *locked = Some(new_scan);
+    Redirect::to("/")
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
@@ -425,13 +423,12 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
         Some(scan) => scan,
     };
     let mut rng = thread_rng();
-    scan.books.choose(&mut rng).map_or_else(
-        || Redirect::to("/").into_response(),
-        |book| {
-            let id = &book.id;
-            Redirect::to(&format!("/book/{id}")).into_response()
-        },
-    )
+    let book = match scan.books.choose(&mut rng) {
+        None => return Redirect::to("/").into_response(),
+        Some(book) => book,
+    };
+    let id = &book.id;
+    Redirect::to(&format!("/book/{id}")).into_response()
 }
 
 async fn shuffle_book_route(
@@ -444,18 +441,12 @@ async fn shuffle_book_route(
         Some(scan) => scan,
     };
     let mut rng = thread_rng();
-    scan.books
-        .iter()
-        .filter(|b| b.id != id)
-        .collect::<Vec<&Book>>()
-        .choose(&mut rng)
-        .map_or_else(
-            || Redirect::to("/").into_response(),
-            |book| {
-                let id = &book.id;
-                Redirect::to(&format!("/book/{id}")).into_response()
-            },
-        )
+    let filtered_books: Vec<&Book> = scan.books.iter().filter(|b| b.id != id).collect();
+    let random_book = match filtered_books.choose(&mut rng) {
+        None => return Redirect::to("/").into_response(),
+        Some(book) => book,
+    };
+    Redirect::to(&format!("/book/{}", random_book.id)).into_response()
 }
 
 async fn show_page_route(
@@ -467,18 +458,18 @@ async fn show_page_route(
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(scan) => scan,
     };
-    scan.pages_map
-        .get(&*id)
-        .and_then(|page| {
-            fs::read(&*page.path)
-                .map_err(|err| {
-                    error!(%err, "failed to read page");
-                    err
-                })
-                .ok()
-                .map(|content| (StatusCode::OK, content).into_response())
-        })
-        .unwrap_or((StatusCode::NOT_FOUND, Vec::new()).into_response())
+    let page = match scan.pages_map.get(&*id) {
+        None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),
+        Some(page) => page,
+    };
+    let content = match fs::read(&*page.path) {
+        Ok(content) => content,
+        Err(err) => {
+            error!(%err, "failed to read page");
+            return (StatusCode::NOT_FOUND, Vec::new()).into_response();
+        }
+    };
+    (StatusCode::OK, content).into_response()
 }
 
 #[derive(Deserialize, Serialize)]
