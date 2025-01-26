@@ -454,6 +454,7 @@ dependencies = [
  "chrono",
  "clap",
  "git-version",
+ "http 1.2.0",
  "imsz",
  "parking_lot",
  "predicates",
