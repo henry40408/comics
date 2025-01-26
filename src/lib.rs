@@ -163,12 +163,12 @@ pub struct Book {
 }
 
 impl Book {
-    fn new(seed: u64, span: &Span, path: &path::Path) -> Result<Self, MyError> {
-        let s = trace_span!(parent: span, "scan book", ?path).entered();
+    fn new(span: &Span, seed: u64, path: &path::Path) -> Result<Self, MyError> {
+        let span = trace_span!(parent: span, "scan book", ?path).entered();
         if !path.is_dir() {
             return Err(MyError::NotDirectory(path.to_path_buf()));
         }
-        let pages = scan_pages(seed, &s, path)?;
+        let pages = scan_pages(&span, seed, path)?;
         let cover = pages
             .first()
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
@@ -185,7 +185,7 @@ impl Book {
     }
 }
 
-fn scan_pages(seed: u64, span: &Span, book_path: &path::Path) -> MyResult<Vec<Page>> {
+fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> MyResult<Vec<Page>> {
     let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
     let entries: Vec<_> = fs::read_dir(book_path)?.collect();
     let mut pages: Vec<Page> = entries
@@ -224,7 +224,7 @@ pub fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
         })
         .filter_map(|entry| {
             let path = entry.path();
-            let book = Book::new(seed, &span, path.as_path());
+            let book = Book::new(&span, seed, path.as_path());
             if let Err(err) = &book {
                 error!(%err, "failed to create book");
             };
