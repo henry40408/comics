@@ -14,7 +14,7 @@ askama = "0.12.1"
 axum = "0.8.1"
 base64 = "0.22.0"
 bcrypt = "0.16.0"
-chrono = "0.4.35"
+chrono = "0.4.39"
 clap = { version = "4.5.2", features = ["derive", "env"] }
 http = "1.2.0"
 imsz = "0.3.1"
