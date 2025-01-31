@@ -58,6 +58,7 @@ jobs:
           tool: cargo-hack@0.6.28
       - run: cargo hack check --rust-version --workspace --all-targets --ignore-private
   build-and-publish:
+    needs: [check, coverage, msrv]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.1.1
