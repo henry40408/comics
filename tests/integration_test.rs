@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use std::time::Duration;
-use tempdir::TempDir;
+use tempfile::tempdir;
 
 #[test]
 fn initial_scan_finished() {
@@ -13,7 +13,7 @@ fn initial_scan_finished() {
 
 #[test]
 fn initial_scan_failed() {
-    let dir = TempDir::new("temp").unwrap();
+    let dir = tempdir().unwrap();
     let mut cmd = Command::cargo_bin("comics").unwrap();
     let non_exist = dir.path().join("non_exist");
     let path = non_exist.to_string_lossy();

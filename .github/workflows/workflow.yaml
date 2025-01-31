@@ -24,6 +24,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo fmt --check
       - run: cargo clippy
+      - uses: taiki-e/install-action@v2.39.1
+        with:
+          tool: cargo-deny@0.16.4
+      - run: cargo deny check
   coverage:
     runs-on: ubuntu-latest
     steps:
