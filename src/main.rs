@@ -3,36 +3,14 @@ use std::net::SocketAddr;
 use clap::Parser;
 use comics::{hash_password, run_server, scan_books, Cli, Commands};
 use tracing::{error, Level};
-use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+use tracing_subscriber::{
+    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer as _,
+};
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let default_directive = if cli.debug {
-        Level::DEBUG.into()
-    } else {
-        Level::INFO.into()
-    };
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(default_directive)
-        .from_env_lossy();
-    let span_events = env_filter.max_level_hint().map_or_else(
-        || FmtSpan::CLOSE,
-        |l| {
-            if l >= Level::DEBUG {
-                FmtSpan::CLOSE
-            } else {
-                FmtSpan::NONE
-            }
-        },
-    );
-    tracing_subscriber::fmt()
-        .with_ansi(!cli.no_color)
-        .with_env_filter(env_filter)
-        .with_span_events(span_events)
-        .with_target(false)
-        .compact()
-        .init();
+    init_tracing(&cli);
 
     match &cli.command {
         Some(Commands::HashPassword { .. }) => {
@@ -78,4 +56,29 @@ async fn main() {
             };
         }
     };
+}
+
+fn init_tracing(cli: &Cli) {
+    let default_directive = if cli.debug { Level::DEBUG } else { Level::INFO };
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(default_directive.into())
+        .from_env_lossy();
+    let span_events = env_filter.max_level_hint().map_or_else(
+        || FmtSpan::CLOSE,
+        |l| {
+            if l >= Level::DEBUG {
+                FmtSpan::CLOSE
+            } else {
+                FmtSpan::NONE
+            }
+        },
+    );
+    let layer = tracing_subscriber::fmt::layer().with_span_events(span_events);
+    let layer = match cli.log_format {
+        comics::LogFormat::Full => layer.with_filter(env_filter).boxed(),
+        comics::LogFormat::Compact => layer.compact().with_filter(env_filter).boxed(),
+        comics::LogFormat::Pretty => layer.pretty().with_filter(env_filter).boxed(),
+        comics::LogFormat::Json => layer.json().with_filter(env_filter).boxed(),
+    };
+    tracing_subscriber::registry().with(layer).init();
 }

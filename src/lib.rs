@@ -9,7 +9,7 @@ use axum::{
 };
 use base64::{engine::GeneralPurpose, Engine};
 use chrono::{DateTime, Duration, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use imsz::ImInfo;
 use parking_lot::Mutex;
 use rand::{seq::SliceRandom, thread_rng};
@@ -57,6 +57,10 @@ pub struct Cli {
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
     pub data_dir: PathBuf,
 
+    /// Log format
+    #[arg(long, env = "LOG_FORMAT", default_value = "full")]
+    pub log_format: LogFormat,
+
     /// No color <https://no-color.org/>
     #[arg(long, env = "NO_COLOR")]
     pub no_color: bool,
@@ -67,6 +71,14 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum LogFormat {
+    Full,
+    Compact,
+    Pretty,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
