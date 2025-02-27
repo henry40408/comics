@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use comics::{hash_password, run_server, scan_books, Cli, Commands};
-use tracing::{error, Level};
+use comics::{Cli, Commands, hash_password, run_server, scan_books};
+use tracing::{Level, error};
 use tracing_subscriber::{
-    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer as _,
+    EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 #[tokio::main]
