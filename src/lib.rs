@@ -1,18 +1,18 @@
 use askama::Template;
 use axum::{
+    Json, Router,
     extract::{Path, Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
-    Json, Router,
 };
-use base64::{engine::GeneralPurpose, Engine};
+use base64::{Engine, engine::GeneralPurpose};
 use chrono::{DateTime, Duration, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use imsz::ImInfo;
 use parking_lot::Mutex;
-use rand::{seq::SliceRandom, thread_rng};
+use rand::seq::IndexedMutRandom as _;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,7 +30,7 @@ use tokio::{
     sync::oneshot::{self, Sender},
 };
 use tower_http::trace::TraceLayer;
-use tracing::{error, field, info, trace_span, warn, Level, Span};
+use tracing::{Level, Span, error, field, info, trace_span, warn};
 use xxhash_rust::xxh3::Xxh3;
 
 const BCRYPT_COST: u32 = 11u32;
@@ -332,20 +332,19 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
         .map(|s| s.to_string().into_boxed_str())
         .collect();
     let (username, password) = match (actual.first(), actual.get(1)) {
-        (Some(u), Some(p)) if &**u == &*expected_username => (u, p),
+        (Some(u), Some(p)) if **u == *expected_username => (u, p),
         _ => return Ok(AuthState::Failed),
     };
     match (
         **username == *expected_username,
-        bcrypt::verify(&**password, &*expected_password),
+        bcrypt::verify(&**password, &expected_password),
     ) {
         (true, Ok(true)) => Ok(AuthState::Success),
-        (true, Ok(false)) => Ok(AuthState::Failed),
+        (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
         (true, Err(err)) => {
             error!(?err, "failed to verify password");
             Err(MyError::Bcrypt(err))
         }
-        (false, _) => Ok(AuthState::Failed),
     }
 }
 
@@ -429,13 +428,13 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
+    let mut locked = state.scan.lock();
+    let scan = match locked.as_mut() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(scan) => scan,
     };
-    let mut rng = thread_rng();
-    let book = match scan.books.choose(&mut rng) {
+    let mut rng = rand::rng();
+    let book = match scan.books.choose_mut(&mut rng) {
         None => return Redirect::to("/").into_response(),
         Some(book) => book,
     };
@@ -447,14 +446,14 @@ async fn shuffle_book_route(
     State(state): State<AppState>,
     Path(id): Path<Box<str>>,
 ) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
+    let mut locked = state.scan.lock();
+    let scan = match locked.as_mut() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
         Some(scan) => scan,
     };
-    let mut rng = thread_rng();
-    let filtered_books: Vec<&Book> = scan.books.iter().filter(|b| b.id != id).collect();
-    let random_book = match filtered_books.choose(&mut rng) {
+    let mut rng = rand::rng();
+    let mut filtered_books: Vec<&Book> = scan.books.iter().filter(|b| b.id != id).collect();
+    let random_book = match filtered_books.choose_mut(&mut rng) {
         None => return Redirect::to("/").into_response(),
         Some(book) => book,
     };
@@ -603,7 +602,7 @@ pub fn hash_password() -> MyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{init_route, Cli};
+    use crate::{Cli, init_route};
     use axum_test::TestServer;
     use clap::Parser as _;
     use tokio::sync::oneshot;
