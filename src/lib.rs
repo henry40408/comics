@@ -332,20 +332,19 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
         .map(|s| s.to_string().into_boxed_str())
         .collect();
     let (username, password) = match (actual.first(), actual.get(1)) {
-        (Some(u), Some(p)) if &**u == &*expected_username => (u, p),
+        (Some(u), Some(p)) if **u == *expected_username => (u, p),
         _ => return Ok(AuthState::Failed),
     };
     match (
         **username == *expected_username,
-        bcrypt::verify(&**password, &*expected_password),
+        bcrypt::verify(&**password, &expected_password),
     ) {
         (true, Ok(true)) => Ok(AuthState::Success),
-        (true, Ok(false)) => Ok(AuthState::Failed),
+        (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
         (true, Err(err)) => {
             error!(?err, "failed to verify password");
             Err(MyError::Bcrypt(err))
         }
-        (false, _) => Ok(AuthState::Failed),
     }
 }
 
