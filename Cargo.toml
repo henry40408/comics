@@ -17,7 +17,7 @@ bcrypt = "0.17.0"
 chrono = "0.4.35"
 clap = { version = "4.5.2", features = ["derive", "env"] }
 http = "1.2.0"
-imsz = "0.3.1"
+imsz = "0.4.1"
 parking_lot = "0.12.1"
 rand = "0.9.0"
 rayon = "1.9.0"

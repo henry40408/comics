@@ -779,9 +779,9 @@ dependencies = [
 
 [[package]]
 name = "imsz"
-version = "0.3.1"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d5b020f63464f3baae9aa9ca51c89c5d60861f11bb78fb8de7fea4fbf86be2a"
+checksum = "396dda16a82727ec2d14aabc1167832bb823d849c54a246ca0cff6cfb7bc697c"
 
 [[package]]
 name = "inout"
