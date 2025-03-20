@@ -44,6 +44,9 @@ axum-test = "17.0.2"
 snapbox = { version = "0.6.21", features = ["cmd"] }
 tempfile = "3.16.0"
 
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true
