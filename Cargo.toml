@@ -11,7 +11,7 @@ rust-version = "1.85.0"
 
 [dependencies]
 askama = "0.12.1"
-axum = "0.8.1"
+axum = "0.8.3"
 base64 = "0.22.0"
 bcrypt = "0.17.0"
 chrono = "0.4.35"
