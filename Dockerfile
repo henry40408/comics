@@ -1,7 +1,7 @@
 FROM rust:1.87.0-alpine AS builder
 
 WORKDIR /usr/src/app
-RUN apk add --no-cache build-base=0.5-r3 git=2.47.2-r0
+RUN apk add --no-cache build-base git
 COPY . .
 COPY .git .git
 
