@@ -1,4 +1,4 @@
-FROM rust:1.87.0-alpine AS builder
+FROM rust:1.88.0-alpine AS builder
 
 WORKDIR /usr/src/app
 RUN apk add --no-cache build-base git
