@@ -85,6 +85,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/henry40408/comics:nightly
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
         if: github.ref_type == 'branch' && github.ref_name == 'main'
       - uses: docker/build-push-action@v5.0.0
         with:
@@ -92,6 +94,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/henry40408/comics:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
         if: github.ref_type == 'tag'
       - uses: docker/build-push-action@v5.0.0
         with:
@@ -99,4 +103,6 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/henry40408/comics:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
         if: github.ref_type == 'tag'
