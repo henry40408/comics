@@ -15,7 +15,7 @@ axum = "0.8.1"
 base64 = "0.22.0"
 bcrypt = "0.17.0"
 chrono = "0.4.35"
-clap = { version = "4.5.2", features = ["derive", "env"] }
+clap = { version = "4.5.47", features = ["derive", "env"] }
 http = "1.2.0"
 imsz = "0.4.1"
 parking_lot = "0.12.1"
