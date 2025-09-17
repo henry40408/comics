@@ -50,8 +50,8 @@ const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic
 #[command(author, version=VERSION, about, long_about=None)]
 pub struct Opts {
     /// Bind host & port
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
-    pub bind: Box<str>,
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
+    pub bind: String,
 
     /// Debug mode
     #[arg(long, short = 'd', env = "DEBUG")]
@@ -144,16 +144,16 @@ impl From<&ImInfo> for Dimension {
 
 #[derive(Clone, Debug)]
 pub struct Page {
-    pub filename: Box<str>,
-    pub id: Box<str>,
-    pub path: Box<str>,
+    pub filename: String,
+    pub id: String,
+    pub path: String,
     pub dimension: Dimension,
 }
 
-fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> Box<str> {
+fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
     let mut hasher = Xxh3::with_seed(seed);
     hasher.update(s.as_ref().as_bytes());
-    format!("{:x}", hasher.digest()).into_boxed_str()
+    format!("{:x}", hasher.digest())
 }
 
 impl Page {
@@ -163,9 +163,9 @@ impl Page {
         }
         let filename = path
             .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string().into_boxed_str()))
+            .and_then(|s| s.to_str().map(|s| s.to_string()))
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
-        let path_str = path.to_string_lossy().to_string().into_boxed_str();
+        let path_str = path.to_string_lossy().to_string();
         let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
             filename,
@@ -179,8 +179,8 @@ impl Page {
 #[derive(Debug)]
 pub struct Book {
     pub cover: Page,
-    pub id: Box<str>,
-    pub title: Box<str>,
+    pub id: String,
+    pub title: String,
     pub pages: Vec<Page>,
 }
 
@@ -196,7 +196,7 @@ impl Book {
             .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
         let title = path
             .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string().into_boxed_str()))
+            .and_then(|s| s.to_str().map(|s| s.to_string()))
             .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
         Ok(Book {
             cover: cover.clone(),
@@ -278,7 +278,7 @@ struct AppState {
 #[derive(Debug)]
 pub struct BookScan {
     pub books: Vec<Book>,
-    pub pages_map: HashMap<Box<str>, Page>,
+    pub pages_map: HashMap<String, Page>,
     pub scan_duration: Duration,
     pub scanned_at: DateTime<Utc>,
 }
@@ -288,7 +288,7 @@ pub struct BookScan {
 struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
-    scanned_at: Box<str>,
+    scanned_at: String,
     version: &'static str,
 }
 
@@ -299,12 +299,10 @@ struct BookTemplate<'a> {
     version: &'static str,
 }
 
-fn get_expected_credentials() -> Option<(Box<str>, Box<str>)> {
-    std::env::var("AUTH_USERNAME").ok().and_then(|u| {
-        std::env::var("AUTH_PASSWORD_HASH")
-            .ok()
-            .map(|p| (u.into_boxed_str(), p.into_boxed_str()))
-    })
+fn get_expected_credentials() -> Option<(String, String)> {
+    std::env::var("AUTH_USERNAME")
+        .ok()
+        .and_then(|u| std::env::var("AUTH_PASSWORD_HASH").ok().map(|p| (u, p)))
 }
 
 enum AuthState {
@@ -330,11 +328,8 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
         _ => return Ok(AuthState::Failed),
     };
     let decoded = BASE64_ENGINE.decode(digest)?;
-    let decoded_str = String::from_utf8(decoded)?.into_boxed_str();
-    let actual: Vec<Box<str>> = decoded_str
-        .split(':')
-        .map(|s| s.to_string().into_boxed_str())
-        .collect();
+    let decoded_str = String::from_utf8(decoded)?;
+    let actual: Vec<String> = decoded_str.split(':').map(|s| s.to_string()).collect();
     let (username, password) = match (actual.first(), actual.get(1)) {
         (Some(u), Some(p)) if **u == *expected_username => (u, p),
         _ => return Ok(AuthState::Failed),
@@ -375,7 +370,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
     let t = IndexTemplate {
         books: &scan.books,
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
-        scanned_at: scan.scanned_at.to_rfc2822().into_boxed_str(),
+        scanned_at: scan.scanned_at.to_rfc2822(),
         version: VERSION,
     };
     let rendered = match t.render() {
@@ -390,7 +385,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn show_book_route(
     State(state): State<AppState>,
-    Path(id): Path<Box<str>>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match locked.as_ref() {
@@ -448,7 +443,7 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn shuffle_book_route(
     State(state): State<AppState>,
-    Path(id): Path<Box<str>>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
     let mut locked = state.scan.lock();
     let scan = match locked.as_mut() {

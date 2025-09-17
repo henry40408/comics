@@ -41,6 +41,6 @@ RUN addgroup -S user && adduser -S user -G user
 COPY --from=builder /bin/comics /bin/comics
 USER user
 
-ENV BIND=0.0.0.0:8080
-EXPOSE 8080/tcp
+ENV BIND=0.0.0.0:3000
+EXPOSE 3000/tcp
 CMD ["/bin/comics"]
