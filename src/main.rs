@@ -518,10 +518,10 @@ async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     .into_response()
 }
 
-pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
-    let data_dir = &cli.data_dir;
+pub fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
+    let data_dir = &opts.data_dir;
 
-    let seed = cli.seed.unwrap_or_else(|| {
+    let seed = opts.seed.unwrap_or_else(|| {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -530,7 +530,7 @@ pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
         seed
     });
     let state = Arc::new(AppState {
-        auth_confg: match (cli.auth_username.clone(), cli.auth_password_hash.clone()) {
+        auth_confg: match (opts.auth_username.clone(), opts.auth_password_hash.clone()) {
             (Some(u), Some(p)) => AuthConfig::Some {
                 username: u,
                 password_hash: p,
@@ -595,10 +595,10 @@ pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
     Ok(router)
 }
 
-pub async fn run_server(addr: SocketAddr, cli: &Opts) -> MyResult<()> {
+pub async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
     let (tx, rx) = oneshot::channel::<()>();
-    let app = init_route(cli, tx)?;
-    if cli.auth_username.is_none() || cli.auth_password_hash.is_none() {
+    let app = init_route(opts, tx)?;
+    if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
         warn!("no authorization enabled, server is publicly accessible");
     }
     let version = VERSION;
@@ -628,8 +628,12 @@ pub fn hash_password() -> MyResult<()> {
     Ok(())
 }
 
-fn init_tracing(cli: &Opts) {
-    let default_directive = if cli.debug { Level::DEBUG } else { Level::INFO };
+fn init_tracing(opts: &Opts) {
+    let default_directive = if opts.debug {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
     let env_filter = EnvFilter::builder()
         .with_default_directive(default_directive.into())
         .from_env_lossy();
@@ -644,7 +648,7 @@ fn init_tracing(cli: &Opts) {
         },
     );
     let layer = tracing_subscriber::fmt::layer().with_span_events(span_events);
-    let layer = match cli.log_format {
+    let layer = match opts.log_format {
         LogFormat::Full => layer.with_filter(env_filter).boxed(),
         LogFormat::Compact => layer.compact().with_filter(env_filter).boxed(),
         LogFormat::Pretty => layer.pretty().with_filter(env_filter).boxed(),
@@ -725,9 +729,9 @@ mod tests {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut cli = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
-        cli.seed = Some(1);
-        let router = init_route(&cli, tx).unwrap();
+        let mut opts = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        opts.seed = Some(1);
+        let router = init_route(&opts, tx).unwrap();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
@@ -829,7 +833,7 @@ mod tests {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut cli = Opts::parse_from([
+        let mut opts = Opts::parse_from([
             "comics",
             "--data-dir",
             "./fixtures/data",
@@ -838,8 +842,8 @@ mod tests {
             "--auth-password-hash",
             &bcrypt::hash("password", BCRYPT_COST).unwrap(),
         ]);
-        cli.seed = Some(1);
-        let router = init_route(&cli, tx).unwrap();
+        opts.seed = Some(1);
+        let router = init_route(&opts, tx).unwrap();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
