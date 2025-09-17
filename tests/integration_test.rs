@@ -30,7 +30,7 @@ fn initial_scan_finished() {
         .assert()
         .failure()
         .stdout_eq(str![[r#"
-[..]  WARN comics: no authrization enabled, server is publicly accessible
+[..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
 [..]  INFO comics: initial scan finished total_books=2 total_pages=18 duration=[..]
 

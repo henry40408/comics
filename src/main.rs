@@ -49,6 +49,14 @@ const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic
 #[derive(Parser, Debug)]
 #[command(author, version=VERSION, about, long_about=None)]
 pub struct Opts {
+    /// Username for basic authentication
+    #[arg(long, env = "AUTH_USERNAME")]
+    pub auth_username: Option<String>,
+
+    /// Hashed password for basic authentication
+    #[arg(long, env = "AUTH_PASSWORD_HASH")]
+    pub auth_password_hash: Option<String>,
+
     /// Bind host & port
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
     pub bind: String,
@@ -269,7 +277,17 @@ pub fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
 }
 
 #[derive(Clone)]
+enum AuthConfig {
+    None,
+    Some {
+        username: String,
+        password_hash: String,
+    },
+}
+
+#[derive(Clone)]
 struct AppState {
+    auth_confg: AuthConfig,
     data_dir: PathBuf,
     scan: Arc<Mutex<Option<BookScan>>>,
     seed: u64,
@@ -299,12 +317,6 @@ struct BookTemplate<'a> {
     version: &'static str,
 }
 
-fn get_expected_credentials() -> Option<(String, String)> {
-    std::env::var("AUTH_USERNAME")
-        .ok()
-        .and_then(|u| std::env::var("AUTH_PASSWORD_HASH").ok().map(|p| (u, p)))
-}
-
 enum AuthState {
     Public,
     Request,
@@ -312,10 +324,13 @@ enum AuthState {
     Failed,
 }
 
-fn authenticate(request: &Request) -> Result<AuthState, MyError> {
-    let (expected_username, expected_password) = match get_expected_credentials() {
-        None => return Ok(AuthState::Public),
-        Some(e) => e,
+fn authenticate(state: &Arc<AppState>, request: &Request) -> Result<AuthState, MyError> {
+    let (expected_username, expected_password) = match &state.auth_confg {
+        AuthConfig::None => return Ok(AuthState::Public),
+        AuthConfig::Some {
+            username,
+            password_hash,
+        } => (username, password_hash),
     };
     let header_value = match request.headers().get(header::AUTHORIZATION) {
         None => return Ok(AuthState::Request),
@@ -336,7 +351,7 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
     };
     match (
         **username == *expected_username,
-        bcrypt::verify(&**password, &expected_password),
+        bcrypt::verify(&**password, expected_password),
     ) {
         (true, Ok(true)) => Ok(AuthState::Success),
         (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
@@ -347,8 +362,12 @@ fn authenticate(request: &Request) -> Result<AuthState, MyError> {
     }
 }
 
-async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
-    match authenticate(&request) {
+async fn auth_middleware_fn(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> impl IntoResponse {
+    match authenticate(&state, &request) {
         Ok(AuthState::Public | AuthState::Success) => next.run(request).await,
         Ok(AuthState::Failed) => StatusCode::UNAUTHORIZED.into_response(),
         Ok(AuthState::Request) => {
@@ -361,7 +380,7 @@ async fn auth_middleware_fn(request: Request, next: Next) -> impl IntoResponse {
     }
 }
 
-async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
@@ -384,7 +403,7 @@ async fn index_route(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn show_book_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -410,7 +429,7 @@ async fn show_book_route(
     (StatusCode::OK, Html(rendered))
 }
 
-async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
     let scan_result = scan_books(state.seed, state.data_dir.as_path());
     if let Err(err) = scan_result {
@@ -426,7 +445,7 @@ async fn rescan_books_route(State(state): State<AppState>) -> impl IntoResponse 
     Redirect::to("/")
 }
 
-async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut locked = state.scan.lock();
     let scan = match locked.as_mut() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
@@ -442,7 +461,7 @@ async fn shuffle_route(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn shuffle_book_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let mut locked = state.scan.lock();
@@ -460,7 +479,7 @@ async fn shuffle_book_route(
 }
 
 async fn show_page_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let locked = state.scan.lock();
@@ -487,7 +506,7 @@ pub struct Healthz {
     pub scanned_at: i64,
 }
 
-async fn healthz_route(State(state): State<AppState>) -> impl IntoResponse {
+async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.lock();
     let scan = match locked.as_ref() {
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
@@ -510,11 +529,18 @@ pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
         warn!(%seed, "no seed provided, use seconds since UNIX epoch as seed");
         seed
     });
-    let state = AppState {
+    let state = Arc::new(AppState {
+        auth_confg: match (cli.auth_username.clone(), cli.auth_password_hash.clone()) {
+            (Some(u), Some(p)) => AuthConfig::Some {
+                username: u,
+                password_hash: p,
+            },
+            _ => AuthConfig::None,
+        },
         data_dir: data_dir.clone(),
         scan: Arc::new(Mutex::new(None)),
         seed,
-    };
+    });
 
     let router = Router::new()
         .route("/book/{id}", get(show_book_route))
@@ -522,7 +548,10 @@ pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
         .route("/shuffle/{id}", post(shuffle_book_route))
         .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
-        .route_layer(middleware::from_fn(auth_middleware_fn))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware_fn,
+        ))
         // to prevent timing attack, bcrypt is too slow
         // protected by randomly-generated string as page ID instead
         .route("/data/{id}", get(show_page_route))
@@ -569,8 +598,8 @@ pub fn init_route(cli: &Opts, tx: Sender<()>) -> MyResult<Router> {
 pub async fn run_server(addr: SocketAddr, cli: &Opts) -> MyResult<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let app = init_route(cli, tx)?;
-    if get_expected_credentials().is_none() {
-        warn!("no authrization enabled, server is publicly accessible");
+    if cli.auth_username.is_none() || cli.auth_password_hash.is_none() {
+        warn!("no authorization enabled, server is publicly accessible");
     }
     let version = VERSION;
     let listener = TcpListener::bind(&addr).await?;
@@ -679,8 +708,9 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Opts, init_route};
+    use crate::{BASE64_ENGINE, BCRYPT_COST, Opts, init_route};
     use axum_test::TestServer;
+    use base64::Engine;
     use clap::Parser as _;
     use tokio::sync::oneshot;
 
@@ -791,6 +821,40 @@ mod tests {
     async fn healthz() {
         let server = build_server().await;
         let res = server.get("/healthz").await;
+        assert_eq!(200, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth() {
+        use std::{thread, time};
+
+        let (tx, _) = oneshot::channel::<()>();
+        let mut cli = Opts::parse_from([
+            "comics",
+            "--data-dir",
+            "./fixtures/data",
+            "--auth-username",
+            "user",
+            "--auth-password-hash",
+            &bcrypt::hash("password", BCRYPT_COST).unwrap(),
+        ]);
+        cli.seed = Some(1);
+        let router = init_route(&cli, tx).unwrap();
+
+        let server = TestServer::new(router.into_make_service()).unwrap();
+        for _ in 0..10 {
+            let res = server.get("/healthz").await;
+            if res.status_code() == 200 {
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(100));
+        }
+
+        let credentials = BASE64_ENGINE.encode("user:password");
+        let res = server
+            .get("/")
+            .authorization(format!("Basic {credentials}"))
+            .await;
         assert_eq!(200, res.status_code());
     }
 }
