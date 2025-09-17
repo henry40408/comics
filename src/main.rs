@@ -735,6 +735,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_page() {
+        let page_id = "df007a2c411dcb94"; // Netherworld Nomads Journey to the Jade Jungle, page 1
+        let path = format!("/data/{page_id}");
+        let server = build_server().await;
+        let res = server.get(&path).await;
+        assert_eq!(200, res.status_code());
+
+        let content = res.as_bytes();
+        assert!(content.starts_with(b"\xFF\xD8\xFF")); // JPEG magic bytes
+    }
+
+    #[tokio::test]
     async fn shuffle() {
         let server = build_server().await;
         let res = server.post("/shuffle").await;
