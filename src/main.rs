@@ -48,45 +48,45 @@ const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic
 
 #[derive(Parser, Debug)]
 #[command(author, version=VERSION, about, long_about=None)]
-pub struct Opts {
+struct Opts {
     /// Username for basic authentication
     #[arg(long, env = "AUTH_USERNAME")]
-    pub auth_username: Option<String>,
+    auth_username: Option<String>,
 
     /// Hashed password for basic authentication
     #[arg(long, env = "AUTH_PASSWORD_HASH")]
-    pub auth_password_hash: Option<String>,
+    auth_password_hash: Option<String>,
 
     /// Bind host & port
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
-    pub bind: String,
+    bind: String,
 
     /// Debug mode
     #[arg(long, short = 'd', env = "DEBUG")]
-    pub debug: bool,
+    debug: bool,
 
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
-    pub data_dir: PathBuf,
+    data_dir: PathBuf,
 
     /// Log format
     #[arg(long, env = "LOG_FORMAT", default_value = "full")]
-    pub log_format: LogFormat,
+    log_format: LogFormat,
 
     /// No color <https://no-color.org/>
     #[arg(long, env = "NO_COLOR")]
-    pub no_color: bool,
+    no_color: bool,
 
     /// Seed to generate hashed IDs
     #[arg(long, env = "SEED")]
-    pub seed: Option<u64>,
+    seed: Option<u64>,
 
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    command: Option<Commands>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
-pub enum LogFormat {
+enum LogFormat {
     Full,
     Compact,
     Pretty,
@@ -94,7 +94,7 @@ pub enum LogFormat {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+enum Commands {
     /// Hash password
     #[command()]
     HashPassword {},
@@ -104,7 +104,7 @@ pub enum Commands {
 }
 
 #[derive(Debug, Error)]
-pub enum MyError {
+enum MyError {
     #[error("bcrypt error: {0}")]
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("base64 decode error: {0}")]
@@ -121,8 +121,6 @@ pub enum MyError {
     NotDirectory(PathBuf),
     #[error("not a file: {0}")]
     NotFile(PathBuf),
-    #[error("not an image: {0}")]
-    NotImage(PathBuf),
     #[error("password mismatched")]
     PasswordMismatched,
     #[error("failed to strip prefix")]
@@ -136,9 +134,9 @@ pub enum MyError {
 type MyResult<T> = Result<T, MyError>;
 
 #[derive(Clone, Debug)]
-pub struct Dimension {
-    pub height: u64,
-    pub width: u64,
+struct Dimension {
+    height: u64,
+    width: u64,
 }
 
 impl From<&ImInfo> for Dimension {
@@ -151,11 +149,11 @@ impl From<&ImInfo> for Dimension {
 }
 
 #[derive(Clone, Debug)]
-pub struct Page {
-    pub filename: String,
-    pub id: String,
-    pub path: String,
-    pub dimension: Dimension,
+struct Page {
+    filename: String,
+    id: String,
+    path: String,
+    dimension: Dimension,
 }
 
 fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
@@ -185,11 +183,11 @@ impl Page {
 }
 
 #[derive(Debug)]
-pub struct Book {
-    pub cover: Page,
-    pub id: String,
-    pub title: String,
-    pub pages: Vec<Page>,
+struct Book {
+    cover: Page,
+    id: String,
+    title: String,
+    pages: Vec<Page>,
 }
 
 impl Book {
@@ -240,7 +238,7 @@ fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> MyResult<Vec<Pa
     Ok(pages)
 }
 
-pub fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
+fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
     let span = trace_span!("scan books").entered();
     let scanned_at = Utc::now();
     let entries: Vec<_> = fs::read_dir(data_path)?.collect();
@@ -294,11 +292,11 @@ struct AppState {
 }
 
 #[derive(Debug)]
-pub struct BookScan {
-    pub books: Vec<Book>,
-    pub pages_map: HashMap<String, Page>,
-    pub scan_duration: Duration,
-    pub scanned_at: DateTime<Utc>,
+struct BookScan {
+    books: Vec<Book>,
+    pages_map: HashMap<String, Page>,
+    scan_duration: Duration,
+    scanned_at: DateTime<Utc>,
 }
 
 #[derive(Template)]
@@ -502,8 +500,8 @@ async fn show_page_route(
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct Healthz {
-    pub scanned_at: i64,
+struct Healthz {
+    scanned_at: i64,
 }
 
 async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -518,7 +516,7 @@ async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     .into_response()
 }
 
-pub fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
+fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
     let data_dir = &opts.data_dir;
 
     let seed = opts.seed.unwrap_or_else(|| {
@@ -595,7 +593,7 @@ pub fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
     Ok(router)
 }
 
-pub async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
+async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let app = init_route(opts, tx)?;
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
@@ -617,7 +615,7 @@ pub async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
     Ok(())
 }
 
-pub fn hash_password() -> MyResult<()> {
+fn hash_password() -> MyResult<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
