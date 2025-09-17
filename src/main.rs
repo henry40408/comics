@@ -1,13 +1,15 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Write as _,
     net::SocketAddr,
-    path::{self, PathBuf, StripPrefixError},
+    path::{self, PathBuf},
     sync::Arc,
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::{Context, bail};
 use askama::Template;
 use axum::{
     Json, Router,
@@ -25,12 +27,11 @@ use parking_lot::Mutex;
 use rand::seq::IndexedMutRandom as _;
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tokio::{
     net::TcpListener,
     sync::oneshot::{self, Sender},
 };
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span, debug, error, field, info, trace_span, warn};
 use tracing_subscriber::{
     EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
@@ -103,36 +104,6 @@ enum Commands {
     List {},
 }
 
-#[derive(Debug, Error)]
-enum MyError {
-    #[error("bcrypt error: {0}")]
-    Bcrypt(#[from] bcrypt::BcryptError),
-    #[error("base64 decode error: {0}")]
-    Base64Decode(#[from] base64::DecodeError),
-    #[error("directory is empty: {0}")]
-    EmptyDirectory(PathBuf),
-    #[error("imsz error: {0}")]
-    ImszError(#[from] imsz::ImError),
-    #[error("invalid path: {0}")]
-    InvalidPath(PathBuf),
-    #[error("IO error: {0}")]
-    IO(#[from] std::io::Error),
-    #[error("not a directory: {0}")]
-    NotDirectory(PathBuf),
-    #[error("not a file: {0}")]
-    NotFile(PathBuf),
-    #[error("password mismatched")]
-    PasswordMismatched,
-    #[error("failed to strip prefix")]
-    StripPrefixError(#[from] StripPrefixError),
-    #[error("failed to convert to string: {0}")]
-    ToString(#[from] http::header::ToStrError),
-    #[error("failed to convert to UTF-8: {0}")]
-    UTF8(#[from] std::string::FromUtf8Error),
-}
-
-type MyResult<T> = Result<T, MyError>;
-
 #[derive(Clone, Debug)]
 struct Dimension {
     height: u64,
@@ -163,14 +134,14 @@ fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
 }
 
 impl Page {
-    fn new(seed: u64, path: &path::Path) -> MyResult<Self> {
+    fn new(seed: u64, path: &path::Path) -> anyhow::Result<Self> {
         if !path.is_file() {
-            return Err(MyError::NotFile(path.to_path_buf()));
+            bail!("Not a file: {}", path.display());
         }
         let filename = path
             .file_name()
             .and_then(|s| s.to_str().map(|s| s.to_string()))
-            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
+            .with_context(|| format!("Invalid path: {}", path.display()))?;
         let path_str = path.to_string_lossy().to_string();
         let dimension = Dimension::from(&imsz::imsz(path)?);
         Ok(Page {
@@ -191,19 +162,19 @@ struct Book {
 }
 
 impl Book {
-    fn new(span: &Span, seed: u64, path: &path::Path) -> Result<Self, MyError> {
+    fn new(span: &Span, seed: u64, path: &path::Path) -> anyhow::Result<Self> {
         let span = trace_span!(parent: span, "scan book", ?path).entered();
         if !path.is_dir() {
-            return Err(MyError::NotDirectory(path.to_path_buf()));
+            bail!("Not a directory: {}", path.display());
         }
         let pages = scan_pages(&span, seed, path)?;
         let cover = pages
             .first()
-            .ok_or_else(|| MyError::EmptyDirectory(path.to_path_buf()))?;
+            .with_context(|| format!("Empty directory: {}", path.display()))?;
         let title = path
             .file_name()
             .and_then(|s| s.to_str().map(|s| s.to_string()))
-            .ok_or_else(|| MyError::InvalidPath(path.to_path_buf()))?;
+            .with_context(|| format!("Invalid path: {}", path.display()))?;
         Ok(Book {
             cover: cover.clone(),
             id: hash_string(seed, &title),
@@ -213,7 +184,7 @@ impl Book {
     }
 }
 
-fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> MyResult<Vec<Page>> {
+fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> anyhow::Result<Vec<Page>> {
     let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
     let entries: Vec<_> = fs::read_dir(book_path)?.collect();
     let mut pages: Vec<Page> = entries
@@ -238,7 +209,7 @@ fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> MyResult<Vec<Pa
     Ok(pages)
 }
 
-fn scan_books(seed: u64, data_path: &path::Path) -> MyResult<BookScan> {
+fn scan_books(seed: u64, data_path: &path::Path) -> anyhow::Result<BookScan> {
     let span = trace_span!("scan books").entered();
     let scanned_at = Utc::now();
     let entries: Vec<_> = fs::read_dir(data_path)?.collect();
@@ -322,7 +293,7 @@ enum AuthState {
     Failed,
 }
 
-fn authenticate(state: &Arc<AppState>, request: &Request) -> Result<AuthState, MyError> {
+fn authenticate(state: &Arc<AppState>, request: &Request) -> anyhow::Result<AuthState> {
     let (expected_username, expected_password) = match &state.auth_confg {
         AuthConfig::None => return Ok(AuthState::Public),
         AuthConfig::Some {
@@ -355,7 +326,7 @@ fn authenticate(state: &Arc<AppState>, request: &Request) -> Result<AuthState, M
         (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
         (true, Err(err)) => {
             error!(?err, "failed to verify password");
-            Err(MyError::Bcrypt(err))
+            bail!("Bcrypt error: {err}")
         }
     }
 }
@@ -516,7 +487,7 @@ async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     .into_response()
 }
 
-fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
+fn init_route(opts: &Opts, tx: Sender<()>) -> anyhow::Result<Router> {
     let data_dir = &opts.data_dir;
 
     let seed = opts.seed.unwrap_or_else(|| {
@@ -560,8 +531,8 @@ fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
         )
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(tower_http::trace::DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state.clone());
 
@@ -593,7 +564,7 @@ fn init_route(opts: &Opts, tx: Sender<()>) -> MyResult<Router> {
     Ok(router)
 }
 
-async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
+async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let app = init_route(opts, tx)?;
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
@@ -615,11 +586,11 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> MyResult<()> {
     Ok(())
 }
 
-fn hash_password() -> MyResult<()> {
+fn hash_password() -> anyhow::Result<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
-        return Err(MyError::PasswordMismatched);
+        bail!("Password mismatch");
     }
     let hashed = bcrypt::hash(password, BCRYPT_COST)?;
     println!("{hashed}");
@@ -656,28 +627,17 @@ fn init_tracing(opts: &Opts) {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
     debug!("Parsed options: {opts:?}");
 
     init_tracing(&opts);
 
     match &opts.command {
-        Some(Commands::HashPassword { .. }) => {
-            if let Err(err) = hash_password() {
-                error!(%err, "failed to hash password");
-            }
-        }
+        Some(Commands::HashPassword { .. }) => hash_password()?,
         Some(Commands::List { .. }) => {
-            use std::io::Write as _;
             let seed = 0u64; // dummy salt
-            let scan = match scan_books(seed, &opts.data_dir) {
-                Err(err) => {
-                    error!(%err, "failed to scan directory");
-                    return;
-                }
-                Ok(b) => b,
-            };
+            let scan = scan_books(seed, &opts.data_dir)?;
             let mut stdout = std::io::stdout().lock();
             for book in &scan.books {
                 _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
@@ -693,19 +653,12 @@ async fn main() {
             );
         }
         None => {
-            let bind: SocketAddr = match opts.bind.parse() {
-                Err(err) => {
-                    let bind = opts.bind;
-                    error!(bind, %err, "invalid host:port pair");
-                    return;
-                }
-                Ok(b) => b,
-            };
-            if let Err(err) = run_server(bind, &opts).await {
-                error!(%err, "failed to start the server");
-            };
+            let bind: SocketAddr = opts.bind.parse()?;
+            run_server(bind, &opts).await?;
         }
-    };
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -44,16 +44,17 @@ fn initial_scan_failed() {
     let non_exist = dir.path().join("non_exist");
     let path = non_exist.to_string_lossy();
     Command::new(cargo_bin("comics"))
-    .env("NO_COLOR", "true")
-    .env("SEED","0")
+        .env("NO_COLOR", "true")
+        .env("SEED", "0")
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])
         .assert()
         .success()
         .stdout_eq(str![[r#"
-...
-[..] ERROR comics: initial scan failed err=IO(Os { code: 2, kind: NotFound, message: "No such file or directory" })
-...
+[..]  WARN comics: no authorization enabled, server is publicly accessible
+[..]  INFO comics: server started addr=[..] version=[..]
+[..] ERROR comics: initial scan failed err=No such file or directory (os error 2)
+[..]  WARN comics: fatal error occurred, shutdown the server
 
 "#]])
         .stderr_eq(str![]);
