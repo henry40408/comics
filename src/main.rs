@@ -53,35 +53,27 @@ struct Opts {
     /// Username for basic authentication
     #[arg(long, env = "AUTH_USERNAME")]
     auth_username: Option<String>,
-
     /// Hashed password for basic authentication
     #[arg(long, env = "AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
-
     /// Bind host & port
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
     bind: String,
-
     /// Debug mode
     #[arg(long, short = 'd', env = "DEBUG")]
     debug: bool,
-
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
-
     /// Log format
     #[arg(long, env = "LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
-
     /// No color <https://no-color.org/>
     #[arg(long, env = "NO_COLOR")]
     no_color: bool,
-
     /// Seed to generate hashed IDs
     #[arg(long, env = "SEED")]
     seed: Option<u64>,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
