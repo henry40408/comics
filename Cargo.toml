@@ -39,7 +39,7 @@ xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
 [dev-dependencies]
 axum-test = "17.0.2"
 snapbox = { version = "0.6.21", features = ["cmd"] }
-tempfile = "3.16.0"
+tempfile = "3.23.0"
 
 [profile.dev.package."*"]
 opt-level = 3
