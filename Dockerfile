@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.3-labs
-FROM clux/muslrust:1.89.0-stable AS chef
+FROM clux/muslrust:1.90.0-stable AS chef
 USER root
 RUN cargo install cargo-chef --locked
 WORKDIR /app
