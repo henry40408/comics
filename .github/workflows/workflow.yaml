@@ -68,6 +68,7 @@ jobs:
   build-and-publish:
     needs: [check, coverage, msrv]
     runs-on: ubuntu-latest
+    if: (github.ref_type == 'branch' && github.ref_name == 'main') || (github.ref_type == 'tag')
     steps:
       - uses: actions/checkout@v5.0.0
         with:
