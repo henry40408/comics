@@ -1,5 +1,5 @@
 use snapbox::{
-    cmd::{Command, cargo_bin},
+    cmd::{self, Command},
     str,
 };
 use std::time::Duration;
@@ -7,7 +7,7 @@ use tempfile::tempdir;
 
 #[test]
 fn list() {
-    Command::new(cargo_bin("comics"))
+    Command::new(cmd::cargo_bin!("comics"))
         .args(["--data-dir", "fixtures/data", "list"])
         .assert()
         .success()
@@ -22,7 +22,7 @@ Quantum Quest Legacy of the Luminous League (9P)
 
 #[test]
 fn initial_scan_finished() {
-    Command::new(cargo_bin("comics"))
+    Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
         .env("SEED", "0")
         .timeout(Duration::from_secs(1))
@@ -43,7 +43,7 @@ fn initial_scan_failed() {
     let dir = tempdir().unwrap();
     let non_exist = dir.path().join("non_exist");
     let path = non_exist.to_string_lossy();
-    Command::new(cargo_bin("comics"))
+    Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
         .env("SEED", "0")
         .timeout(Duration::from_secs(1))
