@@ -17,7 +17,7 @@ base64 = "0.22.0"
 bcrypt = "0.17.0"
 chrono = "0.4.35"
 clap = { version = "4.5.2", features = ["derive", "env"] }
-http = "1.2.0"
+http = "1.4.0"
 imsz = "0.4.1"
 parking_lot = "0.12.1"
 rand = "0.9.0"
