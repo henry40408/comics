@@ -30,7 +30,7 @@ jobs:
       - run: cargo clippy
       - uses: taiki-e/install-action@v2.48.0
         with:
-          tool: cargo-deny@0.16.4
+          tool: cargo-deny@0.18.9
       - run: cargo deny check
   coverage:
     runs-on: ubuntu-latest
