@@ -1,0 +1,92 @@
+on: [pull_request, push]
+
+name: CI
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        with:
+          toolchain: 1.92.0
+          components: rustfmt
+      - uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo fmt --check
+      - uses: taiki-e/install-action@v2.48.0
+        with:
+          tool: cargo-deny@0.18.9
+      - run: cargo deny check
+
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        toolchain: [1.85.0, 1.92.0]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+      - uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-check-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo clippy
+
+  coverage:
+    needs: [lint, check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+      - uses: taiki-e/install-action@v2.48.0
+        with:
+          tool: cargo-llvm-cov@0.6.14,cargo-nextest@0.9.87
+      - run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v5.4.3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  msrv:
+    needs: [lint, check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+      - uses: taiki-e/install-action@v2.48.0
+        with:
+          tool: cargo-hack@0.6.28
+      - run: cargo hack check --rust-version --workspace --all-targets --ignore-private
