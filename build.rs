@@ -2,25 +2,27 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/index");
 
-    let output = Command::new("git")
-        .args(["describe", "--always", "--dirty=-modified", "--tags"])
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let git_desc = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            println!("cargo:rustc-env=APP_VERSION={}", git_desc);
-        }
-        Ok(out) => {
-            println!("cargo:rustc-env=APP_VERSION=unknown");
-            println!(
-                "cargo:warning=git describe failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        Err(e) => {
-            println!("cargo:rustc-env=APP_VERSION=unknown");
-            println!("cargo:warning=failed to run git: {}", e);
+    let git_version = get_git_version();
+    println!("cargo:rustc-env=APP_VERSION={}", git_version);
+}
+
+fn get_git_version() -> String {
+    // First, check if GIT_VERSION is set via environment variable
+    // This is used for Docker builds where .git directory is not available
+    if let Ok(version) = std::env::var("GIT_VERSION") {
+        if !version.is_empty() && version != "dev" {
+            return version;
         }
     }
+
+    // git describe --tags --always --dirty
+    Command::new("git")
+        .args(["describe", "--always", "--dirty=-modified", "--tags"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
