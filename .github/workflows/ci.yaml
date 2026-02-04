@@ -6,7 +6,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
         with:
           toolchain: 1.92.0
@@ -33,7 +33,7 @@ jobs:
         toolchain: [1.85.0, 1.92.0]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -53,7 +53,7 @@ jobs:
     needs: [lint, check]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6.0.2
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: actions/cache@v4.2.0
         with:
@@ -76,7 +76,7 @@ jobs:
     needs: [lint, check]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6.0.2
       - uses: actions/cache@v4.2.0
         with:
           path: |
