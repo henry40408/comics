@@ -92,7 +92,9 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
             Ok(s) => s,
             Err(err) => {
                 error!(?err, "initial scan failed");
-                let _ = shutdown_tx.send(());
+                if shutdown_tx.send(()).is_err() {
+                    error!("failed to send shutdown signal");
+                }
                 return;
             }
         };
@@ -268,10 +270,11 @@ async fn main() -> anyhow::Result<()> {
             let seed = 0u64; // dummy salt
             let scan = scan_books(seed, &opts.data_dir)?;
             let mut stdout = std::io::stdout().lock();
+            // Ignore write errors (e.g., broken pipe when output is piped to `head`)
             for book in &scan.books {
-                _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
+                let _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
             }
-            _ = writeln!(
+            let _ = writeln!(
                 stdout,
                 "{} book(s), {} page(s), scanned in {:?}",
                 &scan.books.len(),
