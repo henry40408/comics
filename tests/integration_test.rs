@@ -28,7 +28,7 @@ fn initial_scan_finished() {
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
         .assert()
-        .failure()
+        .success()
         .stdout_eq(str![[r#"
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]

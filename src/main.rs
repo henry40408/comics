@@ -17,6 +17,7 @@ use http::header;
 use parking_lot::Mutex;
 use tokio::{
     net::TcpListener,
+    signal,
     sync::oneshot::{self, Sender},
 };
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -161,6 +162,30 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
     Ok((router, state))
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+}
+
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let (app, state) = init_route(opts)?;
@@ -174,10 +199,16 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     spawn_initial_scan(state, tx);
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            if (rx.await).is_err() {
-                std::future::pending::<()>().await;
+            tokio::select! {
+                result = rx => {
+                    if result.is_ok() {
+                        warn!("fatal error occurred, shutdown the server");
+                    }
+                }
+                _ = shutdown_signal() => {
+                    info!("received shutdown signal");
+                }
             }
-            warn!("fatal error occurred, shutdown the server");
         })
         .await
         .expect("failed to start the server");
