@@ -48,17 +48,14 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> anyhow::Result<
     let decoded = BASE64_ENGINE.decode(digest)?;
     let decoded_str = String::from_utf8(decoded)?;
     let actual: Vec<&str> = decoded_str.split(':').collect();
-    let (username, password) = match (actual.first(), actual.get(1)) {
-        (Some(u), Some(p)) if *u == expected_username => (*u, *p),
+    let password = match (actual.first(), actual.get(1)) {
+        (Some(u), Some(p)) if *u == expected_username => *p,
         _ => return Ok(AuthState::Failed),
     };
-    match (
-        username == expected_username,
-        bcrypt::verify(password, expected_password),
-    ) {
-        (true, Ok(true)) => Ok(AuthState::Success),
-        (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
-        (true, Err(err)) => {
+    match bcrypt::verify(password, expected_password) {
+        Ok(true) => Ok(AuthState::Success),
+        Ok(false) => Ok(AuthState::Failed),
+        Err(err) => {
             error!(?err, "failed to verify password");
             bail!("Bcrypt error: {err}")
         }
