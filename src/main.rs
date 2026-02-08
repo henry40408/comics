@@ -1,51 +1,37 @@
 use std::{
-    collections::HashMap,
-    fs,
     io::Write as _,
     net::SocketAddr,
-    path::{self, PathBuf},
+    path::PathBuf,
     sync::Arc,
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, bail};
-use askama::Template;
-use axum::{
-    Json, Router,
-    extract::{Path, Request, State},
-    middleware::{self, Next},
-    response::{Html, IntoResponse, Redirect},
-    routing::{get, post},
-};
-use base64::{Engine as _, engine::GeneralPurpose};
-use chrono::{DateTime, Duration, Utc};
+use anyhow::bail;
+use axum::{Router, middleware, routing::{get, post}};
 use clap::{Parser, Subcommand, ValueEnum};
-use http::{StatusCode, header};
-use imsz::ImInfo;
+use http::header;
 use parking_lot::Mutex;
-use rand::seq::IndexedMutRandom as _;
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use serde::{Deserialize, Serialize};
 use tokio::{
     net::TcpListener,
     sync::oneshot::{self, Sender},
 };
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
-use tracing::{Level, Span, debug, error, field, info, trace_span, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
-use xxhash_rust::xxh3::Xxh3;
 
-const BCRYPT_COST: u32 = 11u32;
-const BASE64_ENGINE: GeneralPurpose = base64::engine::general_purpose::STANDARD;
-const VERSION: &str = env!("APP_VERSION");
+use comics::{
+    AuthConfig, AppState, BCRYPT_COST, VERSION,
+    auth_middleware_fn, healthz_route, index_route, rescan_books_route,
+    scan_books, show_book_route, show_page_route, shuffle_book_route, shuffle_route,
+};
+
 const WATER_CSS: &str = include_str!("../vendor/assets/water.css");
 
 type SingleHeader = [(header::HeaderName, &'static str); 1];
 const CSS_HEADER: SingleHeader = [(header::CONTENT_TYPE, "text/css")];
-const WWW_AUTHENTICATE_HEADER: SingleHeader = [(header::WWW_AUTHENTICATE, "Basic realm=comics")];
 
 #[derive(Parser, Debug)]
 #[command(author, version=VERSION, about, long_about=None)]
@@ -96,402 +82,19 @@ enum Commands {
     List {},
 }
 
-#[derive(Clone, Debug)]
-struct Dimension {
-    height: u64,
-    width: u64,
-}
-
-impl From<&ImInfo> for Dimension {
-    fn from(value: &ImInfo) -> Self {
-        Self {
-            height: value.height,
-            width: value.width,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Page {
-    filename: String,
-    id: String,
-    path: String,
-    dimension: Dimension,
-}
-
-fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
-    let mut hasher = Xxh3::with_seed(seed);
-    hasher.update(s.as_ref().as_bytes());
-    format!("{:x}", hasher.digest())
-}
-
-impl Page {
-    fn new(seed: u64, path: &path::Path) -> anyhow::Result<Self> {
-        if !path.is_file() {
-            bail!("Not a file: {}", path.display());
-        }
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string()))
-            .with_context(|| format!("Invalid path: {}", path.display()))?;
-        let path_str = path.to_string_lossy().to_string();
-        let dimension = Dimension::from(&imsz::imsz(path)?);
-        Ok(Page {
-            filename,
-            id: hash_string(seed, &path_str),
-            path: path_str,
-            dimension,
-        })
-    }
-}
-
-#[derive(Debug)]
-struct Book {
-    cover: Page,
-    id: String,
-    title: String,
-    pages: Vec<Page>,
-}
-
-impl Book {
-    fn new(span: &Span, seed: u64, path: &path::Path) -> anyhow::Result<Self> {
-        let span = trace_span!(parent: span, "scan book", ?path).entered();
-        if !path.is_dir() {
-            bail!("Not a directory: {}", path.display());
-        }
-        let pages = scan_pages(&span, seed, path)?;
-        let cover = pages
-            .first()
-            .with_context(|| format!("Empty directory: {}", path.display()))?;
-        let title = path
-            .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string()))
-            .with_context(|| format!("Invalid path: {}", path.display()))?;
-        Ok(Book {
-            cover: cover.clone(),
-            id: hash_string(seed, &title),
-            title,
-            pages,
-        })
-    }
-}
-
-fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> anyhow::Result<Vec<Page>> {
-    let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
-    let entries: Vec<_> = fs::read_dir(book_path)?.collect();
-    let mut pages: Vec<Page> = entries
-        .into_par_iter()
-        .filter_map(|entry| {
-            if let Err(ref err) = entry {
-                error!(%err, "skip file");
-            }
-            entry.ok()
-        })
-        .filter_map(|entry| {
-            let path = entry.path();
-            let page = Page::new(seed, &path);
-            if let Err(ref err) = page {
-                error!(%err, ?path, "failed to create page");
-            }
-            page.ok()
-        })
-        .collect();
-    pages.sort_by(|a, b| a.path.cmp(&b.path));
-    s.record("pages", pages.len());
-    Ok(pages)
-}
-
-fn scan_books(seed: u64, data_path: &path::Path) -> anyhow::Result<BookScan> {
-    let span = trace_span!("scan books").entered();
-    let scanned_at = Utc::now();
-    let entries: Vec<_> = fs::read_dir(data_path)?.collect();
-    let mut books: Vec<Book> = entries
-        .into_par_iter()
-        .filter_map(|entry| {
-            if let Err(ref err) = entry {
-                error!(%err, "skip directory");
-            }
-            entry.ok()
-        })
-        .filter_map(|entry| {
-            let path = entry.path();
-            let book = Book::new(&span, seed, path.as_path());
-            if let Err(err) = &book {
-                error!(%err, "failed to create book");
-            };
-            book.ok()
-        })
-        .collect();
-    books.sort_by(|a, b| a.title.cmp(&b.title));
-    let mut pages_map = HashMap::new();
-    for book in books.iter() {
-        for page in book.pages.iter() {
-            pages_map.insert(page.id.clone(), page.clone());
-        }
-    }
-    Ok(BookScan {
-        books,
-        pages_map,
-        scan_duration: Utc::now().signed_duration_since(scanned_at),
-        scanned_at,
-    })
-}
-
-#[derive(Clone)]
-enum AuthConfig {
-    None,
-    Some {
-        username: String,
-        password_hash: String,
-    },
-}
-
-#[derive(Clone)]
-struct AppState {
-    auth_confg: AuthConfig,
-    data_dir: PathBuf,
-    scan: Arc<Mutex<Option<BookScan>>>,
-    seed: u64,
-}
-
-#[derive(Debug)]
-struct BookScan {
-    books: Vec<Book>,
-    pages_map: HashMap<String, Page>,
-    scan_duration: Duration,
-    scanned_at: DateTime<Utc>,
-}
-
-#[derive(Template)]
-#[template(path = "index.html")]
-struct IndexTemplate<'a> {
-    books: &'a Vec<Book>,
-    scan_duration: f64,
-    scanned_at: String,
-    version: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "book.html")]
-struct BookTemplate<'a> {
-    book: &'a Book,
-    version: &'static str,
-}
-
-enum AuthState {
-    Public,
-    Request,
-    Success,
-    Failed,
-}
-
-fn authenticate(state: &Arc<AppState>, request: &Request) -> anyhow::Result<AuthState> {
-    let (expected_username, expected_password) = match &state.auth_confg {
-        AuthConfig::None => return Ok(AuthState::Public),
-        AuthConfig::Some {
-            username,
-            password_hash,
-        } => (username, password_hash),
-    };
-    let header_value = match request.headers().get(header::AUTHORIZATION) {
-        None => return Ok(AuthState::Request),
-        Some(v) => v,
-    };
-    let header_str = header_value.to_str()?;
-    let parts: Vec<&str> = header_str.split_ascii_whitespace().collect();
-    let digest = match (parts.first().map(|s| s.to_ascii_lowercase()), parts.get(1)) {
-        (Some(scheme), Some(digest)) if scheme == "basic" => digest,
-        _ => return Ok(AuthState::Failed),
-    };
-    let decoded = BASE64_ENGINE.decode(digest)?;
-    let decoded_str = String::from_utf8(decoded)?;
-    let actual: Vec<String> = decoded_str.split(':').map(|s| s.to_string()).collect();
-    let (username, password) = match (actual.first(), actual.get(1)) {
-        (Some(u), Some(p)) if **u == *expected_username => (u, p),
-        _ => return Ok(AuthState::Failed),
-    };
-    match (
-        **username == *expected_username,
-        bcrypt::verify(&**password, expected_password),
-    ) {
-        (true, Ok(true)) => Ok(AuthState::Success),
-        (true, Ok(false)) | (false, _) => Ok(AuthState::Failed),
-        (true, Err(err)) => {
-            error!(?err, "failed to verify password");
-            bail!("Bcrypt error: {err}")
-        }
-    }
-}
-
-async fn auth_middleware_fn(
-    State(state): State<Arc<AppState>>,
-    request: Request,
-    next: Next,
-) -> impl IntoResponse {
-    match authenticate(&state, &request) {
-        Ok(AuthState::Public | AuthState::Success) => next.run(request).await,
-        Ok(AuthState::Failed) => StatusCode::UNAUTHORIZED.into_response(),
-        Ok(AuthState::Request) => {
-            (StatusCode::UNAUTHORIZED, WWW_AUTHENTICATE_HEADER, "").into_response()
-        }
-        Err(err) => {
-            error!(%err, "failed to authenticate");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(scan) => scan,
-    };
-    let t = IndexTemplate {
-        books: &scan.books,
-        scan_duration: scan.scan_duration.num_milliseconds() as f64,
-        scanned_at: scan.scanned_at.to_rfc2822(),
-        version: VERSION,
-    };
-    let rendered = match t.render() {
-        Ok(html) => html,
-        Err(err) => {
-            error!(%err, "faile to render index");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()));
-        }
-    };
-    (StatusCode::OK, Html(rendered))
-}
-
-async fn show_book_route(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(scan) => scan,
-    };
-    let book = match scan.books.iter().find(|b| b.id == id) {
-        None => return (StatusCode::NOT_FOUND, Html("not found".to_string())),
-        Some(book) => book,
-    };
-    let template = BookTemplate {
-        book,
-        version: VERSION,
-    };
-    let rendered = match template.render() {
-        Ok(html) => html,
-        Err(err) => {
-            error!(%err, "failed to render book");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()));
-        }
-    };
-    (StatusCode::OK, Html(rendered))
-}
-
-async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut locked = state.scan.lock();
-    let scan_result = scan_books(state.seed, state.data_dir.as_path());
-    if let Err(err) = scan_result {
-        error!(%err, "failed to re-scan books");
-        return Redirect::to("/");
-    }
-    let new_scan = scan_result.unwrap();
-    let books = new_scan.books.len();
-    let pages = new_scan.pages_map.len();
-    let ms = new_scan.scan_duration.num_milliseconds();
-    info!(books, pages, ms, "finished re-scan");
-    *locked = Some(new_scan);
-    Redirect::to("/")
-}
-
-async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut locked = state.scan.lock();
-    let scan = match locked.as_mut() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(scan) => scan,
-    };
-    let mut rng = rand::rng();
-    let book = match scan.books.choose_mut(&mut rng) {
-        None => return Redirect::to("/").into_response(),
-        Some(book) => book,
-    };
-    let id = &book.id;
-    Redirect::to(&format!("/book/{id}")).into_response()
-}
-
-async fn shuffle_book_route(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let mut locked = state.scan.lock();
-    let scan = match locked.as_mut() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(scan) => scan,
-    };
-    let mut rng = rand::rng();
-    let mut filtered_books: Vec<&Book> = scan.books.iter().filter(|b| b.id != id).collect();
-    let random_book = match filtered_books.choose_mut(&mut rng) {
-        None => return Redirect::to("/").into_response(),
-        Some(book) => book,
-    };
-    Redirect::to(&format!("/book/{}", random_book.id)).into_response()
-}
-
-async fn show_page_route(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-        Some(scan) => scan,
-    };
-    let page = match scan.pages_map.get(&*id) {
-        None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),
-        Some(page) => page,
-    };
-    let content = match fs::read(&*page.path) {
-        Ok(content) => content,
-        Err(err) => {
-            error!(%err, "failed to read page");
-            return (StatusCode::NOT_FOUND, Vec::new()).into_response();
-        }
-    };
-    (StatusCode::OK, content).into_response()
-}
-
-#[derive(Deserialize, Serialize)]
-struct Healthz {
-    scanned_at: i64,
-}
-
-async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let locked = state.scan.lock();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
-        Some(scan) => scan,
-    };
-    Json(Healthz {
-        scanned_at: scan.scanned_at.timestamp_millis(),
-    })
-    .into_response()
-}
-
 fn init_route(opts: &Opts, tx: Sender<()>) -> anyhow::Result<Router> {
     let data_dir = &opts.data_dir;
 
     let seed = opts.seed.unwrap_or_else(|| {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_default()
             .as_secs();
         warn!(%seed, "no seed provided, use seconds since UNIX epoch as seed");
         seed
     });
     let state = Arc::new(AppState {
-        auth_confg: match (opts.auth_username.clone(), opts.auth_password_hash.clone()) {
+        auth_config: match (opts.auth_username.clone(), opts.auth_password_hash.clone()) {
             (Some(u), Some(p)) => AuthConfig::Some {
                 username: u,
                 password_hash: p,
@@ -655,11 +258,14 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BASE64_ENGINE, BCRYPT_COST, Opts, init_route};
+    use crate::{Opts, init_route};
     use axum_test::TestServer;
     use base64::Engine;
     use clap::Parser as _;
+    use comics::{BCRYPT_COST, VERSION};
     use tokio::sync::oneshot;
+
+    const BASE64_ENGINE: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
@@ -803,5 +409,116 @@ mod tests {
             .authorization(format!("Basic {credentials}"))
             .await;
         assert_eq!(200, res.status_code());
+    }
+
+    #[test]
+    fn version_is_set() {
+        assert!(!VERSION.is_empty());
+    }
+
+    // Authentication edge cases
+    async fn build_auth_server() -> TestServer {
+        use std::{thread, time};
+
+        let (tx, _) = oneshot::channel::<()>();
+        let mut opts = Opts::parse_from([
+            "comics",
+            "--data-dir",
+            "./fixtures/data",
+            "--auth-username",
+            "user",
+            "--auth-password-hash",
+            &bcrypt::hash("password", BCRYPT_COST).unwrap(),
+        ]);
+        opts.seed = Some(1);
+        let router = init_route(&opts, tx).unwrap();
+
+        let server = TestServer::new(router.into_make_service()).unwrap();
+        for _ in 0..10 {
+            let res = server.get("/healthz").await;
+            if res.status_code() == 200 {
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(100));
+        }
+        server
+    }
+
+    #[tokio::test]
+    async fn auth_invalid_base64() {
+        let server = build_auth_server().await;
+        let res = server
+            .get("/")
+            .authorization("Basic not-valid-base64!!!")
+            .await;
+        assert_eq!(500, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_malformed_credentials() {
+        let server = build_auth_server().await;
+        // Missing colon separator
+        let credentials = BASE64_ENGINE.encode("userpassword");
+        let res = server
+            .get("/")
+            .authorization(format!("Basic {credentials}"))
+            .await;
+        assert_eq!(401, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_wrong_method() {
+        let server = build_auth_server().await;
+        let credentials = BASE64_ENGINE.encode("user:password");
+        let res = server
+            .get("/")
+            .authorization(format!("Bearer {credentials}"))
+            .await;
+        assert_eq!(401, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_wrong_password() {
+        let server = build_auth_server().await;
+        let credentials = BASE64_ENGINE.encode("user:wrongpassword");
+        let res = server
+            .get("/")
+            .authorization(format!("Basic {credentials}"))
+            .await;
+        assert_eq!(401, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_wrong_username() {
+        let server = build_auth_server().await;
+        let credentials = BASE64_ENGINE.encode("wronguser:password");
+        let res = server
+            .get("/")
+            .authorization(format!("Basic {credentials}"))
+            .await;
+        assert_eq!(401, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_no_credentials() {
+        let server = build_auth_server().await;
+        let res = server.get("/").await;
+        assert_eq!(401, res.status_code());
+        assert!(res.headers().get("www-authenticate").is_some());
+    }
+
+    // Error handling tests
+    #[tokio::test]
+    async fn book_not_found() {
+        let server = build_server().await;
+        let res = server.get("/book/nonexistent123").await;
+        assert_eq!(404, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn page_not_found() {
+        let server = build_server().await;
+        let res = server.get("/data/nonexistent123").await;
+        assert_eq!(404, res.status_code());
     }
 }
