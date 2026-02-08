@@ -10,7 +10,4 @@ allow = [
 
 [advisories]
 version = 2
-ignore = [
-  # used by axum-test, so the vulnerability won't affect the application.
-  "RUSTSEC-2024-0421",
-]
+ignore = []
