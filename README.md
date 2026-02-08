@@ -3,7 +3,7 @@
 > Simple file server for comic books
 
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
-![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/henry40408/comics/.github%2Fworkflows%2Fworkflow.yaml)
+![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/henry40408/comics/.github%2Fworkflows%2Fci.yaml)
 ![GitHub](https://img.shields.io/github/license/henry40408/comics)
 ![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/henry40408/comics)
 [![codecov](https://codecov.io/gh/henry40408/comics/graph/badge.svg?token=26VSHOGXLN)](https://codecov.io/gh/henry40408/comics)
@@ -74,7 +74,7 @@ Navigate to the project directory in your terminal or command line and enter:
 ./comics
 ```
 
-Now, open your web browser and head to http://localhost:8080/ to view your comics.
+Now, open your web browser and head to http://localhost:3000/ to view your comics.
 
 ## Need Help?
 
