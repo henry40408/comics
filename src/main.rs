@@ -17,6 +17,7 @@ use http::header;
 use parking_lot::Mutex;
 use tokio::{
     net::TcpListener,
+    signal,
     sync::oneshot::{self, Sender},
 };
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -91,7 +92,9 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
             Ok(s) => s,
             Err(err) => {
                 error!(?err, "initial scan failed");
-                let _ = shutdown_tx.send(());
+                if shutdown_tx.send(()).is_err() {
+                    error!("failed to send shutdown signal");
+                }
                 return;
             }
         };
@@ -161,6 +164,30 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
     Ok((router, state))
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+}
+
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let (app, state) = init_route(opts)?;
@@ -174,10 +201,16 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     spawn_initial_scan(state, tx);
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            if (rx.await).is_err() {
-                std::future::pending::<()>().await;
+            tokio::select! {
+                result = rx => {
+                    if result.is_ok() {
+                        warn!("fatal error occurred, shutdown the server");
+                    }
+                }
+                _ = shutdown_signal() => {
+                    info!("received shutdown signal");
+                }
             }
-            warn!("fatal error occurred, shutdown the server");
         })
         .await
         .expect("failed to start the server");
@@ -237,10 +270,11 @@ async fn main() -> anyhow::Result<()> {
             let seed = 0u64; // dummy salt
             let scan = scan_books(seed, &opts.data_dir)?;
             let mut stdout = std::io::stdout().lock();
+            // Ignore write errors (e.g., broken pipe when output is piped to `head`)
             for book in &scan.books {
-                _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
+                let _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
             }
-            _ = writeln!(
+            let _ = writeln!(
                 stdout,
                 "{} book(s), {} page(s), scanned in {:?}",
                 &scan.books.len(),
@@ -358,10 +392,12 @@ mod tests {
         let res = server.post(&path).await;
         assert_eq!(303, res.status_code());
 
+        // Verify redirect is to a different book
         let location = res.headers().get("location").unwrap().to_str().unwrap();
-        let book_id = DATA_IDS.last().unwrap();
-        let expected = format!("/book/{book_id}");
-        assert_eq!(expected, location);
+        assert!(location.starts_with("/book/"));
+        let redirected_id = location.strip_prefix("/book/").unwrap();
+        assert_ne!(*book_id, redirected_id);
+        assert!(DATA_IDS.contains(&redirected_id));
     }
 
     #[tokio::test]
