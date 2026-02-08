@@ -85,7 +85,7 @@ enum Commands {
     List {},
 }
 
-fn init_route(opts: &Opts, tx: Sender<()>) -> anyhow::Result<Router> {
+fn init_route(opts: &Opts, tx: Sender<()>) -> anyhow::Result<(Router, impl FnOnce())> {
     let data_dir = &opts.data_dir;
 
     let seed = opts.seed.unwrap_or_else(|| {
@@ -134,37 +134,39 @@ fn init_route(opts: &Opts, tx: Sender<()>) -> anyhow::Result<Router> {
         )
         .with_state(state.clone());
 
-    thread::spawn({
+    let start_scan = {
         let state = state.clone();
         move || {
-            let new_scan = match scan_books(state.seed, &state.data_dir) {
-                Ok(s) => s,
-                Err(err) => {
-                    error!(?err, "initial scan failed");
-                    let _ = tx.send(());
-                    return;
-                }
-            };
+            thread::spawn(move || {
+                let new_scan = match scan_books(state.seed, &state.data_dir) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        error!(?err, "initial scan failed");
+                        let _ = tx.send(());
+                        return;
+                    }
+                };
 
-            let total_books = &new_scan.books.len();
-            let total_pages = &new_scan.pages_map.len();
-            let duration = new_scan
-                .scan_duration
-                .to_std()
-                .map(|d| format!("{d:?}"))
-                .unwrap_or(String::new());
-            info!(total_books, total_pages, %duration, "initial scan finished");
+                let total_books = &new_scan.books.len();
+                let total_pages = &new_scan.pages_map.len();
+                let duration = new_scan
+                    .scan_duration
+                    .to_std()
+                    .map(|d| format!("{d:?}"))
+                    .unwrap_or(String::new());
+                info!(total_books, total_pages, %duration, "initial scan finished");
 
-            *state.scan.lock() = Some(new_scan);
+                *state.scan.lock() = Some(new_scan);
+            });
         }
-    });
+    };
 
-    Ok(router)
+    Ok((router, start_scan))
 }
 
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
-    let app = init_route(opts, tx)?;
+    let (app, start_scan) = init_route(opts, tx)?;
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
         warn!("no authorization enabled, server is publicly accessible");
     }
@@ -172,6 +174,7 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&addr).await?;
     let local_addr: SocketAddr = listener.local_addr()?;
     info!(addr = %local_addr, %version, "server started");
+    start_scan();
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             if (rx.await).is_err() {
@@ -283,7 +286,8 @@ mod tests {
         let (tx, _) = oneshot::channel::<()>();
         let mut opts = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
         opts.seed = Some(1);
-        let router = init_route(&opts, tx).unwrap();
+        let (router, start_scan) = init_route(&opts, tx).unwrap();
+        start_scan();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
@@ -395,7 +399,8 @@ mod tests {
             &bcrypt::hash("password", BCRYPT_COST).unwrap(),
         ]);
         opts.seed = Some(1);
-        let router = init_route(&opts, tx).unwrap();
+        let (router, start_scan) = init_route(&opts, tx).unwrap();
+        start_scan();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
@@ -434,7 +439,8 @@ mod tests {
             &bcrypt::hash("password", BCRYPT_COST).unwrap(),
         ]);
         opts.seed = Some(1);
-        let router = init_route(&opts, tx).unwrap();
+        let (router, start_scan) = init_route(&opts, tx).unwrap();
+        start_scan();
 
         let server = TestServer::new(router.into_make_service()).unwrap();
         for _ in 0..10 {
