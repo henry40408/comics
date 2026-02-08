@@ -52,8 +52,8 @@ fn initial_scan_failed() {
         .success()
         .stdout_eq(str![[r#"
 [..]  WARN comics: no authorization enabled, server is publicly accessible
-[..]  INFO comics: server started addr=[..] version=[..]
 [..] ERROR comics: initial scan failed err=No such file or directory (os error 2)
+[..]  INFO comics: server started addr=[..] version=[..]
 [..]  WARN comics: fatal error occurred, shutdown the server
 
 "#]])

@@ -27,3 +27,43 @@ impl IntoResponse for AppError {
 
 /// Result type alias for application errors
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn service_unavailable_response() {
+        let error = AppError::ServiceUnavailable;
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"Service unavailable");
+    }
+
+    #[tokio::test]
+    async fn not_found_response() {
+        let error = AppError::NotFound("Book not found".to_string());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"Book not found");
+    }
+
+    #[tokio::test]
+    async fn internal_error_response() {
+        let error = AppError::InternalError("Something went wrong".to_string());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"Something went wrong");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_response() {
+        let error = AppError::Unauthorized;
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}

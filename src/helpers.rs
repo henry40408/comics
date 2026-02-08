@@ -36,3 +36,78 @@ where
 pub fn get_scan_lock(state: &Arc<AppState>) -> MutexGuard<'_, Option<BookScan>> {
     state.scan.lock()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthConfig;
+    use crate::models::BookScan;
+    use chrono::TimeDelta;
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn create_test_state(scan: Option<BookScan>) -> Arc<AppState> {
+        Arc::new(AppState {
+            auth_config: AuthConfig::None,
+            data_dir: PathBuf::from("/tmp"),
+            scan: Arc::new(Mutex::new(scan)),
+            seed: 0,
+        })
+    }
+
+    fn create_test_scan() -> BookScan {
+        BookScan {
+            books: vec![],
+            pages_map: HashMap::new(),
+            scan_duration: TimeDelta::zero(),
+            scanned_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn with_scan_returns_error_when_none() {
+        let state = create_test_state(None);
+        let result = with_scan(&state, |_| 42);
+        assert!(result.is_err());
+        let (status, msg) = result.unwrap_err();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(msg, "Service unavailable");
+    }
+
+    #[test]
+    fn with_scan_returns_value_when_some() {
+        let state = create_test_state(Some(create_test_scan()));
+        let result = with_scan(&state, |scan| scan.books.len());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn with_scan_mut_returns_error_when_none() {
+        let state = create_test_state(None);
+        let result = with_scan_mut(&state, |_| 42);
+        assert!(result.is_err());
+        let (status, msg) = result.unwrap_err();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(msg, "Service unavailable");
+    }
+
+    #[test]
+    fn with_scan_mut_returns_value_when_some() {
+        let state = create_test_state(Some(create_test_scan()));
+        let result = with_scan_mut(&state, |scan| {
+            scan.books.clear();
+            scan.books.len()
+        });
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn get_scan_lock_returns_guard() {
+        let state = create_test_state(Some(create_test_scan()));
+        let guard = get_scan_lock(&state);
+        assert!(guard.is_some());
+    }
+}
