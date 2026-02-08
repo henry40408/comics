@@ -8,7 +8,10 @@ use std::{
 };
 
 use anyhow::bail;
-use axum::{Router, middleware, routing::{get, post}};
+use axum::{
+    Router, middleware,
+    routing::{get, post},
+};
 use clap::{Parser, Subcommand, ValueEnum};
 use http::header;
 use parking_lot::Mutex;
@@ -23,9 +26,9 @@ use tracing_subscriber::{
 };
 
 use comics::{
-    AuthConfig, AppState, BCRYPT_COST, VERSION,
-    auth_middleware_fn, healthz_route, index_route, rescan_books_route,
-    scan_books, show_book_route, show_page_route, shuffle_book_route, shuffle_route,
+    AppState, AuthConfig, BCRYPT_COST, VERSION, auth_middleware_fn, healthz_route, index_route,
+    rescan_books_route, scan_books, show_book_route, show_page_route, shuffle_book_route,
+    shuffle_route,
 };
 
 const WATER_CSS: &str = include_str!("../vendor/assets/water.css");

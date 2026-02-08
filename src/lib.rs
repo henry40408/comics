@@ -8,10 +8,10 @@ pub mod state;
 pub use auth::{AuthConfig, auth_middleware_fn};
 pub use error::{AppError, AppResult};
 pub use handlers::{
-    healthz_route, index_route, rescan_books_route, show_book_route, show_page_route,
-    shuffle_book_route, shuffle_route, Healthz,
+    Healthz, healthz_route, index_route, rescan_books_route, show_book_route, show_page_route,
+    shuffle_book_route, shuffle_route,
 };
-pub use models::{scan_books, Book, BookScan, Dimension, Page};
+pub use models::{Book, BookScan, Dimension, Page, scan_books};
 pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");

@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use askama::Template;
-use axum::{extract::State, response::{Html, IntoResponse}};
+use axum::{
+    extract::State,
+    response::{Html, IntoResponse},
+};
 use http::StatusCode;
 use tracing::error;
 

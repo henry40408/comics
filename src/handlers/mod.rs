@@ -6,7 +6,7 @@ mod rescan;
 mod shuffle;
 
 pub use book::show_book_route;
-pub use health::{healthz_route, Healthz};
+pub use health::{Healthz, healthz_route};
 pub use index::index_route;
 pub use page::show_page_route;
 pub use rescan::rescan_books_route;

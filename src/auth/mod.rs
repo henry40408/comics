@@ -2,4 +2,4 @@ mod config;
 mod middleware;
 
 pub use config::AuthConfig;
-pub use middleware::{authenticate, auth_middleware_fn, AuthState};
+pub use middleware::{AuthState, auth_middleware_fn, authenticate};

@@ -3,5 +3,5 @@ mod ids;
 mod scan;
 
 pub use book::{Book, Dimension, Page};
-pub use ids::{hash_string, BookId, PageId};
-pub use scan::{scan_books, scan_pages, BookScan};
+pub use ids::{BookId, PageId, hash_string};
+pub use scan::{BookScan, scan_books, scan_pages};

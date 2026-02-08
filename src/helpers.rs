@@ -8,10 +8,7 @@ use crate::state::AppState;
 
 /// Helper to acquire read access to the scan data
 /// Returns `SERVICE_UNAVAILABLE` status if scan is not ready
-pub fn with_scan<T, F>(
-    state: &Arc<AppState>,
-    f: F,
-) -> Result<T, (StatusCode, &'static str)>
+pub fn with_scan<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode, &'static str)>
 where
     F: FnOnce(&BookScan) -> T,
 {
@@ -24,10 +21,7 @@ where
 
 /// Helper to acquire mutable access to the scan data
 /// Returns `SERVICE_UNAVAILABLE` status if scan is not ready
-pub fn with_scan_mut<T, F>(
-    state: &Arc<AppState>,
-    f: F,
-) -> Result<T, (StatusCode, &'static str)>
+pub fn with_scan_mut<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode, &'static str)>
 where
     F: FnOnce(&mut BookScan) -> T,
 {

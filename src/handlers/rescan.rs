@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use axum::{extract::State, response::{IntoResponse, Redirect}};
+use axum::{
+    extract::State,
+    response::{IntoResponse, Redirect},
+};
 use tracing::{error, info};
 
 use crate::models::scan_books;
