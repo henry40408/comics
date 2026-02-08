@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["henry40408 <2316687+henry40408@users.noreply.github.com>"]
 description = "Simple file server for comic books"
 build = "build.rs"
-rust-version = "1.85.0"
+rust-version = "1.88.0"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -42,7 +42,7 @@ xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
 axum-test = "17.0.2"
 snapbox = { version = "0.6.21", features = ["cmd"] }
 tempfile = "3.16.0"
-time = "0.3.47"  # Force upgrade to fix security audit
+time = "0.3.47"                                      # Force upgrade to fix security audit
 
 [profile.dev.package."*"]
 opt-level = 3
