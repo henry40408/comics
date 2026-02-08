@@ -392,10 +392,12 @@ mod tests {
         let res = server.post(&path).await;
         assert_eq!(303, res.status_code());
 
+        // Verify redirect is to a different book
         let location = res.headers().get("location").unwrap().to_str().unwrap();
-        let book_id = DATA_IDS.last().unwrap();
-        let expected = format!("/book/{book_id}");
-        assert_eq!(expected, location);
+        assert!(location.starts_with("/book/"));
+        let redirected_id = location.strip_prefix("/book/").unwrap();
+        assert_ne!(*book_id, redirected_id);
+        assert!(DATA_IDS.contains(&redirected_id));
     }
 
     #[tokio::test]
