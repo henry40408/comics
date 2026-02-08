@@ -30,7 +30,12 @@ pub async fn show_page_route(
         Ok(content) => content,
         Err(err) => {
             error!(%err, "failed to read page");
-            return (StatusCode::NOT_FOUND, Vec::new()).into_response();
+            let status = if err.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            return (status, Vec::new()).into_response();
         }
     };
     (StatusCode::OK, content).into_response()
