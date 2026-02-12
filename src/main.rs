@@ -14,7 +14,7 @@ use axum::{
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use http::header;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tokio::{
     net::TcpListener,
     signal,
@@ -108,7 +108,7 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
             .unwrap_or_default();
         info!(total_books, total_pages, %duration, "initial scan finished");
 
-        *state.scan.lock() = Some(new_scan);
+        *state.scan.write() = Some(new_scan);
     });
 }
 
@@ -132,7 +132,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             _ => AuthConfig::None,
         },
         data_dir: data_dir.clone(),
-        scan: Arc::new(Mutex::new(None)),
+        scan: Arc::new(RwLock::new(None)),
         seed,
     });
 

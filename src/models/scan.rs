@@ -10,6 +10,7 @@ use super::book::{Book, Page};
 #[derive(Debug)]
 pub struct BookScan {
     pub books: Vec<Book>,
+    pub books_map: HashMap<String, usize>,
     pub pages_map: HashMap<String, Page>,
     pub scan_duration: Duration,
     pub scanned_at: DateTime<Utc>,
@@ -64,14 +65,20 @@ pub fn scan_books(seed: u64, data_path: &path::Path) -> anyhow::Result<BookScan>
         })
         .collect();
     books.sort_by(|a, b| a.title.cmp(&b.title));
-    let mut pages_map = HashMap::new();
+    let total_pages: usize = books.iter().map(|b| b.pages.len()).sum();
+    let mut pages_map = HashMap::with_capacity(total_pages);
     for book in books.iter() {
         for page in book.pages.iter() {
             pages_map.insert(page.id.clone(), page.clone());
         }
     }
+    let mut books_map = HashMap::with_capacity(books.len());
+    for (idx, book) in books.iter().enumerate() {
+        books_map.insert(book.id.clone(), idx);
+    }
     Ok(BookScan {
         books,
+        books_map,
         pages_map,
         scan_duration: Utc::now().signed_duration_since(scanned_at),
         scanned_at,

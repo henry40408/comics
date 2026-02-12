@@ -24,20 +24,18 @@ pub async fn show_book_route(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Copy book data while holding lock, release before rendering
-    let book = {
-        let locked = state.scan.lock();
-        let scan = match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-            Some(scan) => scan,
-        };
-        match scan.books.iter().find(|b| b.id == id) {
-            None => return (StatusCode::NOT_FOUND, Html(String::from("not found"))),
-            Some(book) => book.clone(),
-        }
+    // Hold read lock through render — template render is pure CPU, no await
+    let locked = state.scan.read();
+    let scan = match locked.as_ref() {
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
+        Some(scan) => scan,
+    };
+    let book = match scan.books_map.get(&id).and_then(|&idx| scan.books.get(idx)) {
+        None => return (StatusCode::NOT_FOUND, Html(String::from("not found"))),
+        Some(book) => book,
     };
     let template = BookTemplate {
-        book: &book,
+        book,
         version: VERSION,
     };
     let rendered = match template.render() {

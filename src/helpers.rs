@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use http::StatusCode;
-use parking_lot::MutexGuard;
+use parking_lot::RwLockWriteGuard;
 
 use crate::models::BookScan;
 use crate::state::AppState;
@@ -12,7 +12,7 @@ pub fn with_scan<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode, &'
 where
     F: FnOnce(&BookScan) -> T,
 {
-    let locked = state.scan.lock();
+    let locked = state.scan.read();
     match locked.as_ref() {
         None => Err((StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")),
         Some(scan) => Ok(f(scan)),
@@ -25,16 +25,16 @@ pub fn with_scan_mut<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode
 where
     F: FnOnce(&mut BookScan) -> T,
 {
-    let mut locked = state.scan.lock();
+    let mut locked = state.scan.write();
     match locked.as_mut() {
         None => Err((StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")),
         Some(scan) => Ok(f(scan)),
     }
 }
 
-/// Get the lock guard for the scan data
-pub fn get_scan_lock(state: &Arc<AppState>) -> MutexGuard<'_, Option<BookScan>> {
-    state.scan.lock()
+/// Get the write lock guard for the scan data
+pub fn get_scan_lock(state: &Arc<AppState>) -> RwLockWriteGuard<'_, Option<BookScan>> {
+    state.scan.write()
 }
 
 #[cfg(test)]
@@ -43,7 +43,7 @@ mod tests {
     use crate::auth::AuthConfig;
     use crate::models::BookScan;
     use chrono::TimeDelta;
-    use parking_lot::Mutex;
+    use parking_lot::RwLock;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -51,7 +51,7 @@ mod tests {
         Arc::new(AppState {
             auth_config: AuthConfig::None,
             data_dir: PathBuf::from("/tmp"),
-            scan: Arc::new(Mutex::new(scan)),
+            scan: Arc::new(RwLock::new(scan)),
             seed: 0,
         })
     }
@@ -59,6 +59,7 @@ mod tests {
     fn create_test_scan() -> BookScan {
         BookScan {
             books: vec![],
+            books_map: HashMap::new(),
             pages_map: HashMap::new(),
             scan_duration: TimeDelta::zero(),
             scanned_at: chrono::Utc::now(),

@@ -23,22 +23,16 @@ struct IndexTemplate<'a> {
 }
 
 pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Copy needed data while holding lock, release before rendering
-    let (books, scan_duration, scanned_at) = {
-        let locked = state.scan.lock();
-        match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-            Some(scan) => (
-                scan.books.clone(),
-                scan.scan_duration.num_milliseconds() as f64,
-                scan.scanned_at.to_rfc2822(),
-            ),
-        }
+    // Hold read lock through render — template render is pure CPU, no await
+    let locked = state.scan.read();
+    let scan = match locked.as_ref() {
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
+        Some(scan) => scan,
     };
     let t = IndexTemplate {
-        books: &books,
-        scan_duration,
-        scanned_at,
+        books: &scan.books,
+        scan_duration: scan.scan_duration.num_milliseconds() as f64,
+        scanned_at: scan.scanned_at.to_rfc2822(),
         version: VERSION,
     };
     let rendered = match t.render() {

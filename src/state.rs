@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 use crate::auth::AuthConfig;
 use crate::models::BookScan;
@@ -10,6 +10,6 @@ use crate::models::BookScan;
 pub struct AppState {
     pub auth_config: AuthConfig,
     pub data_dir: PathBuf,
-    pub scan: Arc<Mutex<Option<BookScan>>>,
+    pub scan: Arc<RwLock<Option<BookScan>>>,
     pub seed: u64,
 }
