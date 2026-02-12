@@ -12,7 +12,7 @@ use crate::state::AppState;
 
 pub async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let book_id = {
-        let locked = state.scan.lock();
+        let locked = state.scan.read();
         let scan = match locked.as_ref() {
             None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
             Some(scan) => scan,
@@ -31,7 +31,7 @@ pub async fn shuffle_book_route(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let book_id = {
-        let locked = state.scan.lock();
+        let locked = state.scan.read();
         let scan = match locked.as_ref() {
             None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
             Some(scan) => scan,

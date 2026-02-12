@@ -40,16 +40,15 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> anyhow::Result<
         Some(v) => v,
     };
     let header_str = header_value.to_str()?;
-    let parts: Vec<&str> = header_str.split_ascii_whitespace().collect();
-    let digest = match (parts.first().map(|s| s.to_ascii_lowercase()), parts.get(1)) {
-        (Some(scheme), Some(digest)) if scheme == "basic" => digest,
+    let mut parts = header_str.splitn(2, ' ');
+    let digest = match (parts.next(), parts.next()) {
+        (Some(scheme), Some(digest)) if scheme.eq_ignore_ascii_case("basic") => digest,
         _ => return Ok(AuthState::Failed),
     };
     let decoded = BASE64_ENGINE.decode(digest)?;
     let decoded_str = String::from_utf8(decoded)?;
-    let actual: Vec<&str> = decoded_str.split(':').collect();
-    let password = match (actual.first(), actual.get(1)) {
-        (Some(u), Some(p)) if *u == expected_username => *p,
+    let password = match decoded_str.split_once(':') {
+        Some((u, p)) if u == expected_username => p,
         _ => return Ok(AuthState::Failed),
     };
     match bcrypt::verify(password, expected_password) {
@@ -85,14 +84,14 @@ pub async fn auth_middleware_fn(
 mod tests {
     use super::*;
     use axum::http::Request as HttpRequest;
-    use parking_lot::Mutex;
+    use parking_lot::RwLock;
     use std::path::PathBuf;
 
     fn create_state(auth_config: AuthConfig) -> Arc<AppState> {
         Arc::new(AppState {
             auth_config,
             data_dir: PathBuf::from("/tmp"),
-            scan: Arc::new(Mutex::new(None)),
+            scan: Arc::new(RwLock::new(None)),
             seed: 0,
         })
     }
