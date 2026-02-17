@@ -19,23 +19,20 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 ## Features
 
 - **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
-- **Basic Authentication**: Safeguard your comics with a simple username-password protection.
+- **Basic Authentication**: Safeguard your comics with a simple username-password protection. See [Commands](#commands) and [Environment Variables](#environment-variables) for setup.
 
-To set up the authentication:
+## Environment Variables
 
-```bash
-$ comics hash-password
-Password:
-Confirmation:
-$2a$10$...Ot6
-```
-
-Next, configure your environment variables:
-
-```bash
-AUTH_USERNAME=john
-AUTH_PASSWORD_HASH=$2a$10$...Ot6
-```
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AUTH_USERNAME` | Username for basic authentication | _(none)_ |
+| `AUTH_PASSWORD_HASH` | Hashed password for basic authentication | _(none)_ |
+| `BIND` | Bind host & port | `127.0.0.1:3000` |
+| `DATA_DIR` | Data directory | `./data` |
+| `DEBUG` | Enable debug mode | _(off)_ |
+| `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
+| `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
+| `SEED` | Seed to generate hashed IDs | _(random)_ |
 
 ## Setup and Usage
 
@@ -76,9 +73,33 @@ Navigate to the project directory in your terminal or command line and enter:
 
 Now, open your web browser and head to http://localhost:3000/ to view your comics.
 
+## Commands
+
+### `hash-password`
+
+Generate a bcrypt-hashed password for basic authentication:
+
+```bash
+$ comics hash-password
+Password:
+Confirmation:
+$2a$10$...Ot6
+```
+
+### `list` (alias: `ls`)
+
+List all books and their page counts:
+
+```bash
+$ comics list
+Book Title 1 (10P)
+Book Title 2 (5P)
+2 book(s), 15 page(s), scanned in 1.23ms
+```
+
 ## Need Help?
 
-For a comprehensive list of commands and options, type:
+For a comprehensive list of options, type:
 
 ```bash
 ./comics -h
