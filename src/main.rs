@@ -205,6 +205,10 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
                 result = rx => {
                     if result.is_ok() {
                         warn!("fatal error occurred, shutdown the server");
+                    } else {
+                        // Sender dropped after successful scan; wait for real shutdown signal
+                        shutdown_signal().await;
+                        info!("received shutdown signal");
                     }
                 }
                 _ = shutdown_signal() => {
