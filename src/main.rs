@@ -324,7 +324,7 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service()).unwrap();
+        let server = TestServer::new(router.into_make_service());
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
@@ -439,7 +439,7 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service()).unwrap();
+        let server = TestServer::new(router.into_make_service());
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
@@ -479,7 +479,7 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service()).unwrap();
+        let server = TestServer::new(router.into_make_service());
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
