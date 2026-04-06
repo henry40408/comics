@@ -40,7 +40,7 @@ xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
 
 [dev-dependencies]
 axum-test = "19.1.1"
-snapbox = { version = "1.0.1", features = ["cmd"] }
+snapbox = { version = "1.2.0", features = ["cmd"] }
 tempfile = "3.26.0"
 time = "0.3.47"                                      # Force upgrade to fix security audit
 
