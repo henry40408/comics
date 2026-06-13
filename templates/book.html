@@ -6,31 +6,72 @@
     </title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="/assets/water.css" rel="stylesheet" />
+    <script>
+      (function () {
+        var t =
+          localStorage.getItem("comics-theme") ||
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{ assets_version }}" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v={{ assets_version }}" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ assets_version }}" />
+    <link href="/assets/app.css?v={{ assets_version }}" rel="stylesheet" />
+    <script src="/assets/app.js?v={{ assets_version }}" defer></script>
   </head>
 
-  <body>
-    <main>
-      <h1>{{ book.title }} ({{ book.pages.len() }}P)</h1>
-      <div style="display: flex">
-        <a href="/"><button>Home</button></a>
-        <form method="POST" action="/shuffle/{{ book.id }}">
-          <input type="submit" value="Shuffle" />
-        </form>
+  <body class="reader" data-mode="paged">
+    <div class="topbar">
+      <a class="back" href="/" title="Home" aria-label="Home">←</a>
+      <div class="titleblock">
+        <div class="t">{{ book.title }}</div>
+        <div class="s"><b id="cur">1</b> / {{ book.pages.len() }} ページ</div>
       </div>
-      {% for page in book.pages %}
-      <figure>
-        <img
-          src="/data/{{ page.id }}"
-          width="{{ page.dimension.width }}"
-          height="{{ page.dimension.height }}"
-          loading="lazy"
-        />
-        <figcaption>
-          <center>{{ page.filename }}</center>
-        </figcaption>
-      </figure>
-      {% endfor %}
-    </main>
+      <span class="grow"></span>
+      <div class="seg" id="seg">
+        <button type="button" data-m="paged" class="on">⇄ 翻頁</button>
+        <button type="button" data-m="scroll">↕ 捲動</button>
+      </div>
+      <button class="iconbtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+      <form method="POST" action="/shuffle/{{ book.id }}">
+        <button class="tbtn" type="submit">Shuffle</button>
+      </form>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <div class="zone next" id="next" title="Next"><span>‹</span></div>
+      <div class="zone prev" id="prev" title="Previous"><span>›</span></div>
+      <div class="pages" id="pages">
+        {% for page in book.pages %}
+        <figure class="pg" data-p="{{ loop.index }}">
+          <img
+            src="/data/{{ page.id }}"
+            width="{{ page.dimension.width }}"
+            height="{{ page.dimension.height }}"
+            alt="{{ page.filename }}"
+            loading="lazy"
+          />
+        </figure>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="rail">
+      <span class="counter"><b id="cur2">1</b> / {{ book.pages.len() }}</span>
+      <div class="progress"><i id="bar"></i></div>
+      <div class="thumbs" id="thumbs">
+        {% for page in book.pages %}
+        <button type="button" data-p="{{ loop.index }}" title="第{{ loop.index }}頁">
+          <img src="/data/{{ page.id }}" alt="" loading="lazy" />
+        </button>
+        {% endfor %}
+      </div>
+    </div>
   </body>
 </html>

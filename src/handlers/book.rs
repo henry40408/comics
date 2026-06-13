@@ -8,6 +8,7 @@ use axum::{
 use http::StatusCode;
 use tracing::error;
 
+use crate::assets::assets_version;
 use crate::models::Book;
 use crate::state::AppState;
 
@@ -18,6 +19,7 @@ use super::index::VERSION;
 struct BookTemplate<'a> {
     book: &'a Book,
     version: &'static str,
+    assets_version: &'static str,
 }
 
 pub async fn show_book_route(
@@ -37,6 +39,7 @@ pub async fn show_book_route(
     let template = BookTemplate {
         book,
         version: VERSION,
+        assets_version: assets_version(),
     };
     let rendered = match template.render() {
         Ok(html) => html,

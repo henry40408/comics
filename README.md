@@ -19,6 +19,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 ## Features
 
 - **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
+- **Manga-friendly Reader**: Read right-to-left page by page or as a continuous vertical scroll, switchable on the fly. Includes a progress bar, a thumbnail strip for jumping between pages, keyboard navigation, and a light/dark theme that follows your system and can be toggled manually.
 - **Basic Authentication**: Safeguard your comics with a simple username-password protection. See [Commands](#commands) and [Environment Variables](#environment-variables) for setup.
 
 ## Environment Variables

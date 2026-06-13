@@ -8,6 +8,7 @@ use axum::{
 use http::StatusCode;
 use tracing::error;
 
+use crate::assets::assets_version;
 use crate::models::Book;
 use crate::state::AppState;
 
@@ -20,6 +21,7 @@ struct IndexTemplate<'a> {
     scan_duration: f64,
     scanned_at: String,
     version: &'static str,
+    assets_version: &'static str,
 }
 
 pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -34,6 +36,7 @@ pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoRespons
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
         version: VERSION,
+        assets_version: assets_version(),
     };
     let rendered = match t.render() {
         Ok(html) => html,
