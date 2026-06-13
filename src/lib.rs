@@ -6,7 +6,7 @@ pub mod helpers;
 pub mod models;
 pub mod state;
 
-pub use assets::{APP_CSS, APP_JS, assets_version};
+pub use assets::{APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, assets_version};
 pub use auth::{AuthConfig, auth_middleware_fn};
 pub use error::{AppError, AppResult};
 pub use handlers::{

@@ -27,9 +27,9 @@ use tracing_subscriber::{
 };
 
 use comics::{
-    APP_CSS, APP_JS, AppState, AuthConfig, BCRYPT_COST, VERSION, auth_middleware_fn, healthz_route,
-    index_route, rescan_books_route, scan_books, show_book_route, show_page_route,
-    shuffle_book_route, shuffle_route,
+    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
+    FAVICON_SVG, VERSION, auth_middleware_fn, healthz_route, index_route, rescan_books_route,
+    scan_books, show_book_route, show_page_route, shuffle_book_route, shuffle_route,
 };
 
 // Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached
@@ -42,6 +42,14 @@ const CSS_HEADERS: AssetHeaders = [
 ];
 const JS_HEADERS: AssetHeaders = [
     (header::CONTENT_TYPE, "text/javascript"),
+    (header::CACHE_CONTROL, IMMUTABLE),
+];
+const SVG_HEADERS: AssetHeaders = [
+    (header::CONTENT_TYPE, "image/svg+xml"),
+    (header::CACHE_CONTROL, IMMUTABLE),
+];
+const PNG_HEADERS: AssetHeaders = [
+    (header::CONTENT_TYPE, "image/png"),
     (header::CACHE_CONTROL, IMMUTABLE),
 ];
 
@@ -160,6 +168,15 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
+        .route("/favicon.svg", get(|| async { (SVG_HEADERS, FAVICON_SVG) }))
+        .route(
+            "/favicon-32.png",
+            get(|| async { (PNG_HEADERS, FAVICON_PNG) }),
+        )
+        .route(
+            "/apple-touch-icon.png",
+            get(|| async { (PNG_HEADERS, APPLE_TOUCH_ICON_PNG) }),
+        )
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
