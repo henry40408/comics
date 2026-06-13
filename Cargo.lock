@@ -408,7 +408,6 @@ dependencies = [
  "chrono",
  "clap",
  "http",
- "imsz",
  "parking_lot",
  "rand",
  "rayon",
@@ -915,12 +914,6 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
 ]
-
-[[package]]
-name = "imsz"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "396dda16a82727ec2d14aabc1167832bb823d849c54a246ca0cff6cfb7bc697c"
 
 [[package]]
 name = "indexmap"

@@ -50,13 +50,7 @@
       <div class="pages" id="pages">
         {% for page in book.pages %}
         <figure class="pg" data-p="{{ loop.index }}">
-          <img
-            src="/data/{{ page.id }}"
-            width="{{ page.dimension.width }}"
-            height="{{ page.dimension.height }}"
-            alt="{{ page.filename }}"
-            loading="lazy"
-          />
+          <img src="/data/{{ page.id }}" alt="{{ page.filename }}" loading="lazy" />
         </figure>
         {% endfor %}
       </div>

@@ -13,7 +13,7 @@ pub use handlers::{
     Healthz, healthz_route, index_route, rescan_books_route, show_book_route, show_page_route,
     shuffle_book_route, shuffle_route,
 };
-pub use models::{Book, BookScan, Dimension, Page, scan_books};
+pub use models::{Book, BookScan, Page, scan_books};
 pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");
