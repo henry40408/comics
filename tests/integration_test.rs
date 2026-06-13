@@ -32,7 +32,7 @@ fn initial_scan_finished() {
         .stdout_eq(str![[r#"
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
-[..]  INFO comics: initial scan finished total_books=2 total_pages=18 duration=[..]
+[..]  INFO comics: initial scan finished books=2 pages=18 duration_ms=[..]
 
 "#]])
         .stderr_eq(str![]);
