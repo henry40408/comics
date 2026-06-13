@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod auth;
 pub mod error;
 pub mod handlers;
@@ -5,6 +6,7 @@ pub mod helpers;
 pub mod models;
 pub mod state;
 
+pub use assets::{APP_CSS, APP_JS, assets_version};
 pub use auth::{AuthConfig, auth_middleware_fn};
 pub use error::{AppError, AppResult};
 pub use handlers::{

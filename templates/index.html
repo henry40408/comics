@@ -18,7 +18,8 @@
       href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"
       rel="stylesheet"
     />
-    <link href="/assets/app.css" rel="stylesheet" />
+    <link href="/assets/app.css?v={{ assets_version }}" rel="stylesheet" />
+    <script src="/assets/app.js?v={{ assets_version }}" defer></script>
   </head>
 
   <body class="lib">
@@ -80,35 +81,5 @@
         </div>
       </main>
     </div>
-
-    <script>
-      // theme toggle: persist manual choice, otherwise follow the system
-      (function () {
-        var root = document.documentElement;
-        var sys = matchMedia("(prefers-color-scheme: dark)");
-        sys.addEventListener("change", function (e) {
-          if (!localStorage.getItem("comics-theme"))
-            root.setAttribute("data-theme", e.matches ? "dark" : "light");
-        });
-        document.getElementById("theme").addEventListener("click", function () {
-          var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
-          localStorage.setItem("comics-theme", next);
-          root.setAttribute("data-theme", next);
-        });
-      })();
-
-      // render server-side timestamps in the viewer's locale
-      class TimeComponent extends HTMLTimeElement {
-        connectedCallback() {
-          const d = new Date(this.getAttribute("datetime"));
-          const formatter = new Intl.DateTimeFormat(undefined, {
-            dateStyle: "medium",
-            timeStyle: "medium",
-          });
-          this.innerHTML = formatter.format(d);
-        }
-      }
-      customElements.define("x-time", TimeComponent, { extends: "time" });
-    </script>
   </body>
 </html>
