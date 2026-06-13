@@ -10,6 +10,7 @@ use tracing::error;
 
 use crate::VERSION;
 use crate::assets::assets_version;
+use crate::auth::AuthConfig;
 use crate::models::Book;
 use crate::state::AppState;
 
@@ -21,6 +22,7 @@ struct IndexTemplate<'a> {
     scanned_at: String,
     version: &'static str,
     assets_version: &'static str,
+    auth_enabled: bool,
 }
 
 pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -36,6 +38,7 @@ pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoRespons
         scanned_at: scan.scanned_at.to_rfc2822(),
         version: VERSION,
         assets_version: assets_version(),
+        auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),
     };
     let rendered = match t.render() {
         Ok(html) => html,

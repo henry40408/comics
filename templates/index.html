@@ -59,6 +59,11 @@
           <form method="POST" action="/shuffle">
             <button class="lbtn key" type="submit">Shuffle</button>
           </form>
+          {% if auth_enabled %}
+          <form method="POST" action="/logout">
+            <button class="lbtn" type="submit">Logout</button>
+          </form>
+          {% endif %}
           <span class="note">所蔵 {{ books.len() }} 冊</span>
         </div>
 

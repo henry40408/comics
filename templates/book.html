@@ -42,6 +42,11 @@
       <form method="POST" action="/shuffle/{{ book.id }}">
         <button class="tbtn" type="submit">Shuffle</button>
       </form>
+      {% if auth_enabled %}
+      <form method="POST" action="/logout">
+        <button class="tbtn" type="submit">Logout</button>
+      </form>
+      {% endif %}
     </div>
 
     <div class="viewer" id="viewer">
