@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use http::{StatusCode, header};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::state::AppState;
 
@@ -45,14 +45,14 @@ pub async fn show_page_route(
     // Use async file read to avoid blocking other requests
     let content = match tokio::fs::read(&page_path).await {
         Ok(content) => content,
+        // The file vanished between scan and request — expected, not an error.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            debug!(%err, path = %page_path, "page file no longer exists");
+            return (StatusCode::NOT_FOUND, Vec::new()).into_response();
+        }
         Err(err) => {
-            error!(%err, "failed to read page");
-            let status = if err.kind() == std::io::ErrorKind::NotFound {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            return (status, Vec::new()).into_response();
+            error!(%err, path = %page_path, "failed to read page");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Vec::new()).into_response();
         }
     };
     let content_type = content_type_from_path(&page_path);

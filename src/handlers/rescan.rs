@@ -31,8 +31,8 @@ pub async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl Into
 
     let books = new_scan.books.len();
     let pages = new_scan.pages_map.len();
-    let ms = new_scan.scan_duration.num_milliseconds();
-    info!(books, pages, ms, "finished re-scan");
+    let duration_ms = new_scan.scan_duration.num_milliseconds();
+    info!(books, pages, duration_ms, "re-scan finished");
 
     *state.scan.write() = Some(new_scan);
     Redirect::to("/")

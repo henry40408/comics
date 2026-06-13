@@ -115,14 +115,10 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
             }
         };
 
-        let total_books = new_scan.books.len();
-        let total_pages = new_scan.pages_map.len();
-        let duration = new_scan
-            .scan_duration
-            .to_std()
-            .map(|d| format!("{d:?}"))
-            .unwrap_or_default();
-        info!(total_books, total_pages, %duration, "initial scan finished");
+        let books = new_scan.books.len();
+        let pages = new_scan.pages_map.len();
+        let duration_ms = new_scan.scan_duration.num_milliseconds();
+        info!(books, pages, duration_ms, "initial scan finished");
 
         *state.scan.write() = Some(new_scan);
     });
@@ -178,9 +174,12 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             get(|| async { (PNG_HEADERS, APPLE_TOUCH_ICON_PNG) }),
         )
         .layer(
+            // Per-request logs are noisy for an image-heavy app (every page and
+            // thumbnail hits /data), so emit them at DEBUG; enable with `-d` or
+            // RUST_LOG. Failures still surface via the default on_failure (ERROR).
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
         .with_state(state.clone());
 

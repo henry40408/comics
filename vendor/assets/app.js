@@ -13,14 +13,13 @@
       root.setAttribute("data-theme", e.matches ? "dark" : "light");
     }
   });
-  var themeBtn = document.getElementById("theme");
-  if (themeBtn) {
-    themeBtn.addEventListener("click", function () {
-      var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
-      localStorage.setItem("comics-theme", next);
-      root.setAttribute("data-theme", next);
-    });
+  function toggleTheme() {
+    var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    localStorage.setItem("comics-theme", next);
+    root.setAttribute("data-theme", next);
   }
+  var themeBtn = document.getElementById("theme");
+  if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
 
   // ---- library: render server-side timestamps in the viewer's locale ----
   if (window.customElements && !customElements.get("x-time")) {
@@ -64,22 +63,44 @@
   const paintPage = () => pgs.forEach((p, i) => p.classList.toggle("is-current", i + 1 === current));
   const setCurrent = (n) => { current = Math.min(TOTAL, Math.max(1, n)); paintPage(); updateUI(); };
 
+  const seg = document.getElementById("seg");
+  // jump to page n, honouring the current mode
+  const goTo = (n) => {
+    n = Math.min(TOTAL, Math.max(1, n));
+    if (body.dataset.mode === "scroll") pgs[n - 1].scrollIntoView({ behavior: "smooth", block: "start" });
+    else setCurrent(n);
+  };
+  const setMode = (m) => {
+    body.dataset.mode = m;
+    [...seg.children].forEach((x) => x.classList.toggle("on", x.dataset.m === m));
+    if (m === "paged") { paintPage(); updateUI(); }
+    else pgs[current - 1].scrollIntoView({ block: "start" });
+  };
+
   // RTL paged nav: left = next. pointerup + dedupe avoids ghost-click double fire.
   let lastTap = 0;
   const tapNav = (d) => { const now = Date.now(); if (now - lastTap < 90) return; lastTap = now; setCurrent(current + d); };
   document.getElementById("next").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(1); });
   document.getElementById("prev").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(-1); });
+
+  // keyboard shortcuts (ignored while a link/button/field has focus)
   document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts alone
+    if (e.target instanceof Element && e.target.closest("a, button, input, textarea, select")) return;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k === "t") return toggleTheme();
+    if (k === "m") return setMode(body.dataset.mode === "paged" ? "scroll" : "paged");
+    if (k === "Home") { e.preventDefault(); return goTo(1); }
+    if (k === "End") { e.preventDefault(); return goTo(TOTAL); }
+    // page turning only in paged mode; let Space/arrows scroll the page otherwise
     if (body.dataset.mode !== "paged") return;
-    if (e.key === "ArrowLeft") setCurrent(current + 1);
-    if (e.key === "ArrowRight") setCurrent(current - 1);
+    if (k === "ArrowLeft") setCurrent(current + 1);
+    else if (k === "ArrowRight") setCurrent(current - 1);
+    else if (k === " ") { e.preventDefault(); setCurrent(e.shiftKey ? current - 1 : current + 1); }
   });
 
   // thumbnails jump (both modes)
-  thumbBtns.forEach((b, i) => b.addEventListener("click", () => {
-    if (body.dataset.mode === "scroll") pgs[i].scrollIntoView({ behavior: "smooth", block: "start" });
-    else setCurrent(i + 1);
-  }));
+  thumbBtns.forEach((b, i) => b.addEventListener("click", () => goTo(i + 1)));
 
   // scroll mode: track the most-visible page
   const ratios = new Array(TOTAL).fill(0);
@@ -95,14 +116,10 @@
   );
   pgs.forEach((p) => io.observe(p));
 
-  // mode switch
-  document.getElementById("seg").addEventListener("click", (e) => {
+  // mode switch (segmented control)
+  seg.addEventListener("click", (e) => {
     const b = e.target.closest("button");
-    if (!b) return;
-    body.dataset.mode = b.dataset.m;
-    [...e.currentTarget.children].forEach((x) => x.classList.toggle("on", x === b));
-    if (b.dataset.m === "paged") { paintPage(); updateUI(); }
-    else pgs[current - 1].scrollIntoView({ block: "start" });
+    if (b) setMode(b.dataset.m);
   });
 
   setCurrent(1);

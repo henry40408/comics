@@ -8,11 +8,10 @@ use axum::{
 use http::StatusCode;
 use tracing::error;
 
+use crate::VERSION;
 use crate::assets::assets_version;
 use crate::models::Book;
 use crate::state::AppState;
-
-use super::index::VERSION;
 
 #[derive(Template)]
 #[template(path = "book.html")]
