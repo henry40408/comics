@@ -174,9 +174,12 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             get(|| async { (PNG_HEADERS, APPLE_TOUCH_ICON_PNG) }),
         )
         .layer(
+            // Per-request logs are noisy for an image-heavy app (every page and
+            // thumbnail hits /data), so emit them at DEBUG; enable with `-d` or
+            // RUST_LOG. Failures still surface via the default on_failure (ERROR).
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
         .with_state(state.clone());
 
