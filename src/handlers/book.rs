@@ -10,6 +10,7 @@ use tracing::error;
 
 use crate::VERSION;
 use crate::assets::assets_version;
+use crate::auth::AuthConfig;
 use crate::models::Book;
 use crate::state::AppState;
 
@@ -19,6 +20,7 @@ struct BookTemplate<'a> {
     book: &'a Book,
     version: &'static str,
     assets_version: &'static str,
+    auth_enabled: bool,
 }
 
 pub async fn show_book_route(
@@ -39,6 +41,7 @@ pub async fn show_book_route(
         book,
         version: VERSION,
         assets_version: assets_version(),
+        auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),
     };
     let rendered = match template.render() {
         Ok(html) => html,

@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use cookie::Key;
 use parking_lot::RwLock;
 use tokio::sync::Semaphore;
 
@@ -10,6 +11,9 @@ use crate::models::BookScan;
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: AuthConfig,
+    /// Secret key used to sign session cookies. Generated at startup, so a
+    /// restart invalidates every existing session.
+    pub key: Key,
     pub data_dir: PathBuf,
     pub scan: Arc<RwLock<Option<BookScan>>>,
     pub seed: u64,

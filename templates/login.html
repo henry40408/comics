@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Sign in | Comics {{ version }}</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // set theme before paint to avoid a flash of the wrong palette
+      (function () {
+        var t =
+          localStorage.getItem("comics-theme") ||
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{ assets_version }}" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v={{ assets_version }}" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ assets_version }}" />
+    <link href="/assets/app.css?v={{ assets_version }}" rel="stylesheet" />
+    <script src="/assets/app.js?v={{ assets_version }}" defer></script>
+  </head>
+
+  <body>
+    <main class="login">
+      <div class="loginbox">
+        <div class="brand">
+          <div class="mark"></div>
+          <div class="spine">漫画書架<span class="en">／ COMICS</span></div>
+        </div>
+        {% if error %}
+        <div class="err">帳號或密碼錯誤</div>
+        {% endif %}
+        <form method="POST" action="/login">
+          <input type="hidden" name="next" value="{{ next }}" />
+          <label>
+            Username
+            <input name="username" autocomplete="username" autofocus required />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="lbtn key" type="submit">Sign in</button>
+        </form>
+      </div>
+      <button class="themebtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    </main>
+  </body>
+</html>

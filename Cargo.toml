@@ -14,10 +14,10 @@ license = "MIT"
 anyhow = "1.0.102"
 askama = "0.16.0"
 axum = "0.8.9"
-base64 = "0.22.0"
 bcrypt = "0.19.1"
 chrono = "0.4.44"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+cookie = { version = "0.18.1", default-features = false, features = ["signed", "percent-encode"] }
 http = "1.4.1"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 parking_lot = "0.12.1"

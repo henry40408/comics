@@ -305,3 +305,15 @@ html[data-theme="dark"] .progress i { box-shadow: 0 0 10px rgba(232, 84, 63, 0.6
   .thumbs { max-width: 38%; }
   .counter { font-size: 13px; }
 }
+
+/* login */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; }
+.loginbox { width: 100%; max-width: 320px; }
+.loginbox .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+.loginbox form { display: flex; flex-direction: column; gap: 16px; }
+.loginbox label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+.loginbox input { font-family: var(--font-sans); font-size: 15px; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); padding: 11px 14px; transition: border-color 0.2s ease; }
+.loginbox input:focus { outline: none; border-color: var(--vermilion); }
+.loginbox .lbtn { margin-top: 4px; text-align: center; }
+.loginbox .err { background: var(--vermilion); color: #fff; font-size: 13px; padding: 10px 14px; margin-bottom: 18px; }
+.login .themebtn { position: absolute; top: 18px; right: 18px; width: 34px; height: 34px; font-size: 16px; }

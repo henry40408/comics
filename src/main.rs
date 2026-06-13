@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Parser, Subcommand, ValueEnum};
+use cookie::Key;
 use http::header;
 use parking_lot::RwLock;
 use tokio::{
@@ -31,9 +32,9 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, VERSION, auth_middleware_fn, healthz_route, index_route, rescan_books_route,
-    scan_books, show_book_route, show_page_route, show_thumb_route, shuffle_book_route,
-    shuffle_route,
+    FAVICON_SVG, VERSION, auth_middleware_fn, healthz_route, index_route, login_route,
+    login_submit_route, logout_route, rescan_books_route, scan_books, show_book_route,
+    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached
@@ -60,10 +61,10 @@ const PNG_HEADERS: AssetHeaders = [
 #[derive(Parser, Debug)]
 #[command(author, version=VERSION, about, long_about=None)]
 struct Opts {
-    /// Username for basic authentication
+    /// Username for the login form
     #[arg(long, env = "AUTH_USERNAME")]
     auth_username: Option<String>,
-    /// Hashed password for basic authentication
+    /// Hashed password for the login form
     #[arg(long, env = "AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
     /// Bind host & port
@@ -150,6 +151,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             },
             _ => AuthConfig::None,
         },
+        key: Key::generate(),
         data_dir: data_dir.clone(),
         scan: Arc::new(RwLock::new(None)),
         seed,
@@ -168,14 +170,19 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         .route("/shuffle/{id}", post(shuffle_book_route))
         .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
+        // Page images and thumbnails are content, so they live behind the auth
+        // layer too. Cookie verification is cheap, so guarding every image
+        // request (unlike per-request bcrypt) is no longer a concern.
+        .route("/data/{id}", get(show_page_route))
+        .route("/thumb/{size}/{id}", get(show_thumb_route))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_fn,
         ))
-        // to prevent timing attack, bcrypt is too slow
-        // protected by randomly-generated string as page ID instead
-        .route("/data/{id}", get(show_page_route))
-        .route("/thumb/{size}/{id}", get(show_thumb_route))
+        // Login/logout sit outside the auth layer so they stay reachable while
+        // logged out.
+        .route("/login", get(login_route).post(login_submit_route))
+        .route("/logout", post(logout_route))
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
@@ -338,12 +345,9 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use crate::{Opts, init_route, spawn_initial_scan};
     use axum_test::TestServer;
-    use base64::Engine;
     use clap::Parser as _;
     use comics::{BCRYPT_COST, VERSION};
     use tokio::sync::oneshot;
-
-    const BASE64_ENGINE: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
     const DATA_IDS: [&str; 2] = [
         // Netherworld Nomads Journey to the Jade Jungle
@@ -556,48 +560,17 @@ mod tests {
         assert_eq!(200, res.status_code());
     }
 
-    #[tokio::test]
-    async fn auth() {
-        use std::{thread, time};
-
-        let (tx, _) = oneshot::channel::<()>();
-        let mut opts = Opts::parse_from([
-            "comics",
-            "--data-dir",
-            "./fixtures/data",
-            "--auth-username",
-            "user",
-            "--auth-password-hash",
-            &bcrypt::hash("password", BCRYPT_COST).unwrap(),
-        ]);
-        opts.seed = Some(1);
-        let (router, state) = init_route(&opts).unwrap();
-        spawn_initial_scan(state, tx);
-
-        let server = TestServer::new(router.into_make_service());
-        for _ in 0..10 {
-            let res = server.get("/healthz").await;
-            if res.status_code() == 200 {
-                break;
-            }
-            thread::sleep(time::Duration::from_millis(100));
-        }
-
-        let credentials = BASE64_ENGINE.encode("user:password");
-        let res = server
-            .get("/")
-            .authorization(format!("Basic {credentials}"))
-            .await;
-        assert_eq!(200, res.status_code());
-    }
-
     #[test]
     fn version_is_set() {
         assert!(!VERSION.is_empty());
     }
 
-    // Authentication edge cases
-    async fn build_auth_server() -> TestServer {
+    // Authentication: form login backed by a signed session cookie.
+    const SESSION_COOKIE: &str = "comics_session";
+
+    /// Build a server with credentials configured. When `save_cookies` is set,
+    /// the test client persists cookies across requests like a browser would.
+    async fn build_auth_server(save_cookies: bool) -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
@@ -614,7 +587,10 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service());
+        let mut server = TestServer::new(router.into_make_service());
+        if save_cookies {
+            server.save_cookies();
+        }
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
@@ -626,66 +602,172 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_invalid_base64() {
-        let server = build_auth_server().await;
-        let res = server
-            .get("/")
-            .authorization("Basic not-valid-base64!!!")
-            .await;
-        assert_eq!(500, res.status_code());
-    }
-
-    #[tokio::test]
-    async fn auth_malformed_credentials() {
-        let server = build_auth_server().await;
-        // Missing colon separator
-        let credentials = BASE64_ENGINE.encode("userpassword");
-        let res = server
-            .get("/")
-            .authorization(format!("Basic {credentials}"))
-            .await;
-        assert_eq!(401, res.status_code());
-    }
-
-    #[tokio::test]
-    async fn auth_wrong_method() {
-        let server = build_auth_server().await;
-        let credentials = BASE64_ENGINE.encode("user:password");
-        let res = server
-            .get("/")
-            .authorization(format!("Bearer {credentials}"))
-            .await;
-        assert_eq!(401, res.status_code());
-    }
-
-    #[tokio::test]
-    async fn auth_wrong_password() {
-        let server = build_auth_server().await;
-        let credentials = BASE64_ENGINE.encode("user:wrongpassword");
-        let res = server
-            .get("/")
-            .authorization(format!("Basic {credentials}"))
-            .await;
-        assert_eq!(401, res.status_code());
-    }
-
-    #[tokio::test]
-    async fn auth_wrong_username() {
-        let server = build_auth_server().await;
-        let credentials = BASE64_ENGINE.encode("wronguser:password");
-        let res = server
-            .get("/")
-            .authorization(format!("Basic {credentials}"))
-            .await;
-        assert_eq!(401, res.status_code());
-    }
-
-    #[tokio::test]
-    async fn auth_no_credentials() {
-        let server = build_auth_server().await;
+    async fn auth_unauthenticated_get_redirects_to_login() {
+        let server = build_auth_server(false).await;
         let res = server.get("/").await;
+        assert_eq!(303, res.status_code());
+        let location = res.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/login"));
+        assert!(location.contains("next="));
+    }
+
+    #[tokio::test]
+    async fn auth_unauthenticated_post_is_unauthorized() {
+        let server = build_auth_server(false).await;
+        let res = server.post("/rescan").await;
         assert_eq!(401, res.status_code());
-        assert!(res.headers().get("www-authenticate").is_some());
+    }
+
+    #[tokio::test]
+    async fn auth_login_page_is_public() {
+        let server = build_auth_server(false).await;
+        let res = server.get("/login").await;
+        assert_eq!(200, res.status_code());
+        assert!(res.text().contains("action=\"/login\""));
+    }
+
+    #[tokio::test]
+    async fn auth_login_success_sets_cookie_and_grants_access() {
+        let server = build_auth_server(true).await;
+        let res = server
+            .post("/login")
+            .form(&[
+                ("username", "user"),
+                ("password", "password"),
+                ("next", "/"),
+            ])
+            .await;
+        assert_eq!(303, res.status_code());
+        assert_eq!(
+            "/",
+            res.headers().get("location").unwrap().to_str().unwrap()
+        );
+        assert!(res.maybe_cookie(SESSION_COOKIE).is_some());
+
+        let res = server.get("/").await;
+        assert_eq!(200, res.status_code());
+        assert!(res.text().contains("2 book(s)"));
+    }
+
+    #[tokio::test]
+    async fn auth_login_wrong_password_is_unauthorized() {
+        let server = build_auth_server(false).await;
+        let res = server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "nope")])
+            .await;
+        assert_eq!(401, res.status_code());
+        assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
+        assert!(res.text().contains("帳號或密碼錯誤"));
+    }
+
+    #[tokio::test]
+    async fn auth_login_redirects_safely() {
+        // An off-site `next` is ignored in favour of the home page.
+        let server = build_auth_server(true).await;
+        let res = server
+            .post("/login")
+            .form(&[
+                ("username", "user"),
+                ("password", "password"),
+                ("next", "https://evil.example"),
+            ])
+            .await;
+        assert_eq!(303, res.status_code());
+        assert_eq!(
+            "/",
+            res.headers().get("location").unwrap().to_str().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_logout_clears_session() {
+        let server = build_auth_server(true).await;
+        server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await;
+        assert_eq!(200, server.get("/").await.status_code());
+
+        let res = server.post("/logout").await;
+        assert_eq!(303, res.status_code());
+        assert_eq!(
+            "/login",
+            res.headers().get("location").unwrap().to_str().unwrap()
+        );
+
+        // Session is gone, so the protected page bounces to login again.
+        assert_eq!(303, server.get("/").await.status_code());
+    }
+
+    #[tokio::test]
+    async fn auth_public_routes_need_no_login() {
+        let server = build_auth_server(false).await;
+        assert_eq!(200, server.get("/healthz").await.status_code());
+        assert_eq!(200, server.get("/assets/app.css").await.status_code());
+    }
+
+    /// Every route behind the auth layer must refuse anonymous access: read
+    /// routes bounce to the login form, write routes are rejected with 401. This
+    /// guards against a route silently slipping out from under the middleware
+    /// (e.g. by being declared after `route_layer`).
+    #[tokio::test]
+    async fn auth_every_protected_route_rejects_anonymous() {
+        let server = build_auth_server(false).await;
+        let book = DATA_IDS[0];
+
+        for path in [
+            "/".to_string(),
+            format!("/book/{book}"),
+            // Page images and thumbnails are content too, so they sit behind the
+            // login as well. The middleware runs before the handler, so a bogus
+            // id still redirects rather than 404ing.
+            format!("/data/{book}"),
+            format!("/thumb/md/{book}"),
+        ] {
+            let res = server.get(&path).await;
+            assert_eq!(303, res.status_code(), "GET {path}");
+            let location = res.headers().get("location").unwrap().to_str().unwrap();
+            assert!(location.starts_with("/login"), "GET {path} -> {location}");
+        }
+
+        for path in [
+            "/rescan".to_string(),
+            "/shuffle".to_string(),
+            format!("/shuffle/{book}"),
+        ] {
+            let res = server.post(&path).await;
+            assert_eq!(401, res.status_code(), "POST {path}");
+        }
+    }
+
+    /// The flip side: with a valid session every protected route is reachable
+    /// (no redirect to login, no 401).
+    #[tokio::test]
+    async fn auth_every_protected_route_reachable_when_logged_in() {
+        let server = build_auth_server(true).await;
+        server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await;
+        let book = DATA_IDS[0];
+
+        assert_eq!(200, server.get("/").await.status_code());
+        assert_eq!(
+            200,
+            server.get(&format!("/book/{book}")).await.status_code()
+        );
+        // Write routes succeed and redirect (303), rather than being blocked.
+        assert_eq!(303, server.post("/rescan").await.status_code());
+        assert_eq!(303, server.post("/shuffle").await.status_code());
+        assert_eq!(
+            303,
+            server.post(&format!("/shuffle/{book}")).await.status_code()
+        );
+        // Image routes let the request through to the handler: an unknown id
+        // 404s (rather than redirecting to login), proving auth passed.
+        assert_eq!(404, server.get("/data/deadbeef").await.status_code());
+        assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
     }
 
     // Error handling tests

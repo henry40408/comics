@@ -50,6 +50,7 @@ mod tests {
     fn create_test_state(scan: Option<BookScan>) -> Arc<AppState> {
         Arc::new(AppState {
             auth_config: AuthConfig::None,
+            key: cookie::Key::generate(),
             data_dir: PathBuf::from("/tmp"),
             scan: Arc::new(RwLock::new(scan)),
             seed: 0,
