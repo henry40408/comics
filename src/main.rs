@@ -338,10 +338,14 @@ mod tests {
     ];
 
     async fn build_server() -> TestServer {
+        build_server_at("./fixtures/data").await
+    }
+
+    async fn build_server_at(data_dir: &str) -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut opts = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        let mut opts = Opts::parse_from(["comics", "--data-dir", data_dir]);
         opts.seed = Some(1);
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
@@ -391,6 +395,37 @@ mod tests {
 
         let content = res.as_bytes();
         assert!(content.starts_with(b"\xFF\xD8\xFF")); // JPEG magic bytes
+    }
+
+    #[tokio::test]
+    async fn page_missing_file_returns_404() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // A book with a single page in a temp data dir we are free to mutate.
+        let dir = tempdir().unwrap();
+        let book = dir.path().join("Temp Book");
+        fs::create_dir(&book).unwrap();
+        let page = book.join("01.jpg");
+        fs::copy(
+            "./fixtures/data/Netherworld Nomads Journey to the Jade Jungle/01.jpg",
+            &page,
+        )
+        .unwrap();
+
+        let server = build_server_at(dir.path().to_str().unwrap()).await;
+
+        // Discover the page id the scan assigned (cover of the only book).
+        let html = server.get("/").await.text();
+        let marker = "/data/";
+        let start = html.find(marker).expect("a page link") + marker.len();
+        let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+        assert!(!id.is_empty());
+
+        // Serves while the file exists, then 404s once it is removed post-scan.
+        assert_eq!(200, server.get(&format!("/data/{id}")).await.status_code());
+        fs::remove_file(&page).unwrap();
+        assert_eq!(404, server.get(&format!("/data/{id}")).await.status_code());
     }
 
     #[tokio::test]
