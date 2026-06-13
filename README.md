@@ -19,7 +19,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 ## Features
 
 - **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
-- **Manga-friendly Reader**: Read right-to-left page by page or as a continuous vertical scroll, switchable on the fly. Includes a progress bar, a thumbnail strip for jumping between pages, keyboard navigation, and a light/dark theme that follows your system and can be toggled manually.
+- **Manga-friendly Reader**: Read right-to-left page by page or as a continuous vertical scroll, switchable on the fly. Includes a progress bar, a thumbnail strip for jumping between pages, keyboard navigation, and a light/dark theme that follows your system and can be toggled manually. Covers and the thumbnail strip are served as small JPEG thumbnails generated on demand and cached on disk, so browsing stays light even on slow storage.
 - **Basic Authentication**: Safeguard your comics with a simple username-password protection. See [Commands](#commands) and [Environment Variables](#environment-variables) for setup.
 
 ## Environment Variables
@@ -30,6 +30,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `AUTH_PASSWORD_HASH` | Hashed password for basic authentication | _(none)_ |
 | `BIND` | Bind host & port | `127.0.0.1:3000` |
 | `DATA_DIR` | Data directory | `./data` |
+| `CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `DEBUG` | Enable debug mode | _(off)_ |
 | `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |

@@ -53,6 +53,8 @@ mod tests {
             data_dir: PathBuf::from("/tmp"),
             scan: Arc::new(RwLock::new(scan)),
             seed: 0,
+            cache_dir: PathBuf::from("/tmp"),
+            thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
         })
     }
 

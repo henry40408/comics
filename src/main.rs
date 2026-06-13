@@ -18,7 +18,10 @@ use parking_lot::RwLock;
 use tokio::{
     net::TcpListener,
     signal,
-    sync::oneshot::{self, Sender},
+    sync::{
+        Semaphore,
+        oneshot::{self, Sender},
+    },
 };
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Level, debug, error, info, warn};
@@ -29,7 +32,8 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
     FAVICON_SVG, VERSION, auth_middleware_fn, healthz_route, index_route, rescan_books_route,
-    scan_books, show_book_route, show_page_route, shuffle_book_route, shuffle_route,
+    scan_books, show_book_route, show_page_route, show_thumb_route, shuffle_book_route,
+    shuffle_route,
 };
 
 // Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached
@@ -71,6 +75,9 @@ struct Opts {
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
+    /// Directory for cached thumbnails (defaults to a "comics-thumbs" dir under the system temp dir)
+    #[arg(long, env = "CACHE_DIR")]
+    cache_dir: Option<PathBuf>,
     /// Log format
     #[arg(long, env = "LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
@@ -146,6 +153,13 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         data_dir: data_dir.clone(),
         scan: Arc::new(RwLock::new(None)),
         seed,
+        cache_dir: opts
+            .cache_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("comics-thumbs")),
+        thumb_sem: Arc::new(Semaphore::new(
+            thread::available_parallelism().map_or(4, |n| n.get()),
+        )),
     });
 
     let router = Router::new()
@@ -161,6 +175,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // to prevent timing attack, bcrypt is too slow
         // protected by randomly-generated string as page ID instead
         .route("/data/{id}", get(show_page_route))
+        .route("/thumb/{size}/{id}", get(show_thumb_route))
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
@@ -417,8 +432,8 @@ mod tests {
 
         // Discover the page id the scan assigned (cover of the only book).
         let html = server.get("/").await.text();
-        let marker = "/data/";
-        let start = html.find(marker).expect("a page link") + marker.len();
+        let marker = "/thumb/md/";
+        let start = html.find(marker).expect("a cover link") + marker.len();
         let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
         assert!(!id.is_empty());
 
@@ -426,6 +441,33 @@ mod tests {
         assert_eq!(200, server.get(&format!("/data/{id}")).await.status_code());
         fs::remove_file(&page).unwrap();
         assert_eq!(404, server.get(&format!("/data/{id}")).await.status_code());
+    }
+
+    #[tokio::test]
+    async fn thumbnail_serves_jpeg() {
+        let server = build_server().await;
+
+        // The cover link on the index uses the medium thumbnail endpoint.
+        let html = server.get("/").await.text();
+        let marker = "/thumb/md/";
+        let start = html.find(marker).expect("a cover thumbnail") + marker.len();
+        let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+
+        for size in ["md", "sm"] {
+            let res = server.get(&format!("/thumb/{size}/{id}")).await;
+            assert_eq!(200, res.status_code(), "size {size}");
+            assert!(
+                res.as_bytes().starts_with(b"\xFF\xD8\xFF"),
+                "JPEG magic for {size}"
+            );
+        }
+
+        // Unknown size and unknown id both 404.
+        assert_eq!(
+            404,
+            server.get(&format!("/thumb/xl/{id}")).await.status_code()
+        );
+        assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
     }
 
     #[tokio::test]

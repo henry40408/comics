@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;
+use tokio::sync::Semaphore;
 
 use crate::auth::AuthConfig;
 use crate::models::BookScan;
@@ -12,4 +13,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub scan: Arc<RwLock<Option<BookScan>>>,
     pub seed: u64,
+    /// Directory where generated thumbnails are cached.
+    pub cache_dir: PathBuf,
+    /// Bounds concurrent thumbnail generation (CPU-bound decode + resize).
+    pub thumb_sem: Arc<Semaphore>,
 }
