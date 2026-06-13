@@ -706,6 +706,57 @@ mod tests {
         assert_eq!(200, server.get("/assets/app.css").await.status_code());
     }
 
+    /// Every route behind the auth layer must refuse anonymous access: read
+    /// routes bounce to the login form, write routes are rejected with 401. This
+    /// guards against a route silently slipping out from under the middleware
+    /// (e.g. by being declared after `route_layer`).
+    #[tokio::test]
+    async fn auth_every_protected_route_rejects_anonymous() {
+        let server = build_auth_server(false).await;
+        let book = DATA_IDS[0];
+
+        for path in ["/".to_string(), format!("/book/{book}")] {
+            let res = server.get(&path).await;
+            assert_eq!(303, res.status_code(), "GET {path}");
+            let location = res.headers().get("location").unwrap().to_str().unwrap();
+            assert!(location.starts_with("/login"), "GET {path} -> {location}");
+        }
+
+        for path in [
+            "/rescan".to_string(),
+            "/shuffle".to_string(),
+            format!("/shuffle/{book}"),
+        ] {
+            let res = server.post(&path).await;
+            assert_eq!(401, res.status_code(), "POST {path}");
+        }
+    }
+
+    /// The flip side: with a valid session every protected route is reachable
+    /// (no redirect to login, no 401).
+    #[tokio::test]
+    async fn auth_every_protected_route_reachable_when_logged_in() {
+        let server = build_auth_server(true).await;
+        server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await;
+        let book = DATA_IDS[0];
+
+        assert_eq!(200, server.get("/").await.status_code());
+        assert_eq!(
+            200,
+            server.get(&format!("/book/{book}")).await.status_code()
+        );
+        // Write routes succeed and redirect (303), rather than being blocked.
+        assert_eq!(303, server.post("/rescan").await.status_code());
+        assert_eq!(303, server.post("/shuffle").await.status_code());
+        assert_eq!(
+            303,
+            server.post(&format!("/shuffle/{book}")).await.status_code()
+        );
+    }
+
     // Error handling tests
     #[tokio::test]
     async fn book_not_found() {
