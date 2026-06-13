@@ -10,7 +10,7 @@ use tracing::{debug, error};
 use crate::state::AppState;
 
 /// Infer Content-Type from file extension
-fn content_type_from_path(path: &str) -> &'static str {
+pub(crate) fn content_type_from_path(path: &str) -> &'static str {
     match path
         .rsplit('.')
         .next()

@@ -11,7 +11,7 @@ pub use auth::{AuthConfig, auth_middleware_fn};
 pub use error::{AppError, AppResult};
 pub use handlers::{
     Healthz, healthz_route, index_route, rescan_books_route, show_book_route, show_page_route,
-    shuffle_book_route, shuffle_route,
+    show_thumb_route, shuffle_book_route, shuffle_route,
 };
 pub use models::{Book, BookScan, Page, scan_books};
 pub use state::AppState;

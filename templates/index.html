@@ -66,7 +66,7 @@
           {% for b in books %}
           <a class="card" href="/book/{{ b.id }}">
             <div class="cover">
-              <img src="/data/{{ b.cover.id }}" alt="{{ b.title }}" loading="lazy" />
+              <img src="/thumb/md/{{ b.cover.id }}" alt="{{ b.title }}" loading="lazy" />
               <span class="idx">{{ loop.index }}</span>
             </div>
             <div class="info">

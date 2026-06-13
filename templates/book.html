@@ -62,7 +62,7 @@
       <div class="thumbs" id="thumbs">
         {% for page in book.pages %}
         <button type="button" data-p="{{ loop.index }}" title="第{{ loop.index }}頁">
-          <img src="/data/{{ page.id }}" alt="" loading="lazy" />
+          <img src="/thumb/sm/{{ page.id }}" alt="" loading="lazy" />
         </button>
         {% endfor %}
       </div>
