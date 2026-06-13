@@ -32,7 +32,7 @@ use comics::{
     shuffle_route,
 };
 
-const WATER_CSS: &str = include_str!("../vendor/assets/water.css");
+const APP_CSS: &str = include_str!("../vendor/assets/app.css");
 
 type SingleHeader = [(header::HeaderName, &'static str); 1];
 const CSS_HEADER: SingleHeader = [(header::CONTENT_TYPE, "text/css")];
@@ -150,10 +150,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // protected by randomly-generated string as page ID instead
         .route("/data/{id}", get(show_page_route))
         .route("/healthz", get(healthz_route))
-        .route(
-            "/assets/water.css",
-            get(|| async { (CSS_HEADER, WATER_CSS) }),
-        )
+        .route("/assets/app.css", get(|| async { (CSS_HEADER, APP_CSS) }))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

@@ -4,48 +4,100 @@
     <title>{{ books.len() }} book(s) | Comics {{ version }}</title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="/assets/water.css" rel="stylesheet" />
+    <script>
+      // set theme before paint to avoid a flash of the wrong palette
+      (function () {
+        var t =
+          localStorage.getItem("comics-theme") ||
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"
+      rel="stylesheet"
+    />
+    <link href="/assets/app.css" rel="stylesheet" />
   </head>
 
-  <body>
-    <main>
-      <h1>Comics {{ version }}</h1>
-      <p>
-        {{ books.len() }} book(s) scanned at
-        <time is="x-time" datetime="{{ scanned_at }}">{{ scanned_at }}</time>
-        for
-        <time datetime="P{{ scan_duration / 1000.0 }}S"
-          >{{ scan_duration }}ms</time
-        >
-      </p>
-      <div style="display: flex">
-        <form method="POST" action="/rescan">
-          <input type="submit" value="Re-scan" />
-        </form>
-        <form method="POST" action="/shuffle">
-          <input type="submit" value="Shuffle" />
-        </form>
-      </div>
-      {% for b in books %}
-      <p>
-        <a href="/book/{{ b.id }}">
-          <figure>
-            <img
-              src="/data/{{ b.cover.id }}"
-              width="{{ b.cover.dimension.width }}"
-              height="{{ b.cover.dimension.height }}"
-              loading="lazy"
-            />
-            <figcaption>
-              <center>{{ b.title }}</center>
-            </figcaption>
-          </figure>
-        </a>
-      </p>
-      {% endfor %}
-    </main>
+  <body class="lib">
+    <div class="layout">
+      <aside>
+        <div class="mark"></div>
+        <div class="spine">漫画書架<span class="en">／ COMICS</span></div>
+        <div class="asidebot">
+          <button class="themebtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+          <div class="ver">{{ version }}</div>
+        </div>
+      </aside>
+
+      <main>
+        <div class="head">
+          <h1>Library<span class="dot">.</span></h1>
+          <div class="stat">
+            <div><b>{{ books.len() }}</b> volume(s)</div>
+            <div>
+              scanned
+              <time is="x-time" datetime="{{ scanned_at }}">{{ scanned_at }}</time>
+              ·
+              <time datetime="P{{ scan_duration / 1000.0 }}S">{{ scan_duration }}ms</time>
+            </div>
+          </div>
+        </div>
+
+        <div class="rule"></div>
+
+        <div class="controls">
+          <form method="POST" action="/rescan">
+            <button class="lbtn" type="submit">Re-scan</button>
+          </form>
+          <form method="POST" action="/shuffle">
+            <button class="lbtn key" type="submit">Shuffle</button>
+          </form>
+          <span class="note">所蔵 {{ books.len() }} 冊</span>
+        </div>
+
+        <div class="grid">
+          {% for b in books %}
+          <a class="card" href="/book/{{ b.id }}">
+            <div class="cover">
+              <img
+                src="/data/{{ b.cover.id }}"
+                width="{{ b.cover.dimension.width }}"
+                height="{{ b.cover.dimension.height }}"
+                alt="{{ b.title }}"
+                loading="lazy"
+              />
+              <span class="idx">{{ loop.index }}</span>
+            </div>
+            <div class="info">
+              <div class="t">{{ b.title }}</div>
+              <div class="p">{{ b.pages.len() }} pages</div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      </main>
+    </div>
 
     <script>
+      // theme toggle: persist manual choice, otherwise follow the system
+      (function () {
+        var root = document.documentElement;
+        var sys = matchMedia("(prefers-color-scheme: dark)");
+        sys.addEventListener("change", function (e) {
+          if (!localStorage.getItem("comics-theme"))
+            root.setAttribute("data-theme", e.matches ? "dark" : "light");
+        });
+        document.getElementById("theme").addEventListener("click", function () {
+          var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+          localStorage.setItem("comics-theme", next);
+          root.setAttribute("data-theme", next);
+        });
+      })();
+
+      // render server-side timestamps in the viewer's locale
       class TimeComponent extends HTMLTimeElement {
         connectedCallback() {
           const d = new Date(this.getAttribute("datetime"));

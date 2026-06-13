@@ -6,31 +6,162 @@
     </title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="/assets/water.css" rel="stylesheet" />
+    <script>
+      (function () {
+        var t =
+          localStorage.getItem("comics-theme") ||
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"
+      rel="stylesheet"
+    />
+    <link href="/assets/app.css" rel="stylesheet" />
   </head>
 
-  <body>
-    <main>
-      <h1>{{ book.title }} ({{ book.pages.len() }}P)</h1>
-      <div style="display: flex">
-        <a href="/"><button>Home</button></a>
-        <form method="POST" action="/shuffle/{{ book.id }}">
-          <input type="submit" value="Shuffle" />
-        </form>
+  <body class="reader" data-mode="paged">
+    <div class="topbar">
+      <a class="back" href="/" title="Home" aria-label="Home">←</a>
+      <div class="titleblock">
+        <div class="t">{{ book.title }}</div>
+        <div class="s"><b id="cur">1</b> / {{ book.pages.len() }} ページ</div>
       </div>
-      {% for page in book.pages %}
-      <figure>
-        <img
-          src="/data/{{ page.id }}"
-          width="{{ page.dimension.width }}"
-          height="{{ page.dimension.height }}"
-          loading="lazy"
-        />
-        <figcaption>
-          <center>{{ page.filename }}</center>
-        </figcaption>
-      </figure>
-      {% endfor %}
-    </main>
+      <span class="grow"></span>
+      <div class="seg" id="seg">
+        <button type="button" data-m="paged" class="on">⇄ 翻頁</button>
+        <button type="button" data-m="scroll">↕ 捲動</button>
+      </div>
+      <button class="iconbtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+      <form method="POST" action="/shuffle/{{ book.id }}">
+        <button class="tbtn" type="submit">Shuffle</button>
+      </form>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <div class="zone next" id="next" title="Next"><span>‹</span></div>
+      <div class="zone prev" id="prev" title="Previous"><span>›</span></div>
+      <div class="pages" id="pages">
+        {% for page in book.pages %}
+        <figure class="pg" data-p="{{ loop.index }}">
+          <img
+            src="/data/{{ page.id }}"
+            width="{{ page.dimension.width }}"
+            height="{{ page.dimension.height }}"
+            alt="{{ page.filename }}"
+            loading="lazy"
+          />
+        </figure>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="rail">
+      <span class="counter"><b id="cur2">1</b> / {{ book.pages.len() }}</span>
+      <div class="progress"><i id="bar"></i></div>
+      <div class="thumbs" id="thumbs">
+        {% for page in book.pages %}
+        <button type="button" data-p="{{ loop.index }}" title="第{{ loop.index }}頁">
+          <img src="/data/{{ page.id }}" alt="" loading="lazy" />
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <script>
+      // theme toggle (shared key with the library)
+      (function () {
+        var root = document.documentElement;
+        var sys = matchMedia("(prefers-color-scheme: dark)");
+        sys.addEventListener("change", function (e) {
+          if (!localStorage.getItem("comics-theme"))
+            root.setAttribute("data-theme", e.matches ? "dark" : "light");
+        });
+        document.getElementById("theme").addEventListener("click", function () {
+          var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+          localStorage.setItem("comics-theme", next);
+          root.setAttribute("data-theme", next);
+        });
+      })();
+
+      (function () {
+        const body = document.body;
+        const pagesEl = document.getElementById("pages");
+        const pgs = [...pagesEl.querySelectorAll(".pg")];
+        const TOTAL = pgs.length;
+        if (!TOTAL) return;
+
+        const bar = document.getElementById("bar");
+        const curEls = [document.getElementById("cur"), document.getElementById("cur2")];
+        const thumbsBox = document.getElementById("thumbs");
+        const thumbBtns = [...thumbsBox.querySelectorAll("button")];
+        let current = 1;
+
+        const centerThumb = () => {
+          const b = thumbBtns[current - 1];
+          if (b) thumbsBox.scrollTo({ left: b.offsetLeft - thumbsBox.clientWidth / 2 + b.offsetWidth / 2, behavior: "smooth" });
+        };
+        const updateUI = () => {
+          curEls.forEach((e) => (e.textContent = current));
+          bar.style.width = (current / TOTAL) * 100 + "%";
+          thumbBtns.forEach((b, i) => b.classList.toggle("on", i + 1 === current));
+          centerThumb();
+        };
+        const paintPage = () => pgs.forEach((p, i) => p.classList.toggle("is-current", i + 1 === current));
+        const setCurrent = (n) => { current = Math.min(TOTAL, Math.max(1, n)); paintPage(); updateUI(); };
+
+        // RTL paged nav: left = next. pointerup + dedupe avoids ghost-click double fire.
+        let lastTap = 0;
+        const tapNav = (d) => { const now = Date.now(); if (now - lastTap < 90) return; lastTap = now; setCurrent(current + d); };
+        document.getElementById("next").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(1); });
+        document.getElementById("prev").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(-1); });
+        document.addEventListener("keydown", (e) => {
+          if (body.dataset.mode !== "paged") return;
+          if (e.key === "ArrowLeft") setCurrent(current + 1);
+          if (e.key === "ArrowRight") setCurrent(current - 1);
+        });
+
+        // thumbnails jump (both modes)
+        thumbBtns.forEach((b, i) => b.addEventListener("click", () => {
+          if (body.dataset.mode === "scroll") pgs[i].scrollIntoView({ behavior: "smooth", block: "start" });
+          else setCurrent(i + 1);
+        }));
+
+        // scroll mode: track the most-visible page
+        const ratios = new Array(TOTAL).fill(0);
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((en) => { ratios[pgs.indexOf(en.target)] = en.isIntersecting ? en.intersectionRatio : 0; });
+            if (body.dataset.mode !== "scroll") return;
+            let bi = 0, bv = -1;
+            for (let i = 0; i < TOTAL; i++) if (ratios[i] > bv) { bv = ratios[i]; bi = i; }
+            if (bv > 0) { current = bi + 1; updateUI(); }
+          },
+          { root: pagesEl, threshold: [0, 0.25, 0.5, 0.75, 1] }
+        );
+        pgs.forEach((p) => io.observe(p));
+
+        // mode switch
+        document.getElementById("seg").addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          body.dataset.mode = b.dataset.m;
+          [...e.currentTarget.children].forEach((x) => x.classList.toggle("on", x === b));
+          if (b.dataset.m === "paged") { paintPage(); updateUI(); }
+          else pgs[current - 1].scrollIntoView({ block: "start" });
+        });
+
+        setCurrent(1);
+
+        // first visit: flash the left/right arrows once as a hint
+        if (!localStorage.getItem("comics-reader-hinted")) {
+          body.classList.add("hint");
+          localStorage.setItem("comics-reader-hinted", "1");
+          setTimeout(() => body.classList.remove("hint"), 2000);
+        }
+      })();
+    </script>
   </body>
 </html>
