@@ -170,6 +170,11 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         .route("/shuffle/{id}", post(shuffle_book_route))
         .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
+        // Page images and thumbnails are content, so they live behind the auth
+        // layer too. Cookie verification is cheap, so guarding every image
+        // request (unlike per-request bcrypt) is no longer a concern.
+        .route("/data/{id}", get(show_page_route))
+        .route("/thumb/{size}/{id}", get(show_thumb_route))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_fn,
@@ -178,10 +183,6 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // logged out.
         .route("/login", get(login_route).post(login_submit_route))
         .route("/logout", post(logout_route))
-        // to prevent timing attack, bcrypt is too slow
-        // protected by randomly-generated string as page ID instead
-        .route("/data/{id}", get(show_page_route))
-        .route("/thumb/{size}/{id}", get(show_thumb_route))
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
@@ -715,7 +716,15 @@ mod tests {
         let server = build_auth_server(false).await;
         let book = DATA_IDS[0];
 
-        for path in ["/".to_string(), format!("/book/{book}")] {
+        for path in [
+            "/".to_string(),
+            format!("/book/{book}"),
+            // Page images and thumbnails are content too, so they sit behind the
+            // login as well. The middleware runs before the handler, so a bogus
+            // id still redirects rather than 404ing.
+            format!("/data/{book}"),
+            format!("/thumb/md/{book}"),
+        ] {
             let res = server.get(&path).await;
             assert_eq!(303, res.status_code(), "GET {path}");
             let location = res.headers().get("location").unwrap().to_str().unwrap();
@@ -755,6 +764,10 @@ mod tests {
             303,
             server.post(&format!("/shuffle/{book}")).await.status_code()
         );
+        // Image routes let the request through to the handler: an unknown id
+        // 404s (rather than redirecting to login), proving auth passed.
+        assert_eq!(404, server.get("/data/deadbeef").await.status_code());
+        assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
     }
 
     // Error handling tests
