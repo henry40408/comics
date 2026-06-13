@@ -121,3 +121,53 @@ async fn serve_original(path: &str) -> Response {
         Err(_) => (StatusCode::NOT_FOUND, Vec::new()).into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthConfig;
+    use axum::extract::{Path as AxumPath, State};
+    use parking_lot::RwLock;
+    use std::path::PathBuf;
+    use tokio::sync::Semaphore;
+
+    fn state_without_scan() -> Arc<AppState> {
+        Arc::new(AppState {
+            auth_config: AuthConfig::None,
+            data_dir: PathBuf::from("/tmp"),
+            scan: Arc::new(RwLock::new(None)),
+            seed: 0,
+            cache_dir: PathBuf::from("/tmp"),
+            thumb_sem: Arc::new(Semaphore::new(1)),
+        })
+    }
+
+    #[test]
+    fn size_px_allowlist() {
+        assert_eq!(size_px("sm"), Some(120));
+        assert_eq!(size_px("md"), Some(400));
+        assert_eq!(size_px("lg"), None);
+    }
+
+    #[tokio::test]
+    async fn unknown_size_is_not_found() {
+        let res = show_thumb_route(
+            State(state_without_scan()),
+            AxumPath(("lg".to_string(), "x".to_string())),
+        )
+        .await
+        .into_response();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn unavailable_before_first_scan() {
+        let res = show_thumb_route(
+            State(state_without_scan()),
+            AxumPath(("md".to_string(), "x".to_string())),
+        )
+        .await
+        .into_response();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+}

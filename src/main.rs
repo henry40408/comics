@@ -462,12 +462,48 @@ mod tests {
             );
         }
 
+        // The second request for the same thumbnail is served from the disk cache.
+        let cached = server.get(&format!("/thumb/md/{id}")).await;
+        assert_eq!(200, cached.status_code());
+        assert!(cached.as_bytes().starts_with(b"\xFF\xD8\xFF"));
+
         // Unknown size and unknown id both 404.
         assert_eq!(
             404,
             server.get(&format!("/thumb/xl/{id}")).await.status_code()
         );
         assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
+    }
+
+    #[tokio::test]
+    async fn thumbnail_falls_back_to_original_when_undecodable() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        // A "page" that is not a valid image.
+        let dir = tempdir().unwrap();
+        let book = dir.path().join("Bogus Book");
+        fs::create_dir(&book).unwrap();
+        let page = book.join("01.jpg");
+        fs::write(&page, b"this is not an image").unwrap();
+
+        let server = build_server_at(dir.path().to_str().unwrap()).await;
+        let html = server.get("/").await.text();
+        let marker = "/thumb/md/";
+        let start = html.find(marker).expect("a cover link") + marker.len();
+        let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+
+        // Undecodable source falls back to the original bytes.
+        let res = server.get(&format!("/thumb/sm/{id}")).await;
+        assert_eq!(200, res.status_code());
+        assert_eq!(res.as_bytes(), &b"this is not an image"[..]);
+
+        // Once the original is gone, the fallback 404s.
+        fs::remove_file(&page).unwrap();
+        assert_eq!(
+            404,
+            server.get(&format!("/thumb/sm/{id}")).await.status_code()
+        );
     }
 
     #[tokio::test]

@@ -66,3 +66,26 @@ pub async fn show_page_route(
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::content_type_from_path;
+
+    #[test]
+    fn content_type_covers_known_and_unknown_extensions() {
+        assert_eq!(content_type_from_path("a/b.jpg"), "image/jpeg");
+        assert_eq!(content_type_from_path("a/b.JPEG"), "image/jpeg");
+        assert_eq!(content_type_from_path("a/b.png"), "image/png");
+        assert_eq!(content_type_from_path("a/b.gif"), "image/gif");
+        assert_eq!(content_type_from_path("a/b.webp"), "image/webp");
+        assert_eq!(content_type_from_path("a/b.avif"), "image/avif");
+        assert_eq!(
+            content_type_from_path("a/b.txt"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            content_type_from_path("noextension"),
+            "application/octet-stream"
+        );
+    }
+}
