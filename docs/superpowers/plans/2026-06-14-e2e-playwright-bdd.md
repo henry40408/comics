@@ -24,8 +24,13 @@
 **Files:**
 - Delete: `fixtures/data/Netherworld Nomads Journey to the Jade Jungle/` (9 files)
 - Delete: `fixtures/data/Quantum Quest Legacy of the Luminous League/` (9 files)
-- Create: `fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg`..`04.jpg`
-- Create: `fixtures/data/Pepper and Carrot 02 - Rainbow Potions/01.jpg`..`06.jpg`
+- Create: `fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg`..`03.jpg`
+- Create: `fixtures/data/Pepper and Carrot 02 - Rainbow Potions/01.jpg`..`05.jpg`
+
+Note: each episode's *last* listed source image is a non-story trailer (a thin
+decorative separator for ep01, the CC-BY credits banner for ep02). These are
+intentionally excluded so each book contains only real comic pages — ep01 has 3
+story pages, ep02 has 5.
 - Create: `fixtures/data/ATTRIBUTION.md`
 
 - [ ] **Step 1: Remove the old placeholder books**
@@ -57,9 +62,13 @@ dl() {  # $1=book dir  $2=ep slug  $3=ep code  $4=page count
   done
 }
 
-dl "Pepper and Carrot 01 - Potion of Flight" ep01_Potion-of-Flight E01 4
-dl "Pepper and Carrot 02 - Rainbow Potions"  ep02_Rainbow-potions  E02 6
+dl "Pepper and Carrot 01 - Potion of Flight" ep01_Potion-of-Flight E01 3
+dl "Pepper and Carrot 02 - Rainbow Potions"  ep02_Rainbow-potions  E02 5
 ```
+
+(The download stops before the trailing non-story image of each episode: ep01
+has 4 source images — the 4th is a separator — so we fetch 3; ep02 has 6 — the
+6th is the credits banner — so we fetch 5.)
 
 - [ ] **Step 3: Write the attribution file**
 
@@ -85,9 +94,9 @@ Run: `cargo run --quiet -- --data-dir ./fixtures/data list`
 Expected (duration varies):
 
 ```
-Pepper and Carrot 01 - Potion of Flight (4P)
-Pepper and Carrot 02 - Rainbow Potions (6P)
-2 book(s), 10 page(s), scanned in ...
+Pepper and Carrot 01 - Potion of Flight (3P)
+Pepper and Carrot 02 - Rainbow Potions (5P)
+2 book(s), 8 page(s), scanned in ...
 ```
 
 If the counts differ, re-check the downloads before continuing.
@@ -186,9 +195,9 @@ Replace the `stdout_eq` block of the `list` test with the new titles and counts:
 
 ```rust
         .stdout_eq(str![[r#"
-Pepper and Carrot 01 - Potion of Flight (4P)
-Pepper and Carrot 02 - Rainbow Potions (6P)
-2 book(s), 10 page(s), scanned in [..]
+Pepper and Carrot 01 - Potion of Flight (3P)
+Pepper and Carrot 02 - Rainbow Potions (5P)
+2 book(s), 8 page(s), scanned in [..]
 
 "#]])
 ```
