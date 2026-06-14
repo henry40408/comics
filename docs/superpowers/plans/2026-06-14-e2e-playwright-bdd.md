@@ -574,7 +574,7 @@ git commit -m "test: add e2e page objects"
 - [ ] **Step 1: `e2e/steps/fixtures.js`** (wires page objects into playwright-bdd)
 
 ```js
-const { test as base, createBdd } = require('playwright-bdd');
+const { test: base, createBdd } = require('playwright-bdd');
 const { LoginPage } = require('../pages/login.page');
 const { LibraryPage } = require('../pages/library.page');
 const { ReaderPage } = require('../pages/reader.page');
