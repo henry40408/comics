@@ -12,9 +12,9 @@ fn list() {
         .assert()
         .success()
         .stdout_eq(str![[r#"
-Netherworld Nomads Journey to the Jade Jungle (9P)
-Quantum Quest Legacy of the Luminous League (9P)
-2 book(s), 18 page(s), scanned in [..]
+Pepper and Carrot 01 - Potion of Flight (3P)
+Pepper and Carrot 02 - Rainbow Potions (5P)
+2 book(s), 8 page(s), scanned in [..]
 
 "#]])
         .stderr_eq(str![]);
@@ -32,7 +32,7 @@ fn initial_scan_finished() {
         .stdout_eq(str![[r#"
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
-[..]  INFO comics: initial scan finished books=2 pages=18 duration_ms=[..]
+[..]  INFO comics: initial scan finished books=2 pages=8 duration_ms=[..]
 
 "#]])
         .stderr_eq(str![]);
