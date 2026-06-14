@@ -12,6 +12,15 @@
 
 This project provides a self-hosted solution to serve comic books.
 
+## Screenshots
+
+|       | Library                                                        | Reader                                                       |
+| ----- | -------------------------------------------------------------- | ----------------------------------------------------------- |
+| Light | ![Library, light theme](docs/screenshots/library-light.png)    | ![Reader, light theme](docs/screenshots/reader-light.png)   |
+| Dark  | ![Library, dark theme](docs/screenshots/library-dark.png)      | ![Reader, dark theme](docs/screenshots/reader-dark.png)     |
+
+> Sample artwork: [Pepper&Carrot](https://www.peppercarrot.com/) by David Revoy, CC-BY 4.0.
+
 ## Background
 
 While several options exist for self-hosted comic readers like [Calibre](https://github.com/janeczku/calibre-web), [Komga](https://github.com/gotson/komga), and [Tanoshi](https://github.com/faldez/tanoshi), they often come with complications in setup or format restrictions. Comics seeks to offer a straightforward alternative.
