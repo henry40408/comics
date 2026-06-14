@@ -31,7 +31,7 @@ Note: each episode's *last* listed source image is a non-story trailer (a thin
 decorative separator for ep01, the CC-BY credits banner for ep02). These are
 intentionally excluded so each book contains only real comic pages — ep01 has 3
 story pages, ep02 has 5.
-- Create: `fixtures/data/ATTRIBUTION.md`
+- Create: `fixtures/ATTRIBUTION.md` (one level above the scanned `data/` dir)
 
 - [ ] **Step 1: Remove the old placeholder books**
 
@@ -72,7 +72,9 @@ has 4 source images — the 4th is a separator — so we fetch 3; ep02 has 6 —
 
 - [ ] **Step 3: Write the attribution file**
 
-Create `fixtures/data/ATTRIBUTION.md` (it is a file, not a directory, so the scanner ignores it):
+Create `fixtures/ATTRIBUTION.md`. It lives one level **above** the scanned
+`data/` directory so the scanner never sees it (a non-directory entry inside
+`data/` would log an ERROR to stdout and break the integration `list` test):
 
 ```markdown
 # Fixture artwork attribution
@@ -107,7 +109,7 @@ If the counts differ, re-check the downloads before continuing.
 cd /home/nixos/Develop/claude/comics
 git add "fixtures/data/Pepper and Carrot 01 - Potion of Flight" \
         "fixtures/data/Pepper and Carrot 02 - Rainbow Potions" \
-        fixtures/data/ATTRIBUTION.md
+        fixtures/ATTRIBUTION.md
 git commit -m "test: replace placeholder fixtures with Pepper&Carrot episodes"
 ```
 

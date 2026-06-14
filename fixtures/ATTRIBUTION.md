@@ -1,6 +1,6 @@
 # Fixture artwork attribution
 
-The sample books in this directory are episodes of **Pepper&Carrot** by
+The sample books under `data/` are episodes of **Pepper&Carrot** by
 **David Revoy**, used here as test fixtures.
 
 - Source: https://www.peppercarrot.com/

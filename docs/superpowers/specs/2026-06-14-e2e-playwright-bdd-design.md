@@ -167,9 +167,10 @@ images — a direct fit for the existing "directory = book, files = pages" model
 
 - Page images are **downscaled to ~1200px wide** to keep the repository light
   (~1–2 MB total). Downscaling is a modification, which CC-BY requires noting.
-- A `fixtures/data/ATTRIBUTION.md` (and a short README credit) records the
-  author, work, CC-BY 4.0 license, source URL, and the "images downscaled for
-  testing" note.
+- A `fixtures/ATTRIBUTION.md` (one level above the scanned `data/` dir, plus a
+  short README credit) records the author, work, CC-BY 4.0 license, source URL,
+  and the "images downscaled for testing" note. It sits outside `data/` so the
+  scanner does not treat it as a (broken) book.
 
 ### Impact on existing tests
 
@@ -218,4 +219,4 @@ Pinned exactly in `e2e/package.json`:
 
 Pepper&Carrot is CC-BY 4.0: free to redistribute and modify (including
 commercially) with attribution and an indication of changes. Attribution lives
-in `fixtures/data/ATTRIBUTION.md`; the downscaling is noted there.
+in `fixtures/ATTRIBUTION.md`; the downscaling is noted there.
