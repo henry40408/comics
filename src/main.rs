@@ -350,10 +350,10 @@ mod tests {
     use tokio::sync::oneshot;
 
     const DATA_IDS: [&str; 2] = [
-        // Netherworld Nomads Journey to the Jade Jungle
-        "8e81107a0fb24286",
-        // Quantum Quest Legacy of the Luminous League
-        "1500ed4c58b05a85",
+        // Pepper and Carrot 01 - Potion of Flight
+        "cc95bc12d8d64a8a",
+        // Pepper and Carrot 02 - Rainbow Potions
+        "cdada1cf3b5d0696",
     ];
 
     async fn build_server() -> TestServer {
@@ -388,8 +388,8 @@ mod tests {
 
         let t = res.text();
         assert!(t.contains("2 book(s)"));
-        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
-        assert!(t.contains("Quantum Quest Legacy of the Luminous League"));
+        assert!(t.contains("Pepper and Carrot 01 - Potion of Flight"));
+        assert!(t.contains("Pepper and Carrot 02 - Rainbow Potions"));
     }
 
     #[tokio::test]
@@ -401,17 +401,23 @@ mod tests {
         assert_eq!(200, res.status_code());
 
         let t = res.text();
-        assert!(t.contains("Netherworld Nomads Journey to the Jade Jungle"));
+        assert!(t.contains("Pepper and Carrot 01 - Potion of Flight"));
     }
 
     #[tokio::test]
     async fn get_page() {
-        let page_id = "df007a2c411dcb94"; // Netherworld Nomads Journey to the Jade Jungle, page 1
-        let path = format!("/data/{page_id}");
         let server = build_server().await;
-        let res = server.get(&path).await;
-        assert_eq!(200, res.status_code());
+        // Discover a real page id from the first book's reader page rather than
+        // hard-coding a hash that changes whenever the fixtures change.
+        let book_id = DATA_IDS.first().unwrap();
+        let html = server.get(&format!("/book/{book_id}")).await.text();
+        let marker = "/data/";
+        let start = html.find(marker).expect("a page image") + marker.len();
+        let page_id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+        assert!(!page_id.is_empty());
 
+        let res = server.get(&format!("/data/{page_id}")).await;
+        assert_eq!(200, res.status_code());
         let content = res.as_bytes();
         assert!(content.starts_with(b"\xFF\xD8\xFF")); // JPEG magic bytes
     }
@@ -427,7 +433,7 @@ mod tests {
         fs::create_dir(&book).unwrap();
         let page = book.join("01.jpg");
         fs::copy(
-            "./fixtures/data/Netherworld Nomads Journey to the Jade Jungle/01.jpg",
+            "./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg",
             &page,
         )
         .unwrap();
