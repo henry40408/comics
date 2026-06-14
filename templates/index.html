@@ -61,7 +61,7 @@
           </form>
           {% if auth_enabled %}
           <form method="POST" action="/logout">
-            <button class="lbtn" type="submit">Logout</button>
+            <button class="lbtn" type="submit" data-testid="logout">Logout</button>
           </form>
           {% endif %}
           <span class="note">所蔵 {{ books.len() }} 冊</span>
@@ -69,13 +69,13 @@
 
         <div class="grid">
           {% for b in books %}
-          <a class="card" href="/book/{{ b.id }}">
+          <a class="card" href="/book/{{ b.id }}" data-testid="book-card">
             <div class="cover">
               <img src="/thumb/md/{{ b.cover.id }}" alt="{{ b.title }}" loading="lazy" />
               <span class="idx">{{ loop.index }}</span>
             </div>
             <div class="info">
-              <div class="t">{{ b.title }}</div>
+              <div class="t" data-testid="book-title">{{ b.title }}</div>
               <div class="p">{{ b.pages.len() }} pages</div>
             </div>
           </a>

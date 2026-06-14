@@ -33,19 +33,19 @@
           <div class="spine">漫画書架<span class="en">／ COMICS</span></div>
         </div>
         {% if error %}
-        <div class="err">帳號或密碼錯誤</div>
+        <div class="err" data-testid="login-error">帳號或密碼錯誤</div>
         {% endif %}
         <form method="POST" action="/login">
           <input type="hidden" name="next" value="{{ next }}" />
           <label>
             Username
-            <input name="username" autocomplete="username" autofocus required />
+            <input name="username" data-testid="login-username" autocomplete="username" autofocus required />
           </label>
           <label>
             Password
-            <input name="password" type="password" autocomplete="current-password" required />
+            <input name="password" data-testid="login-password" type="password" autocomplete="current-password" required />
           </label>
-          <button class="lbtn key" type="submit">Sign in</button>
+          <button class="lbtn key" type="submit" data-testid="login-submit">Sign in</button>
         </form>
       </div>
       <button class="themebtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>

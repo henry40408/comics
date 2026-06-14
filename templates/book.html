@@ -31,12 +31,12 @@
       <a class="back" href="/" title="Home" aria-label="Home">←</a>
       <div class="titleblock">
         <div class="t">{{ book.title }}</div>
-        <div class="s"><b id="cur">1</b> / {{ book.pages.len() }} ページ</div>
+        <div class="s"><b id="cur" data-testid="reader-current">1</b> / {{ book.pages.len() }} ページ</div>
       </div>
       <span class="grow"></span>
       <div class="seg" id="seg">
-        <button type="button" data-m="paged" class="on">⇄ 翻頁</button>
-        <button type="button" data-m="scroll">↕ 捲動</button>
+        <button type="button" data-m="paged" class="on" data-testid="reader-mode-paged">⇄ 翻頁</button>
+        <button type="button" data-m="scroll" data-testid="reader-mode-scroll">↕ 捲動</button>
       </div>
       <button class="iconbtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
       <form method="POST" action="/shuffle/{{ book.id }}">
@@ -44,14 +44,14 @@
       </form>
       {% if auth_enabled %}
       <form method="POST" action="/logout">
-        <button class="tbtn" type="submit">Logout</button>
+        <button class="tbtn" type="submit" data-testid="logout">Logout</button>
       </form>
       {% endif %}
     </div>
 
     <div class="viewer" id="viewer">
-      <div class="zone next" id="next" title="Next"><span>‹</span></div>
-      <div class="zone prev" id="prev" title="Previous"><span>›</span></div>
+      <div class="zone next" id="next" title="Next" data-testid="reader-next"><span>‹</span></div>
+      <div class="zone prev" id="prev" title="Previous" data-testid="reader-prev"><span>›</span></div>
       <div class="pages" id="pages">
         {% for page in book.pages %}
         <figure class="pg" data-p="{{ loop.index }}">
