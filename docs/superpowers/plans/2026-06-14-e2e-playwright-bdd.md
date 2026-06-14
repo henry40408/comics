@@ -351,12 +351,18 @@ git commit -m "feat: add data-testid hooks for E2E selectors"
 
 - [ ] **Step 2: Generate a test password hash**
 
-The webServer needs `AUTH_PASSWORD_HASH`. Generate a bcrypt hash of `password` with the app's own command (cost 11, matches production). Run it, type `password` twice, and copy the printed `$2b$11$…` line:
+The webServer needs `AUTH_PASSWORD_HASH`: a bcrypt hash of `password`. The app's
+`hash-password` command reads the tty interactively, which is awkward to script,
+so generate the hash non-interactively with `htpasswd` (cost 11). The app's
+`bcrypt::verify` accepts the `$2y$` variant htpasswd emits (verified: a correct
+password returns 303 + Set-Cookie, a wrong one 401).
 
 ```bash
-cd /home/nixos/Develop/claude/comics
-cargo run --quiet -- hash-password
+htpasswd -bnBC 11 "" password | tr -d ':\n'; echo
 ```
+
+A known-good, already-verified value you may use directly:
+`$2y$11$s4aVgLTIMwW5RUu.OeWsLu8UZL1fxLsB31iRsCiljfT.8V1VEp4dO`
 
 - [ ] **Step 3: `e2e/playwright.config.js`** (paste the hash from Step 2 into `TEST_PASSWORD_HASH`)
 
