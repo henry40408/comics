@@ -18,7 +18,6 @@ All commands run from the repository root.
 - Coverage (as CI runs it): `cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info`
 - Lint (must pass CI): `cargo fmt --check`, `cargo clippy`, `cargo deny check`
 - Format before committing: `cargo fmt`
-- MSRV check: `cargo hack check --rust-version --workspace --all-targets --ignore-private`
 
 The lint config in `Cargo.toml` denies `unsafe_code` and `unexpected_cfgs` and turns on a large set of pedantic Clippy lints — expect `cargo clippy` to be strict.
 
@@ -57,6 +56,6 @@ Auth is enabled only when both `AUTH_USERNAME` and `AUTH_PASSWORD_HASH` are set;
 
 ## Conventions
 
-- MSRV is `1.88.0` (`rust-version` in `Cargo.toml`); CI checks against both `1.88.0` and `1.94.0` on Linux/macOS/Windows. Don't bump `rust-version` for a toolchain change.
+- The Rust toolchain is pinned via `rust-toolchain.toml` (currently `1.96.0`); CI reads the channel from that file (no version is hard-coded in `ci.yaml`). There is no separate MSRV — bumping the toolchain is a single edit to `rust-toolchain.toml`.
 - Test fixtures live in `fixtures/data/`; the two fixture books have stable IDs (with `seed=1`) hard-coded in tests.
 - User-facing strings in templates/login are Traditional Chinese (e.g. the login error `帳號或密碼錯誤`).
