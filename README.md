@@ -2,11 +2,14 @@
 
 > Simple file server for comic books
 
-[![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
-![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/henry40408/comics/.github%2Fworkflows%2Fci.yaml)
-![GitHub](https://img.shields.io/github/license/henry40408/comics)
-![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/henry40408/comics)
+[![CI](https://github.com/henry40408/comics/actions/workflows/ci.yaml/badge.svg)](https://github.com/henry40408/comics/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/henry40408/comics/graph/badge.svg?token=26VSHOGXLN)](https://codecov.io/gh/henry40408/comics)
+[![Release](https://img.shields.io/github/v/release/henry40408/comics)](https://github.com/henry40408/comics/releases/latest)
+[![License](https://img.shields.io/github/license/henry40408/comics)](LICENSE.txt)
+[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/comics/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/comics)
+[![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
+[![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
 ## Overview
 
