@@ -15,11 +15,24 @@ jobs:
           tool: cargo-deny@0.18.9
       - run: cargo deny check
 
+  # Linux clippy. This is the hard gate that coverage/e2e wait on — kept
+  # ubuntu-only so the (slower) macOS portability check below never sits on
+  # the critical path.
   check:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo clippy --all-targets -- -D warnings
+
+  # macOS portability sanity check. Runs independently and still fails the
+  # workflow on a regression, but does not block coverage/e2e. Windows was
+  # dropped from the matrix: comics ships only as a Linux Docker image
+  # (linux/amd64, linux/arm64 via distroless), so a Windows build had no
+  # deployment value and was the slowest leg in the matrix.
+  check-cross:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
