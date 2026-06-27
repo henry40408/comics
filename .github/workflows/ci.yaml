@@ -15,9 +15,11 @@ jobs:
           tool: cargo-deny@0.18.9
       - run: cargo deny check
 
-  # Linux clippy. This is the hard gate that coverage/e2e wait on — kept
-  # ubuntu-only so the (slower) macOS portability check below never sits on
-  # the critical path.
+  # Linux clippy. Runs in parallel with everything else — coverage/e2e are no
+  # longer gated on it. On GitHub Actions a compile gate can't hand its build
+  # cache to downstream jobs, so gating would only serialize a second compile
+  # onto the critical path for no wall-clock win (the cheap checks, fmt/deny in
+  # lint, don't validate compilation anyway). Kept ubuntu-only; macOS is below.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -40,7 +42,6 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
 
   coverage:
-    needs: [lint, check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -55,7 +56,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   e2e:
-    needs: [lint, check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
