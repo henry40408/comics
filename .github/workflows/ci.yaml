@@ -18,7 +18,7 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo fmt --check
-      - uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
+      - uses: taiki-e/install-action@8b3c737da4b541bf0fb5a3e0488ff20535badac9 # v2
         with:
           tool: cargo-deny@0.18.9
       - run: cargo deny check
@@ -57,7 +57,7 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
-      - uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
+      - uses: taiki-e/install-action@8b3c737da4b541bf0fb5a3e0488ff20535badac9 # v2
         with:
           tool: cargo-llvm-cov@0.6.14,cargo-nextest@0.9.87
       - run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
