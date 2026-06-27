@@ -16,7 +16,7 @@ All commands run from the repository root.
   - Single test: `cargo nextest run <test_name>` (e.g. `cargo nextest run auth_logout_clears_session`)
   - Integration tests live in `tests/integration_test.rs` and drive the compiled binary via `snapbox`.
 - Coverage (as CI runs it): `cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info`
-- Lint (must pass CI): `cargo fmt --check`, `cargo clippy`, `cargo deny check`
+- Lint (must pass CI): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`
 - Format before committing: `cargo fmt`
 
 The lint config in `Cargo.toml` denies `unsafe_code` and `unexpected_cfgs` and turns on a large set of pedantic Clippy lints — expect `cargo clippy` to be strict.
