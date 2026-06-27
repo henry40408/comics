@@ -12,7 +12,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+      # No qemu: the Dockerfile builder is pinned to the native platform and zig
+      # cross-compiles both musl targets, so the arm64 image needs no emulation.
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
@@ -40,5 +41,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_VERSION=${{ steps.version.outputs.version }}
+          # Persist BuildKit layer cache across runs via the GitHub Actions cache
+          # backend. This caches image layers (apt install, cargo-zigbuild build,
+          # zig download) — not the in-Dockerfile cargo/target cache mounts, which
+          # are local to an ephemeral runner and don't survive between runs.
           cache-from: type=gha
           cache-to: type=gha,mode=max

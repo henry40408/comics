@@ -37,6 +37,12 @@ use comics::{
     show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
+// The release image links musl, whose default allocator is markedly slower than
+// glibc's under the concurrent, allocation-heavy work this server does (rayon
+// scans, on-demand image decoding for thumbnails). mimalloc restores throughput.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 // Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached
 // forever; the URL changes whenever the content changes.
 type AssetHeaders = [(header::HeaderName, &'static str); 2];
