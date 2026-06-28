@@ -2,7 +2,7 @@
 
 > Simple file server for comic books
 
-[![CI](https://github.com/henry40408/comics/actions/workflows/ci.yaml/badge.svg)](https://github.com/henry40408/comics/actions/workflows/ci.yaml)
+[![CI](https://github.com/henry40408/comics/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/comics/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/henry40408/comics/graph/badge.svg?token=26VSHOGXLN)](https://codecov.io/gh/henry40408/comics)
 [![Release](https://img.shields.io/github/v/release/henry40408/comics)](https://github.com/henry40408/comics/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/comics)](LICENSE.txt)
