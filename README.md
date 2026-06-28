@@ -11,11 +11,7 @@
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
 [![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
-## Overview
-
 This project provides a self-hosted solution to serve comic books.
-
-## Screenshots
 
 |       | Library                                                        | Reader                                                       |
 | ----- | -------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -32,9 +28,9 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 
 - **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
 - **Manga-friendly Reader**: Read right-to-left page by page or as a continuous vertical scroll, switchable on the fly. Includes a progress bar, a thumbnail strip for jumping between pages, keyboard navigation, and a light/dark theme that follows your system and can be toggled manually. Covers and the thumbnail strip are served as small JPEG thumbnails generated on demand and cached on disk, so browsing stays light even on slow storage.
-- **Web Login**: Safeguard your comics with a username-password login form backed by a signed session cookie (valid for 7 days). Credentials are verified once at login instead of on every request, and every page — including the images and thumbnails themselves — is served only to logged-in users. See [Commands](#commands) and [Environment Variables](#environment-variables) for setup.
+- **Web Login**: Safeguard your comics with a username-password login form backed by a signed session cookie (valid for 7 days). Credentials are verified once at login instead of on every request, and every page — including the images and thumbnails themselves — is served only to logged-in users. See [Commands](#commands) and [Configuration](#configuration) for setup.
 
-## Environment Variables
+## Configuration
 
 | Variable | Description | Default |
 | --- | --- | --- |
@@ -48,7 +44,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `SEED` | Seed to generate hashed IDs | _(random)_ |
 
-## Setup and Usage
+## Quick Start
 
 1. **Getting Started**:
 
