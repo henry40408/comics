@@ -56,6 +56,6 @@ Auth is enabled only when both `AUTH_USERNAME` and `AUTH_PASSWORD_HASH` are set;
 
 ## Conventions
 
-- The Rust toolchain is pinned via `rust-toolchain.toml` (currently `1.96.0`); CI reads the channel from that file (no version is hard-coded in `ci.yaml`). There is no separate MSRV — bumping the toolchain is a single edit to `rust-toolchain.toml`.
+- The Rust toolchain is pinned via `rust-toolchain.toml` (currently `1.96.0`); CI reads the channel from that file (no version is hard-coded in `ci.yml`). There is no separate MSRV — bumping the toolchain is a single edit to `rust-toolchain.toml`.
 - Test fixtures live in `fixtures/data/`; the two fixture books have stable IDs (with `seed=1`) hard-coded in tests.
 - User-facing strings in templates/login are Traditional Chinese (e.g. the login error `帳號或密碼錯誤`).
