@@ -76,9 +76,6 @@ struct Opts {
     /// Bind host & port
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
     bind: String,
-    /// Debug mode
-    #[arg(long, short = 'd', env = "DEBUG")]
-    debug: bool,
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
@@ -88,9 +85,6 @@ struct Opts {
     /// Log format
     #[arg(long, env = "LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
-    /// No color <https://no-color.org/>
-    #[arg(long, env = "NO_COLOR")]
-    no_color: bool,
     /// Seed to generate hashed IDs
     #[arg(long, env = "SEED")]
     seed: Option<u64>,
@@ -98,8 +92,9 @@ struct Opts {
     command: Option<Commands>,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
 enum LogFormat {
+    #[default]
     Full,
     Compact,
     Pretty,
@@ -203,8 +198,9 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         )
         .layer(
             // Per-request logs are noisy for an image-heavy app (every page and
-            // thumbnail hits /data), so emit them at DEBUG; enable with `-d` or
-            // RUST_LOG. Failures still surface via the default on_failure (ERROR).
+            // thumbnail hits /data), so emit them at DEBUG; enable with RUST_LOG
+            // (e.g. `RUST_LOG=comics=info,tower_http=debug`). Failures still
+            // surface via the default on_failure (ERROR).
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
@@ -282,27 +278,21 @@ fn hash_password() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_tracing(opts: &Opts) {
-    let default_directive = if opts.debug {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(default_directive.into())
-        .from_env_lossy();
-    let span_events = env_filter.max_level_hint().map_or_else(
-        || FmtSpan::CLOSE,
-        |l| {
-            if l >= Level::DEBUG {
-                FmtSpan::CLOSE
-            } else {
-                FmtSpan::NONE
-            }
-        },
-    );
-    let layer = tracing_subscriber::fmt::layer().with_span_events(span_events);
-    let layer = match opts.log_format {
+fn init_tracing(format: LogFormat) {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error,comics=info"));
+    let span_events = env_filter.max_level_hint().map_or(FmtSpan::CLOSE, |l| {
+        if l >= Level::DEBUG {
+            FmtSpan::CLOSE
+        } else {
+            FmtSpan::NONE
+        }
+    });
+    let use_ansi = std::env::var_os("NO_COLOR").is_none();
+    let layer = tracing_subscriber::fmt::layer()
+        .with_span_events(span_events)
+        .with_ansi(use_ansi);
+    let layer = match format {
         LogFormat::Full => layer.with_filter(env_filter).boxed(),
         LogFormat::Compact => layer.compact().with_filter(env_filter).boxed(),
         LogFormat::Pretty => layer.pretty().with_filter(env_filter).boxed(),
@@ -316,7 +306,7 @@ async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
     debug!("Parsed options: {opts:?}");
 
-    init_tracing(&opts);
+    init_tracing(opts.log_format);
 
     match &opts.command {
         Some(Commands::HashPassword { .. }) => hash_password()?,

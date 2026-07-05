@@ -39,7 +39,6 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `BIND` | Bind host & port | `127.0.0.1:3000` |
 | `DATA_DIR` | Data directory | `./data` |
 | `CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
-| `DEBUG` | Enable debug mode | _(off)_ |
 | `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `SEED` | Seed to generate hashed IDs | _(random)_ |
