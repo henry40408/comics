@@ -12,9 +12,4 @@ allow = [
 [advisories]
 version = 2
 ignore = [
-  # RUSTSEC-2026-0204: crossbeam-epoch <0.9.20 invalid pointer dereference in
-  # fmt::Pointer impl (pulled in transitively via rayon). Fixed in 0.9.20, but
-  # that release is <7 days old and blocked by our dependency cooldown policy.
-  # Temporary ignore to unblock CI; remove once we upgrade to >=0.9.20.
-  "RUSTSEC-2026-0204",
 ]
