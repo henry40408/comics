@@ -11,7 +11,7 @@ Comics is a self-hosted file server for comic books, built with Rust and Axum. I
 All commands run from the repository root.
 
 - Build: `cargo build` (release: `cargo build --release`)
-- Run the server: `cargo run` (serves `./data` on `127.0.0.1:3000` by default)
+- Run the server: `cargo run` (serves `./data` on `0.0.0.0:8080` by default)
 - Tests: `cargo nextest run` (per the user's global rule, not `cargo test`)
   - Single test: `cargo nextest run <test_name>` (e.g. `cargo nextest run auth_logout_clears_session`)
   - Integration tests live in `tests/integration_test.rs` and drive the compiled binary via `snapbox`.

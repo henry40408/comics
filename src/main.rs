@@ -74,7 +74,7 @@ struct Opts {
     #[arg(long, env = "AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
     /// Bind host & port
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
+    #[arg(long, short = 'b', env = "BIND", default_value = "0.0.0.0:8080")]
     bind: String,
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]

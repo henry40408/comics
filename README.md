@@ -36,7 +36,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | --- | --- | --- |
 | `AUTH_USERNAME` | Username for the login form | _(none)_ |
 | `AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
-| `BIND` | Bind host & port | `127.0.0.1:3000` |
+| `BIND` | Bind host & port | `0.0.0.0:8080` |
 | `DATA_DIR` | Data directory | `./data` |
 | `CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
@@ -80,7 +80,7 @@ Navigate to the project directory in your terminal or command line and enter:
 ./comics
 ```
 
-Now, open your web browser and head to http://localhost:3000/ to view your comics.
+Now, open your web browser and head to http://localhost:8080/ to view your comics.
 
 ## Commands
 
