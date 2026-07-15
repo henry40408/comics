@@ -73,8 +73,10 @@ struct Opts {
     /// Hashed password for the login form
     #[arg(long, env = "AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
-    /// Bind host & port
-    #[arg(long, short = 'b', env = "BIND", default_value = "0.0.0.0:8080")]
+    /// Bind host & port. Defaults to loopback so a bare-metal run is not
+    /// exposed on all interfaces without opting in; the container image sets
+    /// `BIND=0.0.0.0:8080` so a reverse proxy can reach it.
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
     bind: String,
     /// Data directory
     #[arg(long, env = "DATA_DIR", default_value = "./data")]

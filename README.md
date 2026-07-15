@@ -36,7 +36,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | --- | --- | --- |
 | `AUTH_USERNAME` | Username for the login form | _(none)_ |
 | `AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
-| `BIND` | Bind host & port | `0.0.0.0:8080` |
+| `BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `DATA_DIR` | Data directory | `./data` |
 | `CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
