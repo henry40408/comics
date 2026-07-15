@@ -37,7 +37,7 @@ pub async fn show_page_route(
             None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
             Some(scan) => scan,
         };
-        match scan.pages_map.get(&*id) {
+        match scan.page_by_id(&id) {
             None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),
             Some(page) => page.path.clone(),
         }
