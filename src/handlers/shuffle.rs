@@ -13,9 +13,8 @@ use crate::state::AppState;
 pub async fn shuffle_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let book_id = {
         let locked = state.scan.read();
-        let scan = match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-            Some(scan) => scan,
+        let Some(scan) = locked.as_ref() else {
+            return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response();
         };
         let mut rng = rand::rng();
         match scan.books.choose(&mut rng) {
@@ -32,9 +31,8 @@ pub async fn shuffle_book_route(
 ) -> impl IntoResponse {
     let book_id = {
         let locked = state.scan.read();
-        let scan = match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-            Some(scan) => scan,
+        let Some(scan) = locked.as_ref() else {
+            return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response();
         };
         let mut rng = rand::rng();
         let filtered_books: Vec<&Book> = scan.books.iter().filter(|b| b.id != id).collect();

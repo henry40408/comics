@@ -33,9 +33,8 @@ pub async fn show_page_route(
     // Copy page path while holding lock, then release lock before I/O
     let page_path = {
         let locked = state.scan.read();
-        let scan = match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-            Some(scan) => scan,
+        let Some(scan) = locked.as_ref() else {
+            return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response();
         };
         match scan.page_by_id(&id) {
             None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),

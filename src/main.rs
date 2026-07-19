@@ -135,6 +135,10 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
     });
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "init entry point; keeps a fallible signature for future fallible setup steps"
+)]
 fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
     let data_dir = &opts.data_dir;
 
@@ -163,7 +167,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             .clone()
             .unwrap_or_else(|| std::env::temp_dir().join("comics-thumbs")),
         thumb_sem: Arc::new(Semaphore::new(
-            thread::available_parallelism().map_or(4, |n| n.get()),
+            thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
     });
 
@@ -231,8 +235,8 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
+        () = ctrl_c => {}
+        () = terminate => {}
     }
 }
 
@@ -259,7 +263,7 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
                         info!("received shutdown signal");
                     }
                 }
-                _ = shutdown_signal() => {
+                () = shutdown_signal() => {
                     info!("received shutdown signal");
                 }
             }

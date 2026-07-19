@@ -28,9 +28,8 @@ struct IndexTemplate<'a> {
 pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // Hold read lock through render — template render is pure CPU, no await
     let locked = state.scan.read();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(scan) => scan,
+    let Some(scan) = locked.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new()));
     };
     let t = IndexTemplate {
         books: &scan.books,
