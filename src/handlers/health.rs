@@ -13,9 +13,8 @@ pub struct Healthz {
 
 pub async fn healthz_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let locked = state.scan.read();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response(),
-        Some(scan) => scan,
+    let Some(scan) = locked.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(())).into_response();
     };
     Json(Healthz {
         scanned_at: scan.scanned_at.timestamp_millis(),

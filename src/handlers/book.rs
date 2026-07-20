@@ -29,13 +29,11 @@ pub async fn show_book_route(
 ) -> impl IntoResponse {
     // Hold read lock through render — template render is pure CPU, no await
     let locked = state.scan.read();
-    let scan = match locked.as_ref() {
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())),
-        Some(scan) => scan,
+    let Some(scan) = locked.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new()));
     };
-    let book = match scan.books_map.get(&id).and_then(|&idx| scan.books.get(idx)) {
-        None => return (StatusCode::NOT_FOUND, Html(String::from("not found"))),
-        Some(book) => book,
+    let Some(book) = scan.books_map.get(&id).and_then(|&idx| scan.books.get(idx)) else {
+        return (StatusCode::NOT_FOUND, Html(String::from("not found")));
     };
     let template = BookTemplate {
         book,

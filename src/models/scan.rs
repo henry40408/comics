@@ -73,7 +73,7 @@ pub fn scan_books(seed: u64, data_path: &path::Path) -> anyhow::Result<BookScan>
             let book = Book::new(&span, seed, path.as_path());
             if let Err(err) = &book {
                 error!(%err, "failed to create book");
-            };
+            }
             book.ok()
         })
         .collect();

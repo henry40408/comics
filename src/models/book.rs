@@ -24,7 +24,7 @@ impl Page {
         }
         let filename = path
             .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string()))
+            .and_then(|s| s.to_str().map(std::string::ToString::to_string))
             .with_context(|| format!("Invalid path: {}", path.display()))?;
         let path_str = path.to_string_lossy().to_string();
         Ok(Page {
@@ -56,7 +56,7 @@ impl Book {
             .with_context(|| format!("Empty directory: {}", path.display()))?;
         let title = path
             .file_name()
-            .and_then(|s| s.to_str().map(|s| s.to_string()))
+            .and_then(|s| s.to_str().map(std::string::ToString::to_string))
             .with_context(|| format!("Invalid path: {}", path.display()))?;
         Ok(Book {
             cover: cover.clone(),

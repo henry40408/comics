@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn book_id_display() {
         let id = BookId("abc123".to_string());
-        assert_eq!(format!("{}", id), "abc123");
+        assert_eq!(format!("{id}"), "abc123");
     }
 
     #[test]
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn page_id_display() {
         let id = PageId("page123".to_string());
-        assert_eq!(format!("{}", id), "page123");
+        assert_eq!(format!("{id}"), "page123");
     }
 
     #[test]

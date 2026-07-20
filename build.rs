@@ -5,7 +5,7 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/index");
 
     let git_version = get_git_version();
-    println!("cargo:rustc-env=APP_VERSION={}", git_version);
+    println!("cargo:rustc-env=APP_VERSION={git_version}");
 }
 
 fn get_git_version() -> String {

@@ -55,17 +55,15 @@ pub async fn show_thumb_route(
     State(state): State<Arc<AppState>>,
     Path((size, id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let max = match size_px(&size) {
-        Some(m) => m,
-        None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),
+    let Some(max) = size_px(&size) else {
+        return (StatusCode::NOT_FOUND, Vec::new()).into_response();
     };
 
     // Resolve the source path, releasing the lock before any I/O.
     let src = {
         let locked = state.scan.read();
-        let scan = match locked.as_ref() {
-            None => return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response(),
-            Some(scan) => scan,
+        let Some(scan) = locked.as_ref() else {
+            return (StatusCode::SERVICE_UNAVAILABLE, Vec::new()).into_response();
         };
         match scan.page_by_id(&id) {
             None => return (StatusCode::NOT_FOUND, Vec::new()).into_response(),

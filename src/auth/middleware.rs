@@ -95,13 +95,16 @@ pub async fn auth_middleware_fn(
 
 /// Minimal percent-encoding for the `next` query parameter.
 fn urlencode(input: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(input.len());
     for byte in input.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(byte as char);
             }
-            _ => out.push_str(&format!("%{byte:02X}")),
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
         }
     }
     out
