@@ -1,3 +1,10 @@
 data
 !data/.keep
 target
+
+# The image never needs git history: CI resolves `git describe` on the runner
+# and passes it in as the GIT_VERSION build arg. Keeping .git out of the context
+# stops every commit from invalidating the `COPY . .` layer (and the cargo build
+# behind it) even when no source file changed.
+.git
+.github
