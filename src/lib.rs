@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod auth;
+pub mod csrf;
 pub mod error;
 pub mod handlers;
 pub mod helpers;
@@ -8,6 +9,7 @@ pub mod state;
 
 pub use assets::{APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, assets_version};
 pub use auth::{AuthConfig, auth_middleware_fn};
+pub use csrf::csrf_origin_guard;
 pub use error::{AppError, AppResult};
 pub use handlers::{
     Healthz, healthz_route, index_route, login_route, login_submit_route, logout_route,

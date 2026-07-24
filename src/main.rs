@@ -32,8 +32,8 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, VERSION, auth_middleware_fn, healthz_route, index_route, login_route,
-    login_submit_route, logout_route, rescan_books_route, scan_books, show_book_route,
+    FAVICON_SVG, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route, index_route,
+    login_route, login_submit_route, logout_route, rescan_books_route, scan_books, show_book_route,
     show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
@@ -211,6 +211,12 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
+        // First-line CSRF defence: a stateless cross-site check on every
+        // unsafe-method request. Applied as a global outer layer so it also
+        // covers the public `/login` and `/logout` POSTs, which sit outside the
+        // auth layer. It is inert for safe methods, so every asset/image/
+        // `/healthz` GET passes untouched.
+        .layer(middleware::from_fn(csrf_origin_guard))
         .with_state(state.clone());
 
     Ok((router, state))
@@ -565,6 +571,54 @@ mod tests {
     async fn healthz() {
         let server = build_server().await;
         let res = server.get("/healthz").await;
+        assert_eq!(200, res.status_code());
+    }
+
+    /// The stateless CSRF origin guard rejects any state-changing POST a browser
+    /// reports as cross-site, including the public `/login` and `/logout` that
+    /// sit outside the auth layer. The guard is the outermost layer, so it fires
+    /// before auth and before the handler.
+    #[tokio::test]
+    async fn csrf_cross_site_post_is_forbidden() {
+        let server = build_server().await;
+        for path in ["/rescan", "/shuffle", "/login", "/logout"] {
+            let res = server
+                .post(path)
+                .add_header("sec-fetch-site", "cross-site")
+                .await;
+            assert_eq!(403, res.status_code(), "POST {path} cross-site");
+        }
+    }
+
+    /// A same-origin POST — the normal browser form submit — is untouched by the
+    /// guard and reaches the handler, whether flagged via `Sec-Fetch-Site` or a
+    /// matching `Origin`/`Host`.
+    #[tokio::test]
+    async fn csrf_same_origin_post_is_allowed() {
+        let server = build_server().await;
+
+        let res = server
+            .post("/shuffle")
+            .add_header("sec-fetch-site", "same-origin")
+            .await;
+        assert_eq!(303, res.status_code());
+
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "http://localhost")
+            .add_header("host", "localhost")
+            .await;
+        assert_eq!(303, res.status_code());
+    }
+
+    /// A GET is a safe method and never checked, even when reported cross-site.
+    #[tokio::test]
+    async fn csrf_safe_method_is_never_checked() {
+        let server = build_server().await;
+        let res = server
+            .get("/")
+            .add_header("sec-fetch-site", "cross-site")
+            .await;
         assert_eq!(200, res.status_code());
     }
 
