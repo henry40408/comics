@@ -34,14 +34,14 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `AUTH_USERNAME` | Username for the login form | _(none)_ |
-| `AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
-| `BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
-| `DATA_DIR` | Data directory | `./data` |
-| `CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
-| `LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
+| `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
+| `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
+| `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
+| `COMICS_DATA_DIR` | Data directory | `./data` |
+| `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
+| `COMICS_LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
-| `SEED` | Seed to generate hashed IDs | _(random)_ |
+| `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
 
 ## Quick Start
 

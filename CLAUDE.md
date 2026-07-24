@@ -24,14 +24,14 @@ The lint config in `Cargo.toml` denies `unsafe_code` and `unexpected_cfgs` and t
 ### CLI subcommands
 
 - `cargo run -- list` (alias `ls`) — print books and page counts.
-- `cargo run -- hash-password` — prompt for a password and emit a bcrypt hash for `AUTH_PASSWORD_HASH`.
+- `cargo run -- hash-password` — prompt for a password and emit a bcrypt hash for `COMICS_AUTH_PASSWORD_HASH`.
 
 ## Architecture
 
 The crate is split into a thin binary (`src/main.rs`) and a library (`src/lib.rs`) so the test suite and integration tests can build routers directly.
 
 - **`main.rs`** — CLI parsing (`clap`), tracing setup, router assembly in `init_route`, graceful shutdown, and the `list` / `hash-password` subcommands. Embedded static assets (CSS/JS/icons) are served from here with immutable cache headers fingerprinted by `?v=<hash>`.
-- **`models/`** — the scan domain. `scan_books` walks the data dir in parallel (`rayon`), building `Book`s (each with a `cover`, sorted `pages`) into a `BookScan` that also holds `books_map` and `pages_map` (id → index/page) for O(1) lookups. IDs are `xxh3` hashes of the title/path salted with `seed` (`models/ids.rs`), so a fixed `SEED` yields stable URLs. **Scanning performs no image I/O** — `Page::new` only stats the path; dimensions are never read (a deliberate perf choice for slow disks).
+- **`models/`** — the scan domain. `scan_books` walks the data dir in parallel (`rayon`), building `Book`s (each with a `cover`, sorted `pages`) into a `BookScan` that also holds `books_map` and `pages_map` (id → index/page) for O(1) lookups. IDs are `xxh3` hashes of the title/path salted with `seed` (`models/ids.rs`), so a fixed `COMICS_SEED` yields stable URLs. **Scanning performs no image I/O** — `Page::new` only stats the path; dimensions are never read (a deliberate perf choice for slow disks).
 - **`handlers/`** — one module per route (`index`, `book`, `page`, `thumb`, `shuffle`, `rescan`, `login`, `health`). Handlers read shared state, never block the async runtime on CPU work without bounding it.
 - **`auth/`** — form-login authentication. `auth_middleware_fn` guards content routes; `config.rs` models credentials as `AuthConfig::{Some, None}`.
 - **`state.rs`** — `AppState` shared via `Arc`: the cookie signing `Key`, the `RwLock<Option<BookScan>>`, the thumbnail cache dir, and a `Semaphore` bounding concurrent thumbnail generation.
@@ -43,11 +43,11 @@ The initial scan runs on a background thread (`spawn_initial_scan`) *after* the 
 
 ### Authentication model
 
-Auth is enabled only when both `AUTH_USERNAME` and `AUTH_PASSWORD_HASH` are set; otherwise the server is fully public (and logs a warning). Login verifies the bcrypt hash once and issues a **signed session cookie** (`comics_session`) whose value is its own expiry timestamp (7-day TTL). The signing `Key` is generated at startup, so restarting invalidates all sessions. Every content route — including page images and thumbnails — sits behind the middleware; only `/login`, `/logout`, `/healthz`, and static assets are public. Unauthenticated `GET`s redirect to `/login?next=…` (the `next` target is validated to be same-site); other methods get `401`. The tests `auth_every_protected_route_rejects_anonymous` / `…reachable_when_logged_in` are the guardrails — keep them passing when touching routing.
+Auth is enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` are set; otherwise the server is fully public (and logs a warning). Login verifies the bcrypt hash once and issues a **signed session cookie** (`comics_session`) whose value is its own expiry timestamp (7-day TTL). The signing `Key` is generated at startup, so restarting invalidates all sessions. Every content route — including page images and thumbnails — sits behind the middleware; only `/login`, `/logout`, `/healthz`, and static assets are public. Unauthenticated `GET`s redirect to `/login?next=…` (the `next` target is validated to be same-site); other methods get `401`. The tests `auth_every_protected_route_rejects_anonymous` / `…reachable_when_logged_in` are the guardrails — keep them passing when touching routing.
 
 ### Thumbnails
 
-`GET /thumb/{size}/{id}` serves on-demand JPEG thumbnails (`sm`=120px rail, `md`=400px covers; any other size → 404). Generation is disk-cached under `CACHE_DIR`, bounded by the `thumb_sem` semaphore, and runs in `spawn_blocking`. An undecodable source falls back to streaming the original bytes; cache writes are best-effort.
+`GET /thumb/{size}/{id}` serves on-demand JPEG thumbnails (`sm`=120px rail, `md`=400px covers; any other size → 404). Generation is disk-cached under `COMICS_CACHE_DIR`, bounded by the `thumb_sem` semaphore, and runs in `spawn_blocking`. An undecodable source falls back to streaming the original bytes; cache writes are best-effort.
 
 ## Versioning & Release
 

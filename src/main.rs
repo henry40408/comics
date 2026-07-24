@@ -68,27 +68,32 @@ const PNG_HEADERS: AssetHeaders = [
 #[command(author, version=VERSION, about, long_about=None)]
 struct Opts {
     /// Username for the login form
-    #[arg(long, env = "AUTH_USERNAME")]
+    #[arg(long, env = "COMICS_AUTH_USERNAME")]
     auth_username: Option<String>,
     /// Hashed password for the login form
-    #[arg(long, env = "AUTH_PASSWORD_HASH")]
+    #[arg(long, env = "COMICS_AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
-    /// `BIND=0.0.0.0:8080` so a reverse proxy can reach it.
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
+    /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
+    #[arg(
+        long,
+        short = 'b',
+        env = "COMICS_BIND",
+        default_value = "127.0.0.1:8080"
+    )]
     bind: String,
     /// Data directory
-    #[arg(long, env = "DATA_DIR", default_value = "./data")]
+    #[arg(long, env = "COMICS_DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
     /// Directory for cached thumbnails (defaults to a "comics-thumbs" dir under the system temp dir)
-    #[arg(long, env = "CACHE_DIR")]
+    #[arg(long, env = "COMICS_CACHE_DIR")]
     cache_dir: Option<PathBuf>,
     /// Log format
-    #[arg(long, env = "LOG_FORMAT", default_value = "full")]
+    #[arg(long, env = "COMICS_LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
     /// Seed to generate hashed IDs
-    #[arg(long, env = "SEED")]
+    #[arg(long, env = "COMICS_SEED")]
     seed: Option<u64>,
     #[command(subcommand)]
     command: Option<Commands>,

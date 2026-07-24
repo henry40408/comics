@@ -24,7 +24,7 @@ Pepper and Carrot 02 - Rainbow Potions (5P)
 fn initial_scan_finished() {
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("SEED", "0")
+        .env("COMICS_SEED", "0")
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
         .assert()
@@ -45,7 +45,7 @@ fn initial_scan_failed() {
     let path = non_exist.to_string_lossy();
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("SEED", "0")
+        .env("COMICS_SEED", "0")
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])
         .assert()

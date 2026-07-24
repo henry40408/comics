@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/comics /comics
 
-ENV BIND=0.0.0.0:8080
+ENV COMICS_BIND=0.0.0.0:8080
 
 EXPOSE 8080
 
