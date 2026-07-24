@@ -24,7 +24,7 @@ Pepper and Carrot 02 - Rainbow Potions (5P)
 fn initial_scan_finished() {
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("SEED", "0")
+        .env("COMICS_SEED", "0")
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
         .assert()
@@ -39,13 +39,31 @@ fn initial_scan_finished() {
 }
 
 #[test]
+fn legacy_env_var_aborts_startup() {
+    // A stale, pre-prefix env var name must fail fast instead of being ignored.
+    // `env_clear` makes the check deterministic regardless of the ambient env.
+    Command::new(cmd::cargo_bin!("comics"))
+        .env_clear()
+        .env("BIND", "127.0.0.1:0")
+        .args(["--data-dir", "fixtures/data"])
+        .assert()
+        .failure()
+        .stdout_eq(str![])
+        .stderr_eq(str![[r"
+Error: these environment variables were renamed with the COMICS_ prefix; rename (or unset) them to continue:
+  BIND -> COMICS_BIND
+
+"]]);
+}
+
+#[test]
 fn initial_scan_failed() {
     let dir = tempdir().unwrap();
     let non_exist = dir.path().join("non_exist");
     let path = non_exist.to_string_lossy();
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("SEED", "0")
+        .env("COMICS_SEED", "0")
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])
         .assert()

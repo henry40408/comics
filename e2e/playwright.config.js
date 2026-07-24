@@ -28,9 +28,9 @@ module.exports = defineConfig({
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,
     env: {
-      AUTH_USERNAME: 'user',
-      AUTH_PASSWORD_HASH: TEST_PASSWORD_HASH,
-      SEED: '1',
+      COMICS_AUTH_USERNAME: 'user',
+      COMICS_AUTH_PASSWORD_HASH: TEST_PASSWORD_HASH,
+      COMICS_SEED: '1',
     },
   },
   projects: [

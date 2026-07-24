@@ -68,27 +68,32 @@ const PNG_HEADERS: AssetHeaders = [
 #[command(author, version=VERSION, about, long_about=None)]
 struct Opts {
     /// Username for the login form
-    #[arg(long, env = "AUTH_USERNAME")]
+    #[arg(long, env = "COMICS_AUTH_USERNAME")]
     auth_username: Option<String>,
     /// Hashed password for the login form
-    #[arg(long, env = "AUTH_PASSWORD_HASH")]
+    #[arg(long, env = "COMICS_AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
-    /// `BIND=0.0.0.0:8080` so a reverse proxy can reach it.
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8080")]
+    /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
+    #[arg(
+        long,
+        short = 'b',
+        env = "COMICS_BIND",
+        default_value = "127.0.0.1:8080"
+    )]
     bind: String,
     /// Data directory
-    #[arg(long, env = "DATA_DIR", default_value = "./data")]
+    #[arg(long, env = "COMICS_DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
     /// Directory for cached thumbnails (defaults to a "comics-thumbs" dir under the system temp dir)
-    #[arg(long, env = "CACHE_DIR")]
+    #[arg(long, env = "COMICS_CACHE_DIR")]
     cache_dir: Option<PathBuf>,
     /// Log format
-    #[arg(long, env = "LOG_FORMAT", default_value = "full")]
+    #[arg(long, env = "COMICS_LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
     /// Seed to generate hashed IDs
-    #[arg(long, env = "SEED")]
+    #[arg(long, env = "COMICS_SEED")]
     seed: Option<u64>,
     #[command(subcommand)]
     command: Option<Commands>,
@@ -313,8 +318,43 @@ fn init_tracing(format: LogFormat) {
     tracing_subscriber::registry().with(layer).init();
 }
 
+/// Configuration environment variables that were renamed to carry the
+/// `COMICS_` prefix, paired with their new names. `NO_COLOR` (an ecosystem-wide
+/// convention) and `GIT_VERSION` (a build-time variable) were intentionally
+/// left unprefixed and are deliberately absent from this list.
+const LEGACY_ENV_VARS: [(&str, &str); 7] = [
+    ("AUTH_USERNAME", "COMICS_AUTH_USERNAME"),
+    ("AUTH_PASSWORD_HASH", "COMICS_AUTH_PASSWORD_HASH"),
+    ("BIND", "COMICS_BIND"),
+    ("DATA_DIR", "COMICS_DATA_DIR"),
+    ("CACHE_DIR", "COMICS_CACHE_DIR"),
+    ("LOG_FORMAT", "COMICS_LOG_FORMAT"),
+    ("SEED", "COMICS_SEED"),
+];
+
+/// Fail fast when a pre-prefix environment variable name is still set, so a
+/// stale deployment configuration surfaces immediately instead of being
+/// silently ignored (the old names are no longer wired to any option).
+fn ensure_no_legacy_env_vars() -> anyhow::Result<()> {
+    let found: Vec<String> = LEGACY_ENV_VARS
+        .iter()
+        .filter(|(old, _)| std::env::var_os(old).is_some())
+        .map(|(old, new)| format!("  {old} -> {new}"))
+        .collect();
+    if !found.is_empty() {
+        bail!(
+            "these environment variables were renamed with the COMICS_ prefix; \
+             rename (or unset) them to continue:\n{}",
+            found.join("\n")
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    ensure_no_legacy_env_vars()?;
+
     let opts = Opts::parse();
     debug!("Parsed options: {opts:?}");
 
