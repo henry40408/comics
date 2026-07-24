@@ -59,3 +59,4 @@ Auth is enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_
 - The Rust toolchain is pinned via `rust-toolchain.toml` (currently `1.96.0`); CI reads the channel from that file (no version is hard-coded in `ci.yml`). There is no separate MSRV — bumping the toolchain is a single edit to `rust-toolchain.toml`.
 - Test fixtures live in `fixtures/data/`; the two fixture books have stable IDs (with `seed=1`) hard-coded in tests.
 - User-facing strings in templates/login are Traditional Chinese (e.g. the login error `帳號或密碼錯誤`).
+- All configuration env vars carry a `COMICS_` prefix (`NO_COLOR` and the build-time `GIT_VERSION` are intentionally unprefixed). `main.rs` fails fast via `ensure_no_legacy_env_vars` if a pre-prefix name (`BIND`, `SEED`, …) is still set — keep the `LEGACY_ENV_VARS` list in sync when adding or renaming a `#[arg(env = …)]`.

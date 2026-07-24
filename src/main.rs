@@ -318,8 +318,43 @@ fn init_tracing(format: LogFormat) {
     tracing_subscriber::registry().with(layer).init();
 }
 
+/// Configuration environment variables that were renamed to carry the
+/// `COMICS_` prefix, paired with their new names. `NO_COLOR` (an ecosystem-wide
+/// convention) and `GIT_VERSION` (a build-time variable) were intentionally
+/// left unprefixed and are deliberately absent from this list.
+const LEGACY_ENV_VARS: [(&str, &str); 7] = [
+    ("AUTH_USERNAME", "COMICS_AUTH_USERNAME"),
+    ("AUTH_PASSWORD_HASH", "COMICS_AUTH_PASSWORD_HASH"),
+    ("BIND", "COMICS_BIND"),
+    ("DATA_DIR", "COMICS_DATA_DIR"),
+    ("CACHE_DIR", "COMICS_CACHE_DIR"),
+    ("LOG_FORMAT", "COMICS_LOG_FORMAT"),
+    ("SEED", "COMICS_SEED"),
+];
+
+/// Fail fast when a pre-prefix environment variable name is still set, so a
+/// stale deployment configuration surfaces immediately instead of being
+/// silently ignored (the old names are no longer wired to any option).
+fn ensure_no_legacy_env_vars() -> anyhow::Result<()> {
+    let found: Vec<String> = LEGACY_ENV_VARS
+        .iter()
+        .filter(|(old, _)| std::env::var_os(old).is_some())
+        .map(|(old, new)| format!("  {old} -> {new}"))
+        .collect();
+    if !found.is_empty() {
+        bail!(
+            "these environment variables were renamed with the COMICS_ prefix; \
+             rename (or unset) them to continue:\n{}",
+            found.join("\n")
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    ensure_no_legacy_env_vars()?;
+
     let opts = Opts::parse();
     debug!("Parsed options: {opts:?}");
 

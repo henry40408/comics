@@ -43,6 +43,12 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
 
+> **Migrating from an older release:** these variables were previously
+> unprefixed (`BIND`, `SEED`, `AUTH_USERNAME`, …). To catch stale configuration,
+> the server **refuses to start** if any of the old names is still set — rename
+> (or unset) them to their `COMICS_`-prefixed equivalents. `NO_COLOR` is
+> unchanged.
+
 ## Quick Start
 
 1. **Getting Started**:
