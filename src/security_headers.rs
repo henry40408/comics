@@ -1,5 +1,13 @@
-use axum::{extract::Request, middleware::Next, response::Response};
+use std::sync::Arc;
+
+use axum::{
+    extract::{Request, State},
+    middleware::Next,
+    response::Response,
+};
 use http::{HeaderValue, header};
+
+use crate::state::AppState;
 
 /// Add `Cache-Control: no-store` (and `Pragma: no-cache` for HTTP/1.0 caches) to
 /// authenticated HTML responses.
@@ -26,6 +34,25 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
     if is_html {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    }
+    res
+}
+
+/// Add `Strict-Transport-Security` when a `max-age` is configured.
+///
+/// Applied as a global outer layer so it also covers `/login`, `/healthz`, and
+/// the assets. Off unless configured: comics does not terminate TLS, so HSTS
+/// properly belongs on the reverse proxy that does, and a browser that has
+/// cached the header will refuse plain HTTP to this host for the whole max-age —
+/// which would make an HTTP-only LAN deployment unreachable with no easy way
+/// back.
+pub async fn hsts_layer(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    if let Some(max_age) = state.hsts_max_age
+        && let Ok(value) = HeaderValue::from_str(&format!("max-age={max_age}"))
+    {
+        res.headers_mut()
+            .insert(header::STRICT_TRANSPORT_SECURITY, value);
     }
     res
 }

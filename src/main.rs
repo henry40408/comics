@@ -33,9 +33,9 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
     FAVICON_SVG, RateLimiter, SessionAuditSalt, VERSION, auth_middleware_fn, csrf_origin_guard,
-    healthz_route, index_route, login_route, login_submit_route, logout_route, no_store_html,
-    parse_session_key, rescan_books_route, scan_books, show_book_route, show_page_route,
-    show_thumb_route, shuffle_book_route, shuffle_route,
+    healthz_route, hsts_layer, index_route, login_route, login_submit_route, logout_route,
+    no_store_html, parse_session_key, rescan_books_route, scan_books, show_book_route,
+    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -92,6 +92,14 @@ struct Opts {
     /// be shared across replicas. Rotating this value is a global logout.
     #[arg(long, env = "COMICS_SESSION_KEY")]
     session_key: Option<String>,
+    /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
+    /// default: HSTS belongs on the TLS-terminating reverse proxy, and a browser
+    /// that has cached the header will refuse plain HTTP to this host for the
+    /// whole max-age — which would make an HTTP-only LAN deployment unreachable
+    /// with no easy way back. Only enable when comics is always reached over
+    /// HTTPS. Suggested value: 63072000 (2 years).
+    #[arg(long, env = "COMICS_HSTS_MAX_AGE")]
+    hsts_max_age: Option<u64>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -217,6 +225,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
         login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
         audit_salt: Arc::new(SessionAuditSalt::generate()),
+        hsts_max_age: opts.hsts_max_age,
     });
 
     let router = Router::new()
@@ -268,6 +277,9 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // auth layer. It is inert for safe methods, so every asset/image/
         // `/healthz` GET passes untouched.
         .layer(middleware::from_fn(csrf_origin_guard))
+        // Global outer layer so HSTS also covers `/login`, `/healthz` and the
+        // assets; inert unless a max-age is configured.
+        .layer(middleware::from_fn_with_state(state.clone(), hsts_layer))
         .with_state(state.clone());
 
     Ok((router, state))
@@ -306,6 +318,14 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
         warn!(
             "session cookie is issued without the Secure attribute; \
              set --cookie-secure (COMICS_COOKIE_SECURE=true) when serving over HTTPS"
+        );
+    }
+    if opts.hsts_max_age.is_some() && !resolve_cookie_secure(opts.cookie_secure) {
+        // The two settings contradict each other: HSTS declares the site
+        // HTTPS-only while the cookie is still sent without `Secure`.
+        warn!(
+            "HSTS is enabled but the session cookie is not marked Secure; \
+             set --cookie-secure (COMICS_COOKIE_SECURE=true) too"
         );
     }
     let version = VERSION;
@@ -887,6 +907,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_login_sets_host_prefixed_cookie_when_secure() {
+        let server = build_auth_server_with(true, &["--cookie-secure"]).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        let session = headers
+            .iter()
+            .find(|h| h.starts_with("__Host-comics_session="))
+            .unwrap_or_else(|| panic!("no __Host- cookie in {headers:?}"));
+        assert!(session.contains("Secure"), "{session}");
+        assert!(session.contains("Path=/"), "{session}");
+        assert!(!session.contains("Domain="), "{session}");
+    }
+
+    #[tokio::test]
+    async fn hsts_absent_by_default() {
+        let server = build_server().await;
+        let res = server.get("/healthz").await;
+        assert!(!res.headers().contains_key("strict-transport-security"));
+    }
+
+    /// HSTS is a global outer layer, so it must be present even on the routes
+    /// that sit outside the auth layer.
+    #[tokio::test]
+    async fn hsts_present_when_configured() {
+        let server = build_auth_server_with(false, &["--hsts-max-age", "63072000"]).await;
+        for path in ["/healthz", "/login", "/assets/app.css"] {
+            let res = server.get(path).await;
+            assert_eq!(
+                "max-age=63072000",
+                res.headers()["strict-transport-security"],
+                "GET {path}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn authenticated_html_is_not_cacheable() {
         let server = build_auth_server(true).await;
         login_response(&server).await;
@@ -1052,6 +1108,20 @@ mod tests {
             "/login",
             res.headers().get("location").unwrap().to_str().unwrap()
         );
+
+        assert_eq!(
+            "\"cache\", \"cookies\", \"storage\"",
+            res.headers()["clear-site-data"]
+        );
+        // The removal cookie must mirror the issued one, or the browser will not
+        // consider them the same cookie.
+        let removal = set_cookie_headers(&res)
+            .into_iter()
+            .find(|h| h.starts_with(&format!("{SESSION_COOKIE}=")))
+            .expect("a removal cookie");
+        assert!(removal.contains("HttpOnly"), "{removal}");
+        assert!(removal.contains("SameSite=Lax"), "{removal}");
+        assert!(removal.contains("Path=/"), "{removal}");
 
         // Session is gone, so the protected page bounces to login again.
         assert_eq!(303, server.get("/").await.status_code());

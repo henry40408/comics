@@ -38,6 +38,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
 | `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
 | `COMICS_SESSION_KEY` | Secret signing the session cookie: 128 hex characters (`openssl rand -hex 64`) | _(random per start)_ |
+| `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
@@ -68,7 +69,17 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > tell whether it is reached over HTTPS behind a reverse proxy — hence the
 > explicit opt-in. Turn it on when the site is always served over HTTPS. Setting
 > it on a plain-HTTP deployment makes browsers silently discard the session
-> cookie, so login will appear to do nothing.
+> cookie, so login will appear to do nothing. Enabling it also renames the cookie
+> to `__Host-comics_session` (the prefix requires `Secure`), so existing sessions
+> are logged out once — in both directions of the switch.
+
+> **`COMICS_HSTS_MAX_AGE`:** prefer configuring HSTS on the reverse proxy that
+> terminates TLS; this flag exists for deployments that cannot. Enable it only
+> when comics is always reached over HTTPS: a browser that has seen the header
+> will refuse plain HTTP to this host for the whole `max-age`, and recovering
+> means clearing the browser's HSTS entry by hand (`chrome://net-internals/#hsts`).
+> `includeSubDomains` and `preload` are deliberately not offered — their blast
+> radius covers the whole domain, so they belong to whoever operates the proxy.
 
 > **Migrating from an older release:** these variables were previously
 > unprefixed (`BIND`, `SEED`, `AUTH_USERNAME`, …). To catch stale configuration,

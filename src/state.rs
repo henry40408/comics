@@ -28,4 +28,6 @@ pub struct AppState {
     pub login_limiter: Arc<RateLimiter>,
     /// Salts session identifiers before they reach the audit log. Never logged.
     pub audit_salt: Arc<SessionAuditSalt>,
+    /// `Strict-Transport-Security` max-age in seconds, when HSTS is enabled.
+    pub hsts_max_age: Option<u64>,
 }

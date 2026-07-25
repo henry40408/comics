@@ -6,16 +6,16 @@ use axum::{
     extract::{ConnectInfo, Query, Request, State},
     response::{Html, IntoResponse, Redirect, Response},
 };
-use cookie::{Cookie, CookieJar, time::Duration};
-use http::{HeaderMap, HeaderValue, StatusCode, header};
+use cookie::CookieJar;
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
 use crate::VERSION;
 use crate::assets::assets_version;
 use crate::auth::{
-    AuthConfig, AuthState, SESSION_COOKIE, authenticate, build_session_cookie, rate_limit_key,
-    session_cookie_nonce, session_nonce_of,
+    AuthConfig, AuthState, authenticate, build_session_cookie, build_session_removal_cookie,
+    rate_limit_key, session_cookie_nonce, session_nonce_of,
 };
 use crate::state::AppState;
 
@@ -116,6 +116,17 @@ fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) -> Option<
     nonce
 }
 
+/// `Clear-Site-Data` is not in `http`'s constant list, so name it here.
+static CLEAR_SITE_DATA: HeaderName = HeaderName::from_static("clear-site-data");
+
+/// The quotes are part of the grammar — each directive is a quoted string — so
+/// they must survive any future tidy-up of this literal.
+///
+/// `"executionContexts"` is deliberately omitted: it forces a reload of the
+/// browsing context, which duplicates and can interfere with the 303 to
+/// `/login` that logout already performs.
+const CLEAR_SITE_DATA_VALUE: &str = "\"cache\", \"cookies\", \"storage\"";
+
 /// The `User-Agent` of a request, for the audit log. Absent or non-ASCII values
 /// become `-` rather than being dropped, so every event has the field.
 fn user_agent(headers: &HeaderMap) -> &str {
@@ -203,14 +214,20 @@ pub async fn logout_route(
         "session destroyed"
     );
 
-    let removal = Cookie::build((SESSION_COOKIE, ""))
-        .path("/")
-        .max_age(Duration::ZERO)
-        .build();
+    let removal = build_session_removal_cookie(state.cookie_secure);
     let mut response = Redirect::to("/login").into_response();
     if let Ok(value) = HeaderValue::from_str(&removal.encoded().to_string()) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
+    // Ask the browser to drop what it already holds for this origin, which is
+    // the client-side half of what the OWASP Logout guidance requires (the
+    // no-store headers only stop new entries from being written). Browsers act
+    // on this only in a secure context, so it is inert on a plain-HTTP LAN
+    // deployment — harmless, just ineffective there.
+    response.headers_mut().insert(
+        CLEAR_SITE_DATA.clone(),
+        HeaderValue::from_static(CLEAR_SITE_DATA_VALUE),
+    );
     response
 }
 
@@ -239,6 +256,7 @@ mod tests {
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
+            hsts_max_age: None,
         })
     }
 

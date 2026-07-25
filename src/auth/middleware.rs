@@ -13,8 +13,29 @@ use super::config::AuthConfig;
 use super::key::hex_lower;
 use crate::state::AppState;
 
-/// Name of the signed session cookie.
+/// Base name of the signed session cookie, without the `__Host-` prefix.
 pub const SESSION_COOKIE: &str = "comics_session";
+/// Name of the session cookie when the `__Host-` prefix applies.
+const SESSION_COOKIE_HOST_PREFIXED: &str = "__Host-comics_session";
+
+/// Cookie name with the `__Host-` prefix applied when it is legal to do so.
+///
+/// The prefix makes the browser itself guarantee the cookie was set by this
+/// exact host, over HTTPS, with `Path=/` and no `Domain` — closing off
+/// subdomain overwrites as a session-fixation vector (RFC 6265bis, quoted by the
+/// OWASP Session Management Cheat Sheet under "Cookie Prefixes").
+///
+/// It is **conditional on `secure`**: a browser rejects a `__Host-`-prefixed
+/// cookie that arrives without `Secure`, so applying it unconditionally would
+/// silently break login on a plain-HTTP LAN deployment — the exact failure mode
+/// the configurable `Secure` exists to avoid.
+pub fn session_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        SESSION_COOKIE_HOST_PREFIXED
+    } else {
+        SESSION_COOKIE
+    }
+}
 /// How long a session stays valid after login.
 const SESSION_TTL_DAYS: i64 = 7;
 /// Length of the session nonce in bytes (128 bits), per OWASP's minimum
@@ -52,12 +73,28 @@ pub fn build_session_cookie(secure: bool) -> Cookie<'static> {
     let nonce: [u8; SESSION_NONCE_BYTES] = rand::random();
     let expires_at = Utc::now().timestamp() + SESSION_TTL_DAYS * 24 * 60 * 60;
     let value = format!("{}.{expires_at}", hex_lower(&nonce));
-    Cookie::build((SESSION_COOKIE, value))
+    Cookie::build((session_cookie_name(secure), value))
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
         .secure(secure)
         .max_age(Duration::days(SESSION_TTL_DAYS))
+        .build()
+}
+
+/// Build the removal counterpart of [`build_session_cookie`].
+///
+/// A browser matches a removal cookie on name + `Path` + `Domain`, and rejects a
+/// `__Host-`-named cookie that is missing `Secure`, so every attribute must
+/// mirror the cookie that was issued. Kept directly below `build_session_cookie`
+/// so any divergence is visible in review.
+pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
+    Cookie::build((session_cookie_name(secure), ""))
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .secure(secure)
+        .max_age(Duration::ZERO)
         .build()
 }
 
@@ -87,7 +124,9 @@ fn session_nonce(value: &str) -> Option<&str> {
 /// identifier — never log it directly, hash it with [`crate::auth::SessionAuditSalt`].
 pub fn session_nonce_of(state: &Arc<AppState>, request: &Request) -> Option<String> {
     let jar = jar_from_request(request);
-    let cookie = jar.signed(&state.key).get(SESSION_COOKIE)?;
+    let cookie = jar
+        .signed(&state.key)
+        .get(session_cookie_name(state.cookie_secure))?;
     session_nonce(cookie.value()).map(str::to_owned)
 }
 
@@ -114,7 +153,13 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
         return AuthState::Public;
     }
     let jar = jar_from_request(request);
-    let Some(cookie) = jar.signed(&state.key).get(SESSION_COOKIE) else {
+    // Exactly one name is accepted, the one the current configuration issues.
+    // Accepting both would let an unprefixed cookie keep working after `Secure`
+    // is enabled, cancelling out the guarantee the prefix buys.
+    let Some(cookie) = jar
+        .signed(&state.key)
+        .get(session_cookie_name(state.cookie_secure))
+    else {
         return AuthState::Unauthenticated;
     };
     match parse_session_value(cookie.value()) {
@@ -185,6 +230,7 @@ mod tests {
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
+            hsts_max_age: None,
         })
     }
 
@@ -248,6 +294,62 @@ mod tests {
     fn build_session_cookie_sets_secure_when_requested() {
         assert_eq!(Some(true), build_session_cookie(true).secure());
         assert_eq!(Some(false), build_session_cookie(false).secure());
+    }
+
+    #[test]
+    fn session_cookie_name_is_prefixed_only_when_secure() {
+        assert_eq!("__Host-comics_session", session_cookie_name(true));
+        assert_eq!("comics_session", session_cookie_name(false));
+    }
+
+    #[test]
+    fn build_session_cookie_uses_the_prefixed_name_when_secure() {
+        assert_eq!("__Host-comics_session", build_session_cookie(true).name());
+        assert_eq!("comics_session", build_session_cookie(false).name());
+    }
+
+    /// Once `Secure` is on, an unprefixed cookie must stop being accepted —
+    /// otherwise the `__Host-` guarantee buys nothing.
+    #[test]
+    fn authenticate_rejects_unprefixed_cookie_when_secure_is_on() {
+        let key = Key::generate();
+        let mut state = create_state(some_auth(), key.clone());
+        Arc::get_mut(&mut state).unwrap().cookie_secure = true;
+
+        let unprefixed = build_session_cookie(false);
+        let mut jar = CookieJar::new();
+        jar.signed_mut(&key).add(unprefixed);
+        let header = jar
+            .get(SESSION_COOKIE)
+            .unwrap()
+            .clone()
+            .stripped()
+            .encoded()
+            .to_string();
+        let request = request_with_cookie(Some(&header));
+        assert!(matches!(
+            authenticate(&state, &request),
+            AuthState::Unauthenticated
+        ));
+    }
+
+    /// The removal cookie only deletes the real one if every matching attribute
+    /// agrees. This test fails the moment `build_session_cookie` gains or
+    /// changes an attribute without the removal path following.
+    #[test]
+    fn removal_cookie_mirrors_the_session_cookie() {
+        for secure in [false, true] {
+            let issued = build_session_cookie(secure);
+            let removal = build_session_removal_cookie(secure);
+            assert_eq!(issued.name(), removal.name(), "secure={secure}");
+            assert_eq!(issued.path(), removal.path(), "secure={secure}");
+            assert_eq!(issued.http_only(), removal.http_only(), "secure={secure}");
+            assert_eq!(issued.same_site(), removal.same_site(), "secure={secure}");
+            assert_eq!(issued.secure(), removal.secure(), "secure={secure}");
+            assert_eq!(issued.domain(), removal.domain(), "secure={secure}");
+            assert_eq!("", removal.value(), "secure={secure}");
+            assert_eq!(Some(Duration::ZERO), removal.max_age(), "secure={secure}");
+        }
     }
 
     #[test]
