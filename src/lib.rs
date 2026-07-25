@@ -5,6 +5,7 @@ pub mod error;
 pub mod handlers;
 pub mod helpers;
 pub mod models;
+pub mod security_headers;
 pub mod state;
 
 pub use assets::{APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, assets_version};
@@ -20,6 +21,7 @@ pub use handlers::{
     shuffle_route,
 };
 pub use models::{Book, BookScan, Page, scan_books};
+pub use security_headers::no_store_html;
 pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");

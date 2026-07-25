@@ -39,7 +39,12 @@ fn jpeg_response(bytes: Vec<u8>) -> Response {
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "image/jpeg"),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            // `private`, not `public`: thumbnails are authenticated content too.
+            // See the note in `handlers/page.rs`.
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
         ],
         bytes,
     )
