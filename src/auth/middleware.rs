@@ -10,7 +10,7 @@ use cookie::{Cookie, CookieJar, SameSite, time::Duration};
 use http::{Method, StatusCode, header};
 
 use super::config::AuthConfig;
-use super::key::hex_lower;
+use crate::secret::hex_lower;
 use crate::state::AppState;
 
 /// Base name of the signed session cookie, without the `__Host-` prefix.

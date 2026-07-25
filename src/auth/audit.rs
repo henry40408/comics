@@ -1,6 +1,6 @@
 use sha2::{Digest as _, Sha256};
 
-use super::key::hex_lower;
+use crate::secret::hex_lower;
 
 /// Bytes of the per-process salt.
 const SALT_BYTES: usize = 16;

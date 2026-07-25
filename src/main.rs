@@ -1,11 +1,4 @@
-use std::{
-    io::Write as _,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    thread,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
 use anyhow::bail;
 use axum::{
@@ -13,7 +6,6 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Parser, Subcommand, ValueEnum};
-use cookie::Key;
 use http::header;
 use parking_lot::RwLock;
 use tokio::{
@@ -32,10 +24,10 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, RateLimiter, SessionAuditSalt, VERSION, auth_middleware_fn, csrf_origin_guard,
-    healthz_route, hsts_layer, index_route, login_route, login_submit_route, logout_route,
-    no_store_html, parse_session_key, rescan_books_route, scan_books, show_book_route,
-    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
+    FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt, VERSION, auth_middleware_fn,
+    csrf_origin_guard, healthz_route, hsts_layer, index_route, login_route, login_submit_route,
+    logout_route, no_store_html, rescan_books_route, scan_books, show_book_route, show_page_route,
+    show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -86,12 +78,14 @@ struct Opts {
         default_missing_value = "true"
     )]
     cookie_secure: Option<bool>,
-    /// Secret used to sign session cookies: 128 hex characters (64 bytes).
-    /// Generate one with `openssl rand -hex 64`. When unset a random key is
-    /// generated at startup, which logs every session out on restart and cannot
-    /// be shared across replicas. Rotating this value is a global logout.
-    #[arg(long, env = "COMICS_SESSION_KEY")]
-    session_key: Option<String>,
+    /// The one secret comics is configured with: at least 64 hex characters
+    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session cookie
+    /// signing key and the salt for hashed book/page IDs are derived from it.
+    /// When unset a random secret is generated at startup, which logs every
+    /// session out and reshuffles every URL on restart, and cannot be shared
+    /// across replicas. Rotating it is a global logout *and* changes every URL.
+    #[arg(long, env = "COMICS_SECRET")]
+    secret: Option<Secret>,
     /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
     /// default: HSTS belongs on the TLS-terminating reverse proxy, and a browser
     /// that has cached the header will refuse plain HTTP to this host for the
@@ -119,9 +113,6 @@ struct Opts {
     /// Log format
     #[arg(long, env = "COMICS_LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
-    /// Seed to generate hashed IDs
-    #[arg(long, env = "COMICS_SEED")]
-    seed: Option<u64>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -181,28 +172,20 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
     });
 }
 
-fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
+fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
     let data_dir = &opts.data_dir;
 
-    let key = if let Some(raw) = opts.session_key.as_deref() {
-        parse_session_key(raw)?
-    } else {
+    let secret = opts.secret.clone().unwrap_or_else(|| {
         warn!(
-            "no --session-key provided; generating a random one — all sessions \
-             will be invalidated on restart. Generate a persistent key with \
-             `openssl rand -hex 64` and set COMICS_SESSION_KEY."
+            "no --secret provided; generating a random one — every session will \
+             be invalidated and every book/page URL will change on restart. \
+             Generate a persistent secret with `openssl rand -hex 32` and set \
+             COMICS_SECRET."
         );
-        Key::generate()
-    };
-
-    let seed = opts.seed.unwrap_or_else(|| {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        warn!(%seed, "no seed provided, use seconds since UNIX epoch as seed");
-        seed
+        Secret::generate()
     });
+    let key = secret.session_key();
+    let seed = secret.id_seed();
     let state = Arc::new(AppState {
         auth_config: match (opts.auth_username.clone(), opts.auth_password_hash.clone()) {
             (Some(u), Some(p)) => AuthConfig::Some {
@@ -282,7 +265,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         .layer(middleware::from_fn_with_state(state.clone(), hsts_layer))
         .with_state(state.clone());
 
-    Ok((router, state))
+    (router, state)
 }
 
 async fn shutdown_signal() {
@@ -311,7 +294,7 @@ async fn shutdown_signal() {
 
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
-    let (app, state) = init_route(opts)?;
+    let (app, state) = init_route(opts);
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
         warn!("no authorization enabled, server is publicly accessible");
     } else if !resolve_cookie_secure(opts.cookie_secure) {
@@ -395,23 +378,32 @@ fn init_tracing(format: LogFormat) {
     tracing_subscriber::registry().with(layer).init();
 }
 
-/// Configuration environment variables that were renamed to carry the
-/// `COMICS_` prefix, paired with their new names. `NO_COLOR` (an ecosystem-wide
+/// Configuration environment variables that no longer exist, paired with the
+/// name that replaced them. Most were renamed to carry the `COMICS_` prefix;
+/// `COMICS_SEED` and `COMICS_SESSION_KEY` were folded into the single
+/// `COMICS_SECRET` both are now derived from. `NO_COLOR` (an ecosystem-wide
 /// convention) and `GIT_VERSION` (a build-time variable) were intentionally
 /// left unprefixed and are deliberately absent from this list.
-const LEGACY_ENV_VARS: [(&str, &str); 7] = [
+const LEGACY_ENV_VARS: [(&str, &str); 9] = [
     ("AUTH_USERNAME", "COMICS_AUTH_USERNAME"),
     ("AUTH_PASSWORD_HASH", "COMICS_AUTH_PASSWORD_HASH"),
     ("BIND", "COMICS_BIND"),
     ("DATA_DIR", "COMICS_DATA_DIR"),
     ("CACHE_DIR", "COMICS_CACHE_DIR"),
     ("LOG_FORMAT", "COMICS_LOG_FORMAT"),
-    ("SEED", "COMICS_SEED"),
+    ("SEED", "COMICS_SECRET"),
+    ("COMICS_SEED", "COMICS_SECRET"),
+    ("COMICS_SESSION_KEY", "COMICS_SECRET"),
 ];
 
-/// Fail fast when a pre-prefix environment variable name is still set, so a
-/// stale deployment configuration surfaces immediately instead of being
-/// silently ignored (the old names are no longer wired to any option).
+/// Fail fast when a retired environment variable name is still set, so a stale
+/// deployment configuration surfaces immediately instead of being silently
+/// ignored (the old names are no longer wired to any option).
+///
+/// This matters most for the two folded into `COMICS_SECRET`: ignoring a
+/// leftover `COMICS_SESSION_KEY` would quietly generate a random secret
+/// instead, logging everyone out on every restart while the operator's
+/// configuration still looks correct.
 fn ensure_no_legacy_env_vars() -> anyhow::Result<()> {
     let found: Vec<String> = LEGACY_ENV_VARS
         .iter()
@@ -420,7 +412,7 @@ fn ensure_no_legacy_env_vars() -> anyhow::Result<()> {
         .collect();
     if !found.is_empty() {
         bail!(
-            "these environment variables were renamed with the COMICS_ prefix; \
+            "these environment variables no longer exist; \
              rename (or unset) them to continue:\n{}",
             found.join("\n")
         );
@@ -474,11 +466,18 @@ mod tests {
     use comics::{BCRYPT_COST, VERSION};
     use tokio::sync::oneshot;
 
+    /// Fixed secret so the derived ID seed — and therefore the URLs below — are
+    /// stable across runs. Any 64 hex characters will do.
+    const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// Book IDs under `TEST_SECRET`. Recompute them whenever the secret or the
+    /// derivation changes: `comics --secret <TEST_SECRET> --data-dir
+    /// fixtures/data` and read the `/book/…` hrefs off the index page.
     const DATA_IDS: [&str; 2] = [
         // Pepper and Carrot 01 - Potion of Flight
-        "cc95bc12d8d64a8a",
+        "1f1c111677715adf",
         // Pepper and Carrot 02 - Rainbow Potions
-        "cdada1cf3b5d0696",
+        "b8799902927c8bf6",
     ];
 
     async fn build_server() -> TestServer {
@@ -490,8 +489,10 @@ mod tests {
 
         let (tx, _) = oneshot::channel::<()>();
         let mut opts = Opts::parse_from(["comics", "--data-dir", data_dir]);
-        opts.seed = Some(1);
-        let (router, state) = init_route(&opts).unwrap();
+        // Only when the caller did not pass `--secret` itself.
+        opts.secret
+            .get_or_insert_with(|| TEST_SECRET.parse().unwrap());
+        let (router, state) = init_route(&opts);
         spawn_initial_scan(state, tx);
 
         let server =
@@ -772,8 +773,10 @@ mod tests {
         ];
         args.extend_from_slice(extra_args);
         let mut opts = Opts::parse_from(args);
-        opts.seed = Some(1);
-        let (router, state) = init_route(&opts).unwrap();
+        // Only when the caller did not pass `--secret` itself.
+        opts.secret
+            .get_or_insert_with(|| TEST_SECRET.parse().unwrap());
+        let (router, state) = init_route(&opts);
         spawn_initial_scan(state, tx);
 
         let mut server =
@@ -1008,16 +1011,18 @@ mod tests {
     /// issued by one server is accepted by the next. This is what stops a
     /// restart (or a container update) from logging everyone out.
     #[tokio::test]
-    async fn session_key_survives_router_rebuild() {
-        const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\
-                           0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    async fn secret_survives_router_rebuild() {
+        // Deliberately not TEST_SECRET: the flag, not the helper default, has to
+        // be what makes the two routers agree.
+        const SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\
+                              fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
-        let first = build_auth_server_with(true, &["--session-key", KEY]).await;
+        let first = build_auth_server_with(true, &["--secret", SECRET]).await;
         let res = login_response(&first).await;
         assert_eq!(303, res.status_code());
         let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
 
-        let second = build_auth_server_with(false, &["--session-key", KEY]).await;
+        let second = build_auth_server_with(false, &["--secret", SECRET]).await;
         let res = second.get("/").add_cookie(cookie).await;
         assert_eq!(200, res.status_code());
     }

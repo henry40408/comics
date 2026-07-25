@@ -24,13 +24,15 @@ Pepper and Carrot 02 - Rainbow Potions (5P)
 fn initial_scan_finished() {
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("COMICS_SEED", "0")
+        .env(
+            "COMICS_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
         .assert()
         .interrupted()
         .stdout_eq(str![[r"
-[..]  WARN comics: no --session-key provided; generating a random one — all sessions will be invalidated on restart. Generate a persistent key with `openssl rand -hex 64` and set COMICS_SESSION_KEY.
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
 [..]  INFO comics: initial scan finished books=2 pages=8 duration_ms=[..]
@@ -51,8 +53,30 @@ fn legacy_env_var_aborts_startup() {
         .failure()
         .stdout_eq(str![])
         .stderr_eq(str![[r"
-Error: these environment variables were renamed with the COMICS_ prefix; rename (or unset) them to continue:
+Error: these environment variables no longer exist; rename (or unset) them to continue:
   BIND -> COMICS_BIND
+
+"]]);
+}
+
+#[test]
+fn folded_env_vars_abort_startup() {
+    // COMICS_SEED and COMICS_SESSION_KEY were folded into COMICS_SECRET.
+    // Ignoring a leftover one would silently fall back to a random secret,
+    // logging everyone out and reshuffling every URL on each restart while the
+    // deployment's configuration still looked correct.
+    Command::new(cmd::cargo_bin!("comics"))
+        .env_clear()
+        .env("COMICS_SEED", "1")
+        .env("COMICS_SESSION_KEY", "0123456789abcdef")
+        .args(["--data-dir", "fixtures/data"])
+        .assert()
+        .failure()
+        .stdout_eq(str![])
+        .stderr_eq(str![[r"
+Error: these environment variables no longer exist; rename (or unset) them to continue:
+  COMICS_SEED -> COMICS_SECRET
+  COMICS_SESSION_KEY -> COMICS_SECRET
 
 "]]);
 }
@@ -64,13 +88,15 @@ fn initial_scan_failed() {
     let path = non_exist.to_string_lossy();
     Command::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
-        .env("COMICS_SEED", "0")
+        .env(
+            "COMICS_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])
         .assert()
         .success()
         .stdout_eq(str![[r"
-[..]  WARN comics: no --session-key provided; generating a random one — all sessions will be invalidated on restart. Generate a persistent key with `openssl rand -hex 64` and set COMICS_SESSION_KEY.
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=[..] version=[..]
 [..] ERROR comics: initial scan failed err=No such file or directory (os error 2)
