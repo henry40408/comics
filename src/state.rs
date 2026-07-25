@@ -21,4 +21,6 @@ pub struct AppState {
     pub cache_dir: PathBuf,
     /// Bounds concurrent thumbnail generation (CPU-bound decode + resize).
     pub thumb_sem: Arc<Semaphore>,
+    /// Whether the session cookie is issued with the `Secure` attribute.
+    pub cookie_secure: bool,
 }

@@ -31,12 +31,18 @@ pub enum AuthState {
 /// timestamp at which it expires. The signature (added by the caller's
 /// [`cookie::SignedJar`]) makes the value unforgeable; the timestamp lets the
 /// server enforce expiry independently of the browser.
-pub fn build_session_cookie() -> Cookie<'static> {
+///
+/// `secure` comes from the `--cookie-secure` option rather than being hardcoded:
+/// a browser silently discards a `Secure` cookie delivered over plain HTTP, so
+/// forcing it on would lock plain-HTTP LAN deployments out of the login form
+/// with no visible error.
+pub fn build_session_cookie(secure: bool) -> Cookie<'static> {
     let expires_at = Utc::now().timestamp() + SESSION_TTL_DAYS * 24 * 60 * 60;
     Cookie::build((SESSION_COOKIE, expires_at.to_string()))
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure)
         .max_age(Duration::days(SESSION_TTL_DAYS))
         .build()
 }
@@ -127,6 +133,7 @@ mod tests {
             seed: 0,
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
+            cookie_secure: false,
         })
     }
 
@@ -178,12 +185,18 @@ mod tests {
     fn authenticate_authenticated_with_valid_cookie() {
         let key = Key::generate();
         let state = create_state(some_auth(), key.clone());
-        let header = signed_header(&key, build_session_cookie());
+        let header = signed_header(&key, build_session_cookie(false));
         let request = request_with_cookie(Some(&header));
         assert!(matches!(
             authenticate(&state, &request),
             AuthState::Authenticated
         ));
+    }
+
+    #[test]
+    fn build_session_cookie_sets_secure_when_requested() {
+        assert_eq!(Some(true), build_session_cookie(true).secure());
+        assert_eq!(Some(false), build_session_cookie(false).secure());
     }
 
     #[test]
@@ -217,7 +230,7 @@ mod tests {
     fn authenticate_unauthenticated_with_cookie_signed_by_other_key() {
         let state = create_state(some_auth(), Key::generate());
         let other_key = Key::generate();
-        let header = signed_header(&other_key, build_session_cookie());
+        let header = signed_header(&other_key, build_session_cookie(false));
         let request = request_with_cookie(Some(&header));
         assert!(matches!(
             authenticate(&state, &request),

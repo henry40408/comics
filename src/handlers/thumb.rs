@@ -138,6 +138,7 @@ mod tests {
             seed: 0,
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(Semaphore::new(1)),
+            cookie_secure: false,
         })
     }
 

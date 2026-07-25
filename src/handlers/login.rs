@@ -91,7 +91,8 @@ fn render_login(error: bool, next: &str) -> Response {
 /// Attach a freshly-signed session cookie to a response.
 fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) {
     let mut jar = CookieJar::new();
-    jar.signed_mut(&state.key).add(build_session_cookie());
+    jar.signed_mut(&state.key)
+        .add(build_session_cookie(state.cookie_secure));
     for cookie in jar.delta() {
         if let Ok(value) = HeaderValue::from_str(&cookie.encoded().to_string()) {
             response.headers_mut().append(header::SET_COOKIE, value);

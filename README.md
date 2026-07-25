@@ -36,12 +36,19 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | --- | --- | --- |
 | `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
 | `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
+| `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `COMICS_LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
+
+> **`COMICS_COOKIE_SECURE`:** comics never terminates TLS itself, so it cannot
+> tell whether it is reached over HTTPS behind a reverse proxy — hence the
+> explicit opt-in. Turn it on when the site is always served over HTTPS. Setting
+> it on a plain-HTTP deployment makes browsers silently discard the session
+> cookie, so login will appear to do nothing.
 
 > **Migrating from an older release:** these variables were previously
 > unprefixed (`BIND`, `SEED`, `AUTH_USERNAME`, …). To catch stale configuration,

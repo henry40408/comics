@@ -73,6 +73,18 @@ struct Opts {
     /// Hashed password for the login form
     #[arg(long, env = "COMICS_AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
+    /// Send the session cookie with the `Secure` attribute (HTTPS only).
+    /// Defaults to off: comics never terminates TLS itself, so it cannot detect
+    /// HTTPS behind a reverse proxy, and a browser silently discards a `Secure`
+    /// cookie delivered over plain HTTP — defaulting it on would lock plain-HTTP
+    /// LAN deployments out of the login form with no visible error.
+    #[arg(
+        long,
+        env = "COMICS_COOKIE_SECURE",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    cookie_secure: Option<bool>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -116,6 +128,13 @@ enum Commands {
     /// List books
     #[command(alias = "ls")]
     List {},
+}
+
+/// Whether the session cookie carries `Secure`. comics never terminates TLS, so
+/// there is no runtime signal to infer from and no declared public URL — the
+/// explicit flag is the only input.
+fn resolve_cookie_secure(override_value: Option<bool>) -> bool {
+    override_value.unwrap_or(false)
 }
 
 fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
@@ -174,6 +193,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         thumb_sem: Arc::new(Semaphore::new(
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
+        cookie_secure: resolve_cookie_secure(opts.cookie_secure),
     });
 
     let router = Router::new()
@@ -256,6 +276,11 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (app, state) = init_route(opts)?;
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
         warn!("no authorization enabled, server is publicly accessible");
+    } else if !resolve_cookie_secure(opts.cookie_secure) {
+        warn!(
+            "session cookie is issued without the Secure attribute; \
+             set --cookie-secure (COMICS_COOKIE_SECURE=true) when serving over HTTPS"
+        );
     }
     let version = VERSION;
     let listener = TcpListener::bind(&addr).await?;
@@ -391,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Opts, init_route, spawn_initial_scan};
+    use crate::{Opts, init_route, resolve_cookie_secure, spawn_initial_scan};
     use axum_test::TestServer;
     use clap::Parser as _;
     use comics::{BCRYPT_COST, VERSION};
@@ -673,18 +698,27 @@ mod tests {
     /// Build a server with credentials configured. When `save_cookies` is set,
     /// the test client persists cookies across requests like a browser would.
     async fn build_auth_server(save_cookies: bool) -> TestServer {
+        build_auth_server_with(save_cookies, &[]).await
+    }
+
+    /// Like [`build_auth_server`], with `extra_args` appended to the CLI so a
+    /// test can flip a single option (e.g. `--cookie-secure`).
+    async fn build_auth_server_with(save_cookies: bool, extra_args: &[&str]) -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut opts = Opts::parse_from([
+        let hash = bcrypt::hash("password", BCRYPT_COST).unwrap();
+        let mut args = vec![
             "comics",
             "--data-dir",
             "./fixtures/data",
             "--auth-username",
             "user",
             "--auth-password-hash",
-            &bcrypt::hash("password", BCRYPT_COST).unwrap(),
-        ]);
+            &hash,
+        ];
+        args.extend_from_slice(extra_args);
+        let mut opts = Opts::parse_from(args);
         opts.seed = Some(1);
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
@@ -749,6 +783,61 @@ mod tests {
         let res = server.get("/").await;
         assert_eq!(200, res.status_code());
         assert!(res.text().contains("2 book(s)"));
+    }
+
+    /// Collect the raw `Set-Cookie` header values. `maybe_cookie` parses the
+    /// cookie and drops its attributes, so attribute assertions have to read the
+    /// header verbatim.
+    fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
+        res.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    async fn login_response(server: &TestServer) -> axum_test::TestResponse {
+        server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await
+    }
+
+    #[test]
+    fn cookie_secure_defaults_to_off() {
+        assert!(!resolve_cookie_secure(None));
+        assert!(!resolve_cookie_secure(Some(false)));
+    }
+
+    #[test]
+    fn cookie_secure_override_wins() {
+        assert!(resolve_cookie_secure(Some(true)));
+    }
+
+    #[tokio::test]
+    async fn auth_login_cookie_has_secure_when_enabled() {
+        let server = build_auth_server_with(true, &["--cookie-secure"]).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        assert!(
+            headers.iter().any(|h| h.contains("Secure")),
+            "expected a Secure attribute in {headers:?}"
+        );
+    }
+
+    /// The default must stay attribute-free so plain-HTTP LAN deployments keep
+    /// working — a browser silently drops a `Secure` cookie sent over HTTP.
+    #[tokio::test]
+    async fn auth_login_cookie_has_no_secure_by_default() {
+        let server = build_auth_server(true).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        assert!(!headers.is_empty());
+        assert!(
+            !headers.iter().any(|h| h.contains("Secure")),
+            "unexpected Secure attribute in {headers:?}"
+        );
     }
 
     #[tokio::test]
