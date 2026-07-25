@@ -59,11 +59,16 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > username or password). If you would rather not record IP and `User-Agent`, drop
 > the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
 
-> **Login throttling:** `POST /login` allows 5 attempts per client IP per 60
-> seconds; further attempts get `429` until the window passes. Behind a reverse
-> proxy that is *not* on loopback, every request appears to come from the proxy
-> and therefore shares one bucket — safe for a single-account service, but a
-> burst of failed logins locks the form for a minute.
+> **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
+> per 60 seconds; further attempts get `429` until the window passes. A
+> successful login costs nothing. `X-Forwarded-For` is trusted only when the
+> connection itself comes from loopback (comics on the same host or in the same
+> compose stack as the proxy), and only its last entry — the hop the proxy
+> appended. Behind a reverse proxy that is *not* on loopback, every request
+> appears to come from the proxy and therefore shares one bucket — safe for a
+> single-account service, but a burst of failed logins locks the form for a
+> minute. If your proxy is chained behind another one, the last entry is the
+> inner proxy rather than the client, and the same shared-bucket caveat applies.
 
 > **`COMICS_COOKIE_SECURE`:** comics never terminates TLS itself, so it cannot
 > tell whether it is reached over HTTPS behind a reverse proxy — hence the

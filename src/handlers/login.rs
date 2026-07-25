@@ -167,21 +167,23 @@ pub async fn login_submit_route(
 ) -> Response {
     let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
     let user_agent = user_agent(&headers);
-    if !state.login_limiter.check(ip) {
-        warn!(%ip, "login rate limited");
+    if !state.login_limiter.try_acquire(ip) {
+        warn!(
+            event = "login_rate_limited",
+            %ip, user_agent, "login rate limited"
+        );
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
-        // Only failures count against the window. The control exists to stop
-        // password guessing, and a legitimate user who signs in repeatedly (new
-        // device, cleared cookies, a test suite) should not be locked out by it;
-        // an attacker's every attempt is a failure, so their budget is unchanged.
-        state.login_limiter.record(ip);
         // Deliberately no username or password in the event: a failed login is
         // exactly where a mistyped password lands in the log otherwise.
         warn!(event = "login_failed", %ip, user_agent, "login failed");
         return render_login(true, &form.next);
     }
+    // The reservation is taken before the ~100 ms bcrypt comparison so that
+    // concurrent guesses cannot all slip past a stale count; only failures keep
+    // it, so signing in repeatedly never exhausts the window.
+    state.login_limiter.release(ip);
     let mut response = Redirect::to(&safe_next(&form.next)).into_response();
     let session = set_session_cookie(&mut response, &state).map_or_else(
         || "-".to_string(),
