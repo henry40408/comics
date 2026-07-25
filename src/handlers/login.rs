@@ -9,12 +9,13 @@ use axum::{
 use cookie::{Cookie, CookieJar, time::Duration};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::VERSION;
 use crate::assets::assets_version;
 use crate::auth::{
     AuthConfig, AuthState, SESSION_COOKIE, authenticate, build_session_cookie, rate_limit_key,
+    session_cookie_nonce, session_nonce_of,
 };
 use crate::state::AppState;
 
@@ -90,16 +91,28 @@ fn render_login(error: bool, next: &str) -> Response {
     }
 }
 
-/// Attach a freshly-signed session cookie to a response.
-fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) {
+/// Attach a freshly-signed session cookie to a response, returning the nonce it
+/// carries so the caller can record a fingerprint of it in the audit log.
+fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) -> Option<String> {
+    let cookie = build_session_cookie(state.cookie_secure);
+    let nonce = session_cookie_nonce(&cookie);
     let mut jar = CookieJar::new();
-    jar.signed_mut(&state.key)
-        .add(build_session_cookie(state.cookie_secure));
+    jar.signed_mut(&state.key).add(cookie);
     for cookie in jar.delta() {
         if let Ok(value) = HeaderValue::from_str(&cookie.encoded().to_string()) {
             response.headers_mut().append(header::SET_COOKIE, value);
         }
     }
+    nonce
+}
+
+/// The `User-Agent` of a request, for the audit log. Absent or non-ASCII values
+/// become `-` rather than being dropped, so every event has the field.
+fn user_agent(headers: &HeaderMap) -> &str {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-")
 }
 
 /// `GET /login` — render the login form. Skips it (redirecting home) when auth
@@ -131,21 +144,50 @@ pub async fn login_submit_route(
     Form(form): Form<LoginForm>,
 ) -> Response {
     let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
+    let user_agent = user_agent(&headers);
     if !state.login_limiter.check(ip) {
         warn!(%ip, "login rate limited");
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     state.login_limiter.record(ip);
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
+        // Deliberately no username or password in the event: a failed login is
+        // exactly where a mistyped password lands in the log otherwise.
+        warn!(event = "login_failed", %ip, user_agent, "login failed");
         return render_login(true, &form.next);
     }
     let mut response = Redirect::to(&safe_next(&form.next)).into_response();
-    set_session_cookie(&mut response, &state);
+    let session = set_session_cookie(&mut response, &state).map_or_else(
+        || "-".to_string(),
+        |nonce| state.audit_salt.fingerprint(&nonce),
+    );
+    info!(
+        event = "session_created",
+        session, %ip, user_agent, "session created"
+    );
     response
 }
 
 /// `POST /logout` — clear the session cookie and return to the login form.
-pub async fn logout_route() -> Response {
+pub async fn logout_route(
+    State(state): State<Arc<AppState>>,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
+    request: Request,
+) -> Response {
+    let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
+    let session = session_nonce_of(&state, &request).map_or_else(
+        || "-".to_string(),
+        |nonce| state.audit_salt.fingerprint(&nonce),
+    );
+    info!(
+        event = "session_destroyed",
+        session,
+        %ip,
+        user_agent = user_agent(&headers),
+        "session destroyed"
+    );
+
     let removal = Cookie::build((SESSION_COOKIE, ""))
         .path("/")
         .max_age(Duration::ZERO)
@@ -160,12 +202,128 @@ pub async fn logout_route() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parking_lot::{Mutex, RwLock};
+    use std::path::PathBuf;
 
     fn some_auth() -> AuthConfig {
         AuthConfig::Some {
             username: "alice".to_string(),
             password_hash: bcrypt::hash("s3cret", 4).unwrap(),
         }
+    }
+
+    fn test_state() -> Arc<AppState> {
+        Arc::new(AppState {
+            auth_config: some_auth(),
+            key: cookie::Key::generate(),
+            data_dir: PathBuf::from("/tmp"),
+            scan: Arc::new(RwLock::new(None)),
+            seed: 0,
+            cache_dir: PathBuf::from("/tmp"),
+            thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
+            cookie_secure: false,
+            login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
+            audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
+        })
+    }
+
+    /// A `MakeWriter` collecting everything the subscriber emits.
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The nonce a `Set-Cookie` header carries: the 32 hex characters preceding
+    /// the `.` separator, after the jar's signature prefix.
+    fn nonce_from_set_cookie(header: &str) -> String {
+        let dot = header.find('.').expect("nonce.expiry separator");
+        header[dot - 32..dot].to_string()
+    }
+
+    /// OWASP is explicit that a session identifier must never be logged in
+    /// cleartext — only a salted hash of it. The handler is called directly so
+    /// the thread-local subscriber sees its events.
+    #[tokio::test]
+    async fn session_events_do_not_leak_the_cookie_value() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let state = test_state();
+        let response = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            Form(LoginForm {
+                username: "alice".to_string(),
+                password: "s3cret".to_string(),
+                next: "/".to_string(),
+            }),
+        )
+        .await;
+
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("a session cookie")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let nonce = nonce_from_set_cookie(&set_cookie);
+
+        let logs = String::from_utf8(capture.0.lock().clone()).unwrap();
+        assert!(logs.contains("session_created"), "{logs}");
+        assert!(
+            logs.contains(&state.audit_salt.fingerprint(&nonce)),
+            "expected the fingerprint in {logs}"
+        );
+        assert!(!logs.contains(&nonce), "nonce leaked into {logs}");
+    }
+
+    #[tokio::test]
+    async fn failed_login_logs_no_credentials() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let response = login_submit_route(
+            State(test_state()),
+            None,
+            HeaderMap::new(),
+            Form(LoginForm {
+                username: "alice".to_string(),
+                password: "hunter2".to_string(),
+                next: "/".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(StatusCode::UNAUTHORIZED, response.status());
+
+        let logs = String::from_utf8(capture.0.lock().clone()).unwrap();
+        assert!(logs.contains("login_failed"), "{logs}");
+        assert!(!logs.contains("hunter2"), "password leaked into {logs}");
+        assert!(!logs.contains("alice"), "username leaked into {logs}");
     }
 
     #[test]

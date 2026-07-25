@@ -52,6 +52,12 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > shared across replicas. Rotating the value is a global logout; anyone holding
 > it can forge a session.
 
+> **Audit logging:** logins, logouts, failed logins and throttled attempts are
+> logged with the client IP and `User-Agent` (and, for sessions, a salted hash of
+> the session identifier — never the identifier itself, and never the submitted
+> username or password). If you would rather not record IP and `User-Agent`, drop
+> the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
+
 > **Login throttling:** `POST /login` allows 5 attempts per client IP per 60
 > seconds; further attempts get `429` until the window passes. Behind a reverse
 > proxy that is *not* on loopback, every request appears to come from the proxy

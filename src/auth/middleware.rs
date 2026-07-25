@@ -68,11 +68,32 @@ pub fn build_session_cookie(secure: bool) -> Cookie<'static> {
 /// upgrading logs existing sessions out once rather than silently keeping a
 /// value that violates the OWASP session-ID properties.
 fn parse_session_value(value: &str) -> Option<i64> {
-    let (nonce, expires_at) = value.split_once('.')?;
-    if nonce.len() != SESSION_NONCE_BYTES * 2 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
+    session_nonce(value)?;
+    let (_, expires_at) = value.split_once('.')?;
     expires_at.parse::<i64>().ok()
+}
+
+/// The nonce half of a session value, when the value is well-formed.
+fn session_nonce(value: &str) -> Option<&str> {
+    let (nonce, _) = value.split_once('.')?;
+    (nonce.len() == SESSION_NONCE_BYTES * 2 && nonce.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then_some(nonce)
+}
+
+/// The nonce of the request's signed session cookie, if it carries a valid one.
+///
+/// Exposed so the audit log can fingerprint a session on logout without the
+/// handler having to know about jars or signatures. The nonce is a session
+/// identifier — never log it directly, hash it with [`crate::auth::SessionAuditSalt`].
+pub fn session_nonce_of(state: &Arc<AppState>, request: &Request) -> Option<String> {
+    let jar = jar_from_request(request);
+    let cookie = jar.signed(&state.key).get(SESSION_COOKIE)?;
+    session_nonce(cookie.value()).map(str::to_owned)
+}
+
+/// The nonce a freshly built session cookie carries, for the audit log.
+pub fn session_cookie_nonce(cookie: &Cookie<'static>) -> Option<String> {
+    session_nonce(cookie.value()).map(str::to_owned)
 }
 
 /// Parse the request's `Cookie` header into a jar.
@@ -163,6 +184,7 @@ mod tests {
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
+            audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
         })
     }
 

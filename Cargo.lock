@@ -449,6 +449,7 @@ dependencies = [
  "rayon",
  "rpassword",
  "serde",
+ "sha2",
  "snapbox",
  "tempfile",
  "time",

@@ -58,6 +58,7 @@ mod tests {
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
+            audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
         })
     }
 

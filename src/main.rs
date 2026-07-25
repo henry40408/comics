@@ -32,8 +32,8 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, RateLimiter, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route,
-    index_route, login_route, login_submit_route, logout_route, parse_session_key,
+    FAVICON_SVG, RateLimiter, SessionAuditSalt, VERSION, auth_middleware_fn, csrf_origin_guard,
+    healthz_route, index_route, login_route, login_submit_route, logout_route, parse_session_key,
     rescan_books_route, scan_books, show_book_route, show_page_route, show_thumb_route,
     shuffle_book_route, shuffle_route,
 };
@@ -216,6 +216,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         )),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
         login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
+        audit_salt: Arc::new(SessionAuditSalt::generate()),
     });
 
     let router = Router::new()
