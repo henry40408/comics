@@ -26,10 +26,7 @@ fn initial_scan_finished() {
         .env("NO_COLOR", "true")
         .env(
             "COMICS_SECRET",
-            concat!(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
@@ -93,10 +90,7 @@ fn initial_scan_failed() {
         .env("NO_COLOR", "true")
         .env(
             "COMICS_SECRET",
-            concat!(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )
         .timeout(Duration::from_secs(1))
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])

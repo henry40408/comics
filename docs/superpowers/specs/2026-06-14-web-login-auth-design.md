@@ -102,7 +102,7 @@ real session store.
 ## Revision (unified secret): `COMICS_SESSION_KEY` → `COMICS_SECRET`
 
 `COMICS_SESSION_KEY` no longer exists. It and `COMICS_SEED` were folded into a
-single `COMICS_SECRET` (still 128 hex characters), from which the signing key
+single `COMICS_SECRET` (at least 64 hex characters), from which the signing key
 and the ID seed are derived through separate domain-separated hashes
 (`secret.rs`). Everything the revision above says about the key still holds —
 read `COMICS_SECRET` wherever it says `COMICS_SESSION_KEY`, including "rotating

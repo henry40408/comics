@@ -78,8 +78,8 @@ struct Opts {
         default_missing_value = "true"
     )]
     cookie_secure: Option<bool>,
-    /// The one secret comics is configured with: 128 hex characters (64 bytes).
-    /// Generate one with `openssl rand -hex 64`. Both the session cookie
+    /// The one secret comics is configured with: at least 64 hex characters
+    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session cookie
     /// signing key and the salt for hashed book/page IDs are derived from it.
     /// When unset a random secret is generated at startup, which logs every
     /// session out and reshuffles every URL on restart, and cannot be shared
@@ -179,7 +179,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         warn!(
             "no --secret provided; generating a random one — every session will \
              be invalidated and every book/page URL will change on restart. \
-             Generate a persistent secret with `openssl rand -hex 64` and set \
+             Generate a persistent secret with `openssl rand -hex 32` and set \
              COMICS_SECRET."
         );
         Secret::generate()
@@ -467,20 +467,17 @@ mod tests {
     use tokio::sync::oneshot;
 
     /// Fixed secret so the derived ID seed — and therefore the URLs below — are
-    /// stable across runs. Any 128 hex characters will do.
-    const TEST_SECRET: &str = concat!(
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    );
+    /// stable across runs. Any 64 hex characters will do.
+    const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     /// Book IDs under `TEST_SECRET`. Recompute them whenever the secret or the
     /// derivation changes: `comics --secret <TEST_SECRET> --data-dir
     /// fixtures/data` and read the `/book/…` hrefs off the index page.
     const DATA_IDS: [&str; 2] = [
         // Pepper and Carrot 01 - Potion of Flight
-        "56b2a88177e506d",
+        "1f1c111677715adf",
         // Pepper and Carrot 02 - Rainbow Potions
-        "6afab87a072dd1d1",
+        "b8799902927c8bf6",
     ];
 
     async fn build_server() -> TestServer {
