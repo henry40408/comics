@@ -32,9 +32,9 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route, index_route,
-    login_route, login_submit_route, logout_route, rescan_books_route, scan_books, show_book_route,
-    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
+    FAVICON_SVG, RateLimiter, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route,
+    index_route, login_route, login_submit_route, logout_route, rescan_books_route, scan_books,
+    show_book_route, show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -130,6 +130,13 @@ enum Commands {
     List {},
 }
 
+/// Login attempts allowed per client IP within [`LOGIN_WINDOW_SECS`]. Not
+/// exposed as an option: a single-account service has one legitimate user, for
+/// whom five tries a minute is ample.
+const LOGIN_MAX_ATTEMPTS: u32 = 5;
+/// Length of the login rate-limit window, in seconds.
+const LOGIN_WINDOW_SECS: u64 = 60;
+
 /// Whether the session cookie carries `Secure`. comics never terminates TLS, so
 /// there is no runtime signal to infer from and no declared public URL — the
 /// explicit flag is the only input.
@@ -194,6 +201,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
+        login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
     });
 
     let router = Router::new()
@@ -287,25 +295,31 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let local_addr: SocketAddr = listener.local_addr()?;
     info!(addr = %local_addr, %version, "server started");
     spawn_initial_scan(state, tx);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            tokio::select! {
-                result = rx => {
-                    if result.is_ok() {
-                        warn!("fatal error occurred, shutdown the server");
-                    } else {
-                        // Sender dropped after successful scan; wait for real shutdown signal
-                        shutdown_signal().await;
-                        info!("received shutdown signal");
-                    }
-                }
-                () = shutdown_signal() => {
+    // `into_make_service_with_connect_info` is what puts the TCP peer address in
+    // the request extensions; without it the login rate limiter would degrade to
+    // a single global bucket.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        tokio::select! {
+            result = rx => {
+                if result.is_ok() {
+                    warn!("fatal error occurred, shutdown the server");
+                } else {
+                    // Sender dropped after successful scan; wait for real shutdown signal
+                    shutdown_signal().await;
                     info!("received shutdown signal");
                 }
             }
-        })
-        .await
-        .expect("failed to start the server");
+            () = shutdown_signal() => {
+                info!("received shutdown signal");
+            }
+        }
+    })
+    .await
+    .expect("failed to start the server");
     Ok(())
 }
 
@@ -416,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Opts, init_route, resolve_cookie_secure, spawn_initial_scan};
+    use crate::{LOGIN_MAX_ATTEMPTS, Opts, init_route, resolve_cookie_secure, spawn_initial_scan};
     use axum_test::TestServer;
     use clap::Parser as _;
     use comics::{BCRYPT_COST, VERSION};
@@ -442,7 +456,8 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service());
+        let server =
+            TestServer::new(router.into_make_service_with_connect_info::<std::net::SocketAddr>());
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
@@ -723,7 +738,8 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let mut server = TestServer::new(router.into_make_service());
+        let mut server =
+            TestServer::new(router.into_make_service_with_connect_info::<std::net::SocketAddr>());
         if save_cookies {
             server.save_cookies();
         }
@@ -850,6 +866,33 @@ mod tests {
         assert_eq!(401, res.status_code());
         assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
         assert!(res.text().contains("帳號或密碼錯誤"));
+    }
+
+    /// The sixth attempt inside the window is refused, and the refusal happens
+    /// *before* the credential check — so even the correct password gets a 429.
+    #[tokio::test]
+    async fn auth_login_is_rate_limited_after_five_attempts() {
+        let server = build_auth_server(false).await;
+        for attempt in 1..=LOGIN_MAX_ATTEMPTS {
+            let res = server
+                .post("/login")
+                .form(&[("username", "user"), ("password", "nope")])
+                .await;
+            assert_eq!(401, res.status_code(), "attempt {attempt}");
+        }
+
+        let res = server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "nope")])
+            .await;
+        assert_eq!(429, res.status_code());
+
+        let res = server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await;
+        assert_eq!(429, res.status_code());
+        assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
     }
 
     #[tokio::test]

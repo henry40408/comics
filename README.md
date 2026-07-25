@@ -44,6 +44,12 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
 
+> **Login throttling:** `POST /login` allows 5 attempts per client IP per 60
+> seconds; further attempts get `429` until the window passes. Behind a reverse
+> proxy that is *not* on loopback, every request appears to come from the proxy
+> and therefore shares one bucket — safe for a single-account service, but a
+> burst of failed logins locks the form for a minute.
+
 > **`COMICS_COOKIE_SECURE`:** comics never terminates TLS itself, so it cannot
 > tell whether it is reached over HTTPS behind a reverse proxy — hence the
 > explicit opt-in. Turn it on when the site is always served over HTTPS. Setting

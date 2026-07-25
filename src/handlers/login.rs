@@ -1,19 +1,21 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use askama::Template;
 use axum::{
-    Form,
-    extract::{Query, Request, State},
+    Extension, Form,
+    extract::{ConnectInfo, Query, Request, State},
     response::{Html, IntoResponse, Redirect, Response},
 };
 use cookie::{Cookie, CookieJar, time::Duration};
-use http::{HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::VERSION;
 use crate::assets::assets_version;
-use crate::auth::{AuthConfig, AuthState, SESSION_COOKIE, authenticate, build_session_cookie};
+use crate::auth::{
+    AuthConfig, AuthState, SESSION_COOKIE, authenticate, build_session_cookie, rate_limit_key,
+};
 use crate::state::AppState;
 
 #[derive(Template)]
@@ -116,10 +118,24 @@ pub async fn login_route(
 }
 
 /// `POST /login` — verify credentials and, on success, issue a session cookie.
+///
+/// Attempts are throttled per client IP *before* the credential check, so a
+/// throttled attacker cannot learn anything from the response either.
+/// `Option<Extension<ConnectInfo<…>>>` keeps the handler usable from unit tests
+/// that build a request without the connection info; `Form` must stay last, as
+/// the body extractor.
 pub async fn login_submit_route(
     State(state): State<Arc<AppState>>,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
+    if !state.login_limiter.check(ip) {
+        warn!(%ip, "login rate limited");
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+    state.login_limiter.record(ip);
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
         return render_login(true, &form.next);
     }

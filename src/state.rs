@@ -4,7 +4,7 @@ use cookie::Key;
 use parking_lot::RwLock;
 use tokio::sync::Semaphore;
 
-use crate::auth::AuthConfig;
+use crate::auth::{AuthConfig, RateLimiter};
 use crate::models::BookScan;
 
 /// Application state shared across all handlers
@@ -23,4 +23,6 @@ pub struct AppState {
     pub thumb_sem: Arc<Semaphore>,
     /// Whether the session cookie is issued with the `Secure` attribute.
     pub cookie_secure: bool,
+    /// Throttles `POST /login` per client IP.
+    pub login_limiter: Arc<RateLimiter>,
 }

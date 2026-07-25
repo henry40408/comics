@@ -139,6 +139,7 @@ mod tests {
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(Semaphore::new(1)),
             cookie_secure: false,
+            login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
         })
     }
 
