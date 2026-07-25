@@ -33,9 +33,9 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
     FAVICON_SVG, RateLimiter, SessionAuditSalt, VERSION, auth_middleware_fn, csrf_origin_guard,
-    healthz_route, index_route, login_route, login_submit_route, logout_route, parse_session_key,
-    rescan_books_route, scan_books, show_book_route, show_page_route, show_thumb_route,
-    shuffle_book_route, shuffle_route,
+    healthz_route, index_route, login_route, login_submit_route, logout_route, no_store_html,
+    parse_session_key, rescan_books_route, scan_books, show_book_route, show_page_route,
+    show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -230,6 +230,9 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // request (unlike per-request bcrypt) is no longer a concern.
         .route("/data/{id}", get(show_page_route))
         .route("/thumb/{size}/{id}", get(show_thumb_route))
+        // Inside the auth layer, so it only sees responses for protected routes:
+        // authenticated HTML must not be left in a cache that survives logout.
+        .route_layer(middleware::from_fn(no_store_html))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_fn,
@@ -883,6 +886,68 @@ mod tests {
         assert!(res.text().contains("帳號或密碼錯誤"));
     }
 
+    #[tokio::test]
+    async fn authenticated_html_is_not_cacheable() {
+        let server = build_auth_server(true).await;
+        login_response(&server).await;
+        let book = DATA_IDS[0];
+
+        for path in ["/".to_string(), format!("/book/{book}")] {
+            let res = server.get(&path).await;
+            assert_eq!(200, res.status_code(), "GET {path}");
+            assert_eq!("no-store", res.headers()["cache-control"], "GET {path}");
+            assert_eq!("no-cache", res.headers()["pragma"], "GET {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_page_is_not_cacheable() {
+        let server = build_auth_server(false).await;
+        let res = server.get("/login").await;
+        assert_eq!(200, res.status_code());
+        assert_eq!("no-store", res.headers()["cache-control"]);
+    }
+
+    /// Authenticated images stay browser-cacheable (page turns would otherwise
+    /// re-read the disk every time) but must not be kept by a shared cache.
+    #[tokio::test]
+    async fn page_and_thumb_images_are_privately_cacheable() {
+        let server = build_auth_server(true).await;
+        login_response(&server).await;
+
+        let html = server.get("/").await.text();
+        let marker = "/thumb/md/";
+        let start = html.find(marker).expect("a cover thumbnail") + marker.len();
+        let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+
+        for path in [format!("/data/{id}"), format!("/thumb/md/{id}")] {
+            let res = server.get(&path).await;
+            assert_eq!(200, res.status_code(), "GET {path}");
+            let cache_control = res.headers()["cache-control"].to_str().unwrap().to_string();
+            assert!(
+                cache_control.starts_with("private"),
+                "GET {path} -> {cache_control}"
+            );
+            assert!(
+                cache_control.contains("max-age="),
+                "GET {path} -> {cache_control}"
+            );
+        }
+    }
+
+    /// The middleware must not reach the assets: they carry no user data and
+    /// their fingerprinted URLs are what make the long cache safe.
+    #[tokio::test]
+    async fn static_assets_stay_publicly_cacheable() {
+        let server = build_auth_server(false).await;
+        let res = server.get("/assets/app.css").await;
+        assert_eq!(200, res.status_code());
+        assert_eq!(
+            "public, max-age=31536000, immutable",
+            res.headers()["cache-control"]
+        );
+    }
+
     /// A configured signing key survives a rebuild of the router: a cookie
     /// issued by one server is accepted by the next. This is what stops a
     /// restart (or a container update) from logging everyone out.
@@ -913,8 +978,21 @@ mod tests {
         assert!(head.len() > 32, "{head}");
     }
 
-    /// The sixth attempt inside the window is refused, and the refusal happens
-    /// *before* the credential check — so even the correct password gets a 429.
+    /// A successful login must not consume the anti-brute-force budget: the
+    /// control targets password guessing, and locking out someone who signs in
+    /// on several devices would be pure cost.
+    #[tokio::test]
+    async fn auth_successful_logins_do_not_count_against_the_limit() {
+        let server = build_auth_server(false).await;
+        for attempt in 1..=(LOGIN_MAX_ATTEMPTS + 3) {
+            let res = login_response(&server).await;
+            assert_eq!(303, res.status_code(), "attempt {attempt}");
+        }
+    }
+
+    /// The sixth *failed* attempt inside the window is refused, and the refusal
+    /// happens before the credential check — so even the correct password gets a
+    /// 429.
     #[tokio::test]
     async fn auth_login_is_rate_limited_after_five_attempts() {
         let server = build_auth_server(false).await;

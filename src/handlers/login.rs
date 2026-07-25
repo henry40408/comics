@@ -82,7 +82,17 @@ fn render_login(error: bool, next: &str) -> Response {
             } else {
                 StatusCode::OK
             };
-            (status, Html(html)).into_response()
+            let mut response = (status, Html(html)).into_response();
+            // The login page sits outside the auth layer, so the `no_store_html`
+            // middleware never sees it — and it must not be cached either: it
+            // carries the error state and the `next` target.
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+                .headers_mut()
+                .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+            response
         }
         Err(err) => {
             error!(%err, "failed to render login");
@@ -132,8 +142,9 @@ pub async fn login_route(
 
 /// `POST /login` — verify credentials and, on success, issue a session cookie.
 ///
-/// Attempts are throttled per client IP *before* the credential check, so a
-/// throttled attacker cannot learn anything from the response either.
+/// Failed attempts are throttled per client IP, and the throttle is consulted
+/// *before* the credential check, so a throttled attacker cannot learn anything
+/// from the response either.
 /// `Option<Extension<ConnectInfo<…>>>` keeps the handler usable from unit tests
 /// that build a request without the connection info; `Form` must stay last, as
 /// the body extractor.
@@ -149,8 +160,12 @@ pub async fn login_submit_route(
         warn!(%ip, "login rate limited");
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
-    state.login_limiter.record(ip);
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
+        // Only failures count against the window. The control exists to stop
+        // password guessing, and a legitimate user who signs in repeatedly (new
+        // device, cleared cookies, a test suite) should not be locked out by it;
+        // an attacker's every attempt is a failure, so their budget is unchanged.
+        state.login_limiter.record(ip);
         // Deliberately no username or password in the event: a failed login is
         // exactly where a mistyped password lands in the log otherwise.
         warn!(event = "login_failed", %ip, user_agent, "login failed");
