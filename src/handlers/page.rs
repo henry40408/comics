@@ -59,7 +59,11 @@ pub async fn show_page_route(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
+            // `private`, not `public`: page images are authenticated content, so
+            // a shared cache (corporate proxy, CDN) must not keep them. The
+            // browser's own cache is what makes page turns fast on slow disks,
+            // which is why this is not `no-store`.
+            (header::CACHE_CONTROL, "private, max-age=86400, immutable"),
         ],
         content,
     )

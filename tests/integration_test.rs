@@ -30,6 +30,7 @@ fn initial_scan_finished() {
         .assert()
         .interrupted()
         .stdout_eq(str![[r"
+[..]  WARN comics: no --session-key provided; generating a random one — all sessions will be invalidated on restart. Generate a persistent key with `openssl rand -hex 64` and set COMICS_SESSION_KEY.
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
 [..]  INFO comics: initial scan finished books=2 pages=8 duration_ms=[..]
@@ -69,6 +70,7 @@ fn initial_scan_failed() {
         .assert()
         .success()
         .stdout_eq(str![[r"
+[..]  WARN comics: no --session-key provided; generating a random one — all sessions will be invalidated on restart. Generate a persistent key with `openssl rand -hex 64` and set COMICS_SESSION_KEY.
 [..]  WARN comics: no authorization enabled, server is publicly accessible
 [..]  INFO comics: server started addr=[..] version=[..]
 [..] ERROR comics: initial scan failed err=No such file or directory (os error 2)

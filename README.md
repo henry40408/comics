@@ -36,12 +36,55 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | --- | --- | --- |
 | `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
 | `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
+| `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
+| `COMICS_SESSION_KEY` | Secret signing the session cookie: 128 hex characters (`openssl rand -hex 64`) | _(random per start)_ |
+| `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `COMICS_LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
+
+> **`COMICS_SESSION_KEY`:** generate one with `openssl rand -hex 64` and supply
+> it through the environment or a secret file — never on a shell command line
+> (it lands in the history) and never committed. Without it a random key is
+> generated at each start, which logs everyone out on restart and cannot be
+> shared across replicas. Rotating the value is a global logout; anyone holding
+> it can forge a session.
+
+> **Audit logging:** logins, logouts, failed logins and throttled attempts are
+> logged with the client IP and `User-Agent` (and, for sessions, a salted hash of
+> the session identifier — never the identifier itself, and never the submitted
+> username or password). If you would rather not record IP and `User-Agent`, drop
+> the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
+
+> **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
+> per 60 seconds; further attempts get `429` until the window passes. A
+> successful login costs nothing. `X-Forwarded-For` is trusted only when the
+> connection itself comes from loopback (comics on the same host or in the same
+> compose stack as the proxy), and only its last entry — the hop the proxy
+> appended. Behind a reverse proxy that is *not* on loopback, every request
+> appears to come from the proxy and therefore shares one bucket — safe for a
+> single-account service, but a burst of failed logins locks the form for a
+> minute. If your proxy is chained behind another one, the last entry is the
+> inner proxy rather than the client, and the same shared-bucket caveat applies.
+
+> **`COMICS_COOKIE_SECURE`:** comics never terminates TLS itself, so it cannot
+> tell whether it is reached over HTTPS behind a reverse proxy — hence the
+> explicit opt-in. Turn it on when the site is always served over HTTPS. Setting
+> it on a plain-HTTP deployment makes browsers silently discard the session
+> cookie, so login will appear to do nothing. Enabling it also renames the cookie
+> to `__Host-comics_session` (the prefix requires `Secure`), so existing sessions
+> are logged out once — in both directions of the switch.
+
+> **`COMICS_HSTS_MAX_AGE`:** prefer configuring HSTS on the reverse proxy that
+> terminates TLS; this flag exists for deployments that cannot. Enable it only
+> when comics is always reached over HTTPS: a browser that has seen the header
+> will refuse plain HTTP to this host for the whole `max-age`, and recovering
+> means clearing the browser's HSTS entry by hand (`chrome://net-internals/#hsts`).
+> `includeSubDomains` and `preload` are deliberately not offered — their blast
+> radius covers the whole domain, so they belong to whoever operates the proxy.
 
 > **Migrating from an older release:** these variables were previously
 > unprefixed (`BIND`, `SEED`, `AUTH_USERNAME`, …). To catch stale configuration,

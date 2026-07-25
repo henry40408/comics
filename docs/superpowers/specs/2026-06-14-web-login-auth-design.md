@@ -77,3 +77,24 @@ verification. The `AuthState` enum is simplified (no `Request` /
 
 No Basic Auth compatibility, no "remember me" checkbox, no configurable TTL, no
 session revocation.
+
+## Revision (OWASP session hardening): persisted key + nonce
+
+The two statements above about the cookie are no longer accurate:
+
+- **Signing key.** A random key is generated at startup *only when
+  `COMICS_SESSION_KEY` is unset* (a startup `WARN` says so). When set, it is 128
+  hex characters decoded in `auth/key.rs`, so sessions survive a restart and can
+  be shared across replicas. Rotating the value is a global logout.
+- **Cookie value.** No longer a bare expiry timestamp — it is
+  `<128-bit-CSPRNG-nonce-hex>.<expiry-unix>`, which satisfies the OWASP
+  session-ID properties (length, entropy, and a value that discloses nothing).
+  The expiry is still what enforces the TTL; both halves are signed. The old
+  format is rejected outright, so this change logs existing sessions out once.
+
+"No session revocation" remains true and remains deliberate: comics is a
+single-account service with no session store, and rotating `COMICS_SESSION_KEY`
+is a more thorough equivalent of "log out everywhere". Introducing multiple
+accounts, a "log out other devices" feature, a server-enforced idle timeout, or
+individually revocable API tokens would each flip that trade-off and require a
+real session store.

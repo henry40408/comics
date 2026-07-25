@@ -32,8 +32,9 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route, index_route,
-    login_route, login_submit_route, logout_route, rescan_books_route, scan_books, show_book_route,
+    FAVICON_SVG, RateLimiter, SessionAuditSalt, VERSION, auth_middleware_fn, csrf_origin_guard,
+    healthz_route, hsts_layer, index_route, login_route, login_submit_route, logout_route,
+    no_store_html, parse_session_key, rescan_books_route, scan_books, show_book_route,
     show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
@@ -73,6 +74,32 @@ struct Opts {
     /// Hashed password for the login form
     #[arg(long, env = "COMICS_AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
+    /// Send the session cookie with the `Secure` attribute (HTTPS only).
+    /// Defaults to off: comics never terminates TLS itself, so it cannot detect
+    /// HTTPS behind a reverse proxy, and a browser silently discards a `Secure`
+    /// cookie delivered over plain HTTP — defaulting it on would lock plain-HTTP
+    /// LAN deployments out of the login form with no visible error.
+    #[arg(
+        long,
+        env = "COMICS_COOKIE_SECURE",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    cookie_secure: Option<bool>,
+    /// Secret used to sign session cookies: 128 hex characters (64 bytes).
+    /// Generate one with `openssl rand -hex 64`. When unset a random key is
+    /// generated at startup, which logs every session out on restart and cannot
+    /// be shared across replicas. Rotating this value is a global logout.
+    #[arg(long, env = "COMICS_SESSION_KEY")]
+    session_key: Option<String>,
+    /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
+    /// default: HSTS belongs on the TLS-terminating reverse proxy, and a browser
+    /// that has cached the header will refuse plain HTTP to this host for the
+    /// whole max-age — which would make an HTTP-only LAN deployment unreachable
+    /// with no easy way back. Only enable when comics is always reached over
+    /// HTTPS. Suggested value: 63072000 (2 years).
+    #[arg(long, env = "COMICS_HSTS_MAX_AGE")]
+    hsts_max_age: Option<u64>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -118,6 +145,20 @@ enum Commands {
     List {},
 }
 
+/// Login attempts allowed per client IP within [`LOGIN_WINDOW_SECS`]. Not
+/// exposed as an option: a single-account service has one legitimate user, for
+/// whom five tries a minute is ample.
+const LOGIN_MAX_ATTEMPTS: u32 = 5;
+/// Length of the login rate-limit window, in seconds.
+const LOGIN_WINDOW_SECS: u64 = 60;
+
+/// Whether the session cookie carries `Secure`. comics never terminates TLS, so
+/// there is no runtime signal to infer from and no declared public URL — the
+/// explicit flag is the only input.
+fn resolve_cookie_secure(override_value: Option<bool>) -> bool {
+    override_value.unwrap_or(false)
+}
+
 fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
     thread::spawn(move || {
         let new_scan = match scan_books(state.seed, &state.data_dir) {
@@ -140,12 +181,19 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
     });
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "init entry point; keeps a fallible signature for future fallible setup steps"
-)]
 fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
     let data_dir = &opts.data_dir;
+
+    let key = if let Some(raw) = opts.session_key.as_deref() {
+        parse_session_key(raw)?
+    } else {
+        warn!(
+            "no --session-key provided; generating a random one — all sessions \
+             will be invalidated on restart. Generate a persistent key with \
+             `openssl rand -hex 64` and set COMICS_SESSION_KEY."
+        );
+        Key::generate()
+    };
 
     let seed = opts.seed.unwrap_or_else(|| {
         let seed = SystemTime::now()
@@ -163,7 +211,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             },
             _ => AuthConfig::None,
         },
-        key: Key::generate(),
+        key,
         data_dir: data_dir.clone(),
         scan: Arc::new(RwLock::new(None)),
         seed,
@@ -174,6 +222,10 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         thumb_sem: Arc::new(Semaphore::new(
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
+        cookie_secure: resolve_cookie_secure(opts.cookie_secure),
+        login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
+        audit_salt: Arc::new(SessionAuditSalt::generate()),
+        hsts_max_age: opts.hsts_max_age,
     });
 
     let router = Router::new()
@@ -187,6 +239,9 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // request (unlike per-request bcrypt) is no longer a concern.
         .route("/data/{id}", get(show_page_route))
         .route("/thumb/{size}/{id}", get(show_thumb_route))
+        // Inside the auth layer, so it only sees responses for protected routes:
+        // authenticated HTML must not be left in a cache that survives logout.
+        .route_layer(middleware::from_fn(no_store_html))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_fn,
@@ -222,6 +277,9 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
         // auth layer. It is inert for safe methods, so every asset/image/
         // `/healthz` GET passes untouched.
         .layer(middleware::from_fn(csrf_origin_guard))
+        // Global outer layer so HSTS also covers `/login`, `/healthz` and the
+        // assets; inert unless a max-age is configured.
+        .layer(middleware::from_fn_with_state(state.clone(), hsts_layer))
         .with_state(state.clone());
 
     Ok((router, state))
@@ -256,31 +314,50 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let (app, state) = init_route(opts)?;
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
         warn!("no authorization enabled, server is publicly accessible");
+    } else if !resolve_cookie_secure(opts.cookie_secure) {
+        warn!(
+            "session cookie is issued without the Secure attribute; \
+             set --cookie-secure (COMICS_COOKIE_SECURE=true) when serving over HTTPS"
+        );
+    }
+    if opts.hsts_max_age.is_some() && !resolve_cookie_secure(opts.cookie_secure) {
+        // The two settings contradict each other: HSTS declares the site
+        // HTTPS-only while the cookie is still sent without `Secure`.
+        warn!(
+            "HSTS is enabled but the session cookie is not marked Secure; \
+             set --cookie-secure (COMICS_COOKIE_SECURE=true) too"
+        );
     }
     let version = VERSION;
     let listener = TcpListener::bind(&addr).await?;
     let local_addr: SocketAddr = listener.local_addr()?;
     info!(addr = %local_addr, %version, "server started");
     spawn_initial_scan(state, tx);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            tokio::select! {
-                result = rx => {
-                    if result.is_ok() {
-                        warn!("fatal error occurred, shutdown the server");
-                    } else {
-                        // Sender dropped after successful scan; wait for real shutdown signal
-                        shutdown_signal().await;
-                        info!("received shutdown signal");
-                    }
-                }
-                () = shutdown_signal() => {
+    // `into_make_service_with_connect_info` is what puts the TCP peer address in
+    // the request extensions; without it the login rate limiter would degrade to
+    // a single global bucket.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        tokio::select! {
+            result = rx => {
+                if result.is_ok() {
+                    warn!("fatal error occurred, shutdown the server");
+                } else {
+                    // Sender dropped after successful scan; wait for real shutdown signal
+                    shutdown_signal().await;
                     info!("received shutdown signal");
                 }
             }
-        })
-        .await
-        .expect("failed to start the server");
+            () = shutdown_signal() => {
+                info!("received shutdown signal");
+            }
+        }
+    })
+    .await
+    .expect("failed to start the server");
     Ok(())
 }
 
@@ -391,7 +468,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Opts, init_route, spawn_initial_scan};
+    use crate::{LOGIN_MAX_ATTEMPTS, Opts, init_route, resolve_cookie_secure, spawn_initial_scan};
     use axum_test::TestServer;
     use clap::Parser as _;
     use comics::{BCRYPT_COST, VERSION};
@@ -417,7 +494,8 @@ mod tests {
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let server = TestServer::new(router.into_make_service());
+        let server =
+            TestServer::new(router.into_make_service_with_connect_info::<std::net::SocketAddr>());
         for _ in 0..10 {
             let res = server.get("/healthz").await;
             if res.status_code() == 200 {
@@ -673,23 +751,33 @@ mod tests {
     /// Build a server with credentials configured. When `save_cookies` is set,
     /// the test client persists cookies across requests like a browser would.
     async fn build_auth_server(save_cookies: bool) -> TestServer {
+        build_auth_server_with(save_cookies, &[]).await
+    }
+
+    /// Like [`build_auth_server`], with `extra_args` appended to the CLI so a
+    /// test can flip a single option (e.g. `--cookie-secure`).
+    async fn build_auth_server_with(save_cookies: bool, extra_args: &[&str]) -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut opts = Opts::parse_from([
+        let hash = bcrypt::hash("password", BCRYPT_COST).unwrap();
+        let mut args = vec![
             "comics",
             "--data-dir",
             "./fixtures/data",
             "--auth-username",
             "user",
             "--auth-password-hash",
-            &bcrypt::hash("password", BCRYPT_COST).unwrap(),
-        ]);
+            &hash,
+        ];
+        args.extend_from_slice(extra_args);
+        let mut opts = Opts::parse_from(args);
         opts.seed = Some(1);
         let (router, state) = init_route(&opts).unwrap();
         spawn_initial_scan(state, tx);
 
-        let mut server = TestServer::new(router.into_make_service());
+        let mut server =
+            TestServer::new(router.into_make_service_with_connect_info::<std::net::SocketAddr>());
         if save_cookies {
             server.save_cookies();
         }
@@ -751,6 +839,61 @@ mod tests {
         assert!(res.text().contains("2 book(s)"));
     }
 
+    /// Collect the raw `Set-Cookie` header values. `maybe_cookie` parses the
+    /// cookie and drops its attributes, so attribute assertions have to read the
+    /// header verbatim.
+    fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
+        res.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    async fn login_response(server: &TestServer) -> axum_test::TestResponse {
+        server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await
+    }
+
+    #[test]
+    fn cookie_secure_defaults_to_off() {
+        assert!(!resolve_cookie_secure(None));
+        assert!(!resolve_cookie_secure(Some(false)));
+    }
+
+    #[test]
+    fn cookie_secure_override_wins() {
+        assert!(resolve_cookie_secure(Some(true)));
+    }
+
+    #[tokio::test]
+    async fn auth_login_cookie_has_secure_when_enabled() {
+        let server = build_auth_server_with(true, &["--cookie-secure"]).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        assert!(
+            headers.iter().any(|h| h.contains("Secure")),
+            "expected a Secure attribute in {headers:?}"
+        );
+    }
+
+    /// The default must stay attribute-free so plain-HTTP LAN deployments keep
+    /// working — a browser silently drops a `Secure` cookie sent over HTTP.
+    #[tokio::test]
+    async fn auth_login_cookie_has_no_secure_by_default() {
+        let server = build_auth_server(true).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        assert!(!headers.is_empty());
+        assert!(
+            !headers.iter().any(|h| h.contains("Secure")),
+            "unexpected Secure attribute in {headers:?}"
+        );
+    }
+
     #[tokio::test]
     async fn auth_login_wrong_password_is_unauthorized() {
         let server = build_auth_server(false).await;
@@ -761,6 +904,174 @@ mod tests {
         assert_eq!(401, res.status_code());
         assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
         assert!(res.text().contains("帳號或密碼錯誤"));
+    }
+
+    #[tokio::test]
+    async fn auth_login_sets_host_prefixed_cookie_when_secure() {
+        let server = build_auth_server_with(true, &["--cookie-secure"]).await;
+        let res = login_response(&server).await;
+        let headers = set_cookie_headers(&res);
+        let session = headers
+            .iter()
+            .find(|h| h.starts_with("__Host-comics_session="))
+            .unwrap_or_else(|| panic!("no __Host- cookie in {headers:?}"));
+        assert!(session.contains("Secure"), "{session}");
+        assert!(session.contains("Path=/"), "{session}");
+        assert!(!session.contains("Domain="), "{session}");
+    }
+
+    #[tokio::test]
+    async fn hsts_absent_by_default() {
+        let server = build_server().await;
+        let res = server.get("/healthz").await;
+        assert!(!res.headers().contains_key("strict-transport-security"));
+    }
+
+    /// HSTS is a global outer layer, so it must be present even on the routes
+    /// that sit outside the auth layer.
+    #[tokio::test]
+    async fn hsts_present_when_configured() {
+        let server = build_auth_server_with(false, &["--hsts-max-age", "63072000"]).await;
+        for path in ["/healthz", "/login", "/assets/app.css"] {
+            let res = server.get(path).await;
+            assert_eq!(
+                "max-age=63072000",
+                res.headers()["strict-transport-security"],
+                "GET {path}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_html_is_not_cacheable() {
+        let server = build_auth_server(true).await;
+        login_response(&server).await;
+        let book = DATA_IDS[0];
+
+        for path in ["/".to_string(), format!("/book/{book}")] {
+            let res = server.get(&path).await;
+            assert_eq!(200, res.status_code(), "GET {path}");
+            assert_eq!("no-store", res.headers()["cache-control"], "GET {path}");
+            assert_eq!("no-cache", res.headers()["pragma"], "GET {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_page_is_not_cacheable() {
+        let server = build_auth_server(false).await;
+        let res = server.get("/login").await;
+        assert_eq!(200, res.status_code());
+        assert_eq!("no-store", res.headers()["cache-control"]);
+    }
+
+    /// Authenticated images stay browser-cacheable (page turns would otherwise
+    /// re-read the disk every time) but must not be kept by a shared cache.
+    #[tokio::test]
+    async fn page_and_thumb_images_are_privately_cacheable() {
+        let server = build_auth_server(true).await;
+        login_response(&server).await;
+
+        let html = server.get("/").await.text();
+        let marker = "/thumb/md/";
+        let start = html.find(marker).expect("a cover thumbnail") + marker.len();
+        let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
+
+        for path in [format!("/data/{id}"), format!("/thumb/md/{id}")] {
+            let res = server.get(&path).await;
+            assert_eq!(200, res.status_code(), "GET {path}");
+            let cache_control = res.headers()["cache-control"].to_str().unwrap().to_string();
+            assert!(
+                cache_control.starts_with("private"),
+                "GET {path} -> {cache_control}"
+            );
+            assert!(
+                cache_control.contains("max-age="),
+                "GET {path} -> {cache_control}"
+            );
+        }
+    }
+
+    /// The middleware must not reach the assets: they carry no user data and
+    /// their fingerprinted URLs are what make the long cache safe.
+    #[tokio::test]
+    async fn static_assets_stay_publicly_cacheable() {
+        let server = build_auth_server(false).await;
+        let res = server.get("/assets/app.css").await;
+        assert_eq!(200, res.status_code());
+        assert_eq!(
+            "public, max-age=31536000, immutable",
+            res.headers()["cache-control"]
+        );
+    }
+
+    /// A configured signing key survives a rebuild of the router: a cookie
+    /// issued by one server is accepted by the next. This is what stops a
+    /// restart (or a container update) from logging everyone out.
+    #[tokio::test]
+    async fn session_key_survives_router_rebuild() {
+        const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\
+                           0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let first = build_auth_server_with(true, &["--session-key", KEY]).await;
+        let res = login_response(&first).await;
+        assert_eq!(303, res.status_code());
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+
+        let second = build_auth_server_with(false, &["--session-key", KEY]).await;
+        let res = second.get("/").add_cookie(cookie).await;
+        assert_eq!(200, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn session_cookie_value_is_a_nonce_and_expiry() {
+        let server = build_auth_server(true).await;
+        let res = login_response(&server).await;
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+        // The signed value is `<signature><nonce>.<expiry>`; only the shape of
+        // the trailing plaintext matters here.
+        let (head, expiry) = cookie.value().rsplit_once('.').expect("nonce.expiry");
+        assert!(expiry.parse::<i64>().is_ok(), "{expiry}");
+        assert!(head.len() > 32, "{head}");
+    }
+
+    /// A successful login must not consume the anti-brute-force budget: the
+    /// control targets password guessing, and locking out someone who signs in
+    /// on several devices would be pure cost.
+    #[tokio::test]
+    async fn auth_successful_logins_do_not_count_against_the_limit() {
+        let server = build_auth_server(false).await;
+        for attempt in 1..=(LOGIN_MAX_ATTEMPTS + 3) {
+            let res = login_response(&server).await;
+            assert_eq!(303, res.status_code(), "attempt {attempt}");
+        }
+    }
+
+    /// The sixth *failed* attempt inside the window is refused, and the refusal
+    /// happens before the credential check — so even the correct password gets a
+    /// 429.
+    #[tokio::test]
+    async fn auth_login_is_rate_limited_after_five_attempts() {
+        let server = build_auth_server(false).await;
+        for attempt in 1..=LOGIN_MAX_ATTEMPTS {
+            let res = server
+                .post("/login")
+                .form(&[("username", "user"), ("password", "nope")])
+                .await;
+            assert_eq!(401, res.status_code(), "attempt {attempt}");
+        }
+
+        let res = server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "nope")])
+            .await;
+        assert_eq!(429, res.status_code());
+
+        let res = server
+            .post("/login")
+            .form(&[("username", "user"), ("password", "password")])
+            .await;
+        assert_eq!(429, res.status_code());
+        assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
     }
 
     #[tokio::test]
@@ -797,6 +1108,20 @@ mod tests {
             "/login",
             res.headers().get("location").unwrap().to_str().unwrap()
         );
+
+        assert_eq!(
+            "\"cache\", \"cookies\", \"storage\"",
+            res.headers()["clear-site-data"]
+        );
+        // The removal cookie must mirror the issued one, or the browser will not
+        // consider them the same cookie.
+        let removal = set_cookie_headers(&res)
+            .into_iter()
+            .find(|h| h.starts_with(&format!("{SESSION_COOKIE}=")))
+            .expect("a removal cookie");
+        assert!(removal.contains("HttpOnly"), "{removal}");
+        assert!(removal.contains("SameSite=Lax"), "{removal}");
+        assert!(removal.contains("Path=/"), "{removal}");
 
         // Session is gone, so the protected page bounces to login again.
         assert_eq!(303, server.get("/").await.status_code());
