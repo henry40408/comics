@@ -30,7 +30,9 @@ module.exports = defineConfig({
     env: {
       COMICS_AUTH_USERNAME: 'user',
       COMICS_AUTH_PASSWORD_HASH: TEST_PASSWORD_HASH,
-      COMICS_SEED: '1',
+      COMICS_SECRET:
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' +
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     },
   },
   projects: [

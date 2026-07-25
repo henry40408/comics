@@ -98,3 +98,16 @@ is a more thorough equivalent of "log out everywhere". Introducing multiple
 accounts, a "log out other devices" feature, a server-enforced idle timeout, or
 individually revocable API tokens would each flip that trade-off and require a
 real session store.
+
+## Revision (unified secret): `COMICS_SESSION_KEY` → `COMICS_SECRET`
+
+`COMICS_SESSION_KEY` no longer exists. It and `COMICS_SEED` were folded into a
+single `COMICS_SECRET` (still 128 hex characters), from which the signing key
+and the ID seed are derived through separate domain-separated hashes
+(`secret.rs`). Everything the revision above says about the key still holds —
+read `COMICS_SECRET` wherever it says `COMICS_SESSION_KEY`, including "rotating
+the value is a global logout", which now also changes every book and page URL.
+
+Setting either retired name aborts startup rather than being ignored: falling
+back to a random secret would silently log everyone out on each restart while
+the deployment's configuration still looked correct.

@@ -11,12 +11,14 @@ use crate::models::BookScan;
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: AuthConfig,
-    /// Secret key used to sign session cookies. Taken from `COMICS_SESSION_KEY`
-    /// when set; otherwise generated at startup, in which case a restart
+    /// Key signing session cookies, derived from `COMICS_SECRET`; when that is
+    /// unset a random secret is generated at startup, in which case a restart
     /// invalidates every existing session.
     pub key: Key,
     pub data_dir: PathBuf,
     pub scan: Arc<RwLock<Option<BookScan>>>,
+    /// Salt for hashed book/page IDs, derived from `COMICS_SECRET` through a
+    /// different domain separator than [`key`](Self::key).
     pub seed: u64,
     /// Directory where generated thumbnails are cached.
     pub cache_dir: PathBuf,
