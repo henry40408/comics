@@ -10,12 +10,16 @@ use cookie::{Cookie, CookieJar, SameSite, time::Duration};
 use http::{Method, StatusCode, header};
 
 use super::config::AuthConfig;
+use super::key::hex_lower;
 use crate::state::AppState;
 
 /// Name of the signed session cookie.
 pub const SESSION_COOKIE: &str = "comics_session";
 /// How long a session stays valid after login.
 const SESSION_TTL_DAYS: i64 = 7;
+/// Length of the session nonce in bytes (128 bits), per OWASP's minimum
+/// session-ID length.
+const SESSION_NONCE_BYTES: usize = 16;
 
 /// Authentication state after checking the request.
 pub enum AuthState {
@@ -27,24 +31,48 @@ pub enum AuthState {
     Unauthenticated,
 }
 
-/// Build a fresh, signed-cookie-ready session cookie whose value is the unix
-/// timestamp at which it expires. The signature (added by the caller's
-/// [`cookie::SignedJar`]) makes the value unforgeable; the timestamp lets the
-/// server enforce expiry independently of the browser.
+/// Build a fresh, signed-cookie-ready session cookie.
+///
+/// The value is `<nonce-hex>.<expiry-unix>`: a 128-bit CSPRNG nonce makes it
+/// meaningless and unguessable (OWASP Session Management Cheat Sheet, "Session
+/// ID Properties" — at least 128 bits, at least 64 bits of entropy, and no
+/// decodable content), while the appended expiry lets the server enforce the TTL
+/// without a session store. Both halves are covered by the signature the caller's
+/// [`cookie::SignedJar`] adds.
 ///
 /// `secure` comes from the `--cookie-secure` option rather than being hardcoded:
 /// a browser silently discards a `Secure` cookie delivered over plain HTTP, so
 /// forcing it on would lock plain-HTTP LAN deployments out of the login form
 /// with no visible error.
+///
+/// There is no session renewal (a cookie is issued once and expires), so no
+/// `session_renewed` audit event exists. Introducing a sliding window would need
+/// one — see `handlers/login.rs`.
 pub fn build_session_cookie(secure: bool) -> Cookie<'static> {
+    let nonce: [u8; SESSION_NONCE_BYTES] = rand::random();
     let expires_at = Utc::now().timestamp() + SESSION_TTL_DAYS * 24 * 60 * 60;
-    Cookie::build((SESSION_COOKIE, expires_at.to_string()))
+    let value = format!("{}.{expires_at}", hex_lower(&nonce));
+    Cookie::build((SESSION_COOKIE, value))
         .http_only(true)
         .same_site(SameSite::Lax)
         .path("/")
         .secure(secure)
         .max_age(Duration::days(SESSION_TTL_DAYS))
         .build()
+}
+
+/// Parse a `<nonce-hex>.<expiry>` session value, returning the expiry when the
+/// shape is valid.
+///
+/// A bare timestamp — the pre-nonce format — deliberately fails here, so
+/// upgrading logs existing sessions out once rather than silently keeping a
+/// value that violates the OWASP session-ID properties.
+fn parse_session_value(value: &str) -> Option<i64> {
+    let (nonce, expires_at) = value.split_once('.')?;
+    if nonce.len() != SESSION_NONCE_BYTES * 2 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    expires_at.parse::<i64>().ok()
 }
 
 /// Parse the request's `Cookie` header into a jar.
@@ -68,8 +96,8 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
     let Some(cookie) = jar.signed(&state.key).get(SESSION_COOKIE) else {
         return AuthState::Unauthenticated;
     };
-    match cookie.value().parse::<i64>() {
-        Ok(expires_at) if Utc::now().timestamp() < expires_at => AuthState::Authenticated,
+    match parse_session_value(cookie.value()) {
+        Some(expires_at) if Utc::now().timestamp() < expires_at => AuthState::Authenticated,
         _ => AuthState::Unauthenticated,
     }
 }
@@ -201,12 +229,75 @@ mod tests {
     }
 
     #[test]
+    fn build_session_cookie_value_is_nonce_dot_expiry() {
+        let cookie = build_session_cookie(false);
+        let (nonce, expires_at) = cookie.value().split_once('.').expect("nonce.expiry");
+        assert_eq!(SESSION_NONCE_BYTES * 2, nonce.len());
+        assert!(nonce.bytes().all(|b| b.is_ascii_hexdigit()), "{nonce}");
+
+        let expires_at: i64 = expires_at.parse().unwrap();
+        let expected = Utc::now().timestamp() + SESSION_TTL_DAYS * 24 * 60 * 60;
+        assert!(
+            (expires_at - expected).abs() <= 5,
+            "{expires_at} vs {expected}"
+        );
+    }
+
+    #[test]
+    fn session_nonces_are_unique() {
+        use std::collections::HashSet;
+        let nonces: HashSet<String> = (0..100)
+            .map(|_| {
+                build_session_cookie(false)
+                    .value()
+                    .split_once('.')
+                    .unwrap()
+                    .0
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(100, nonces.len());
+    }
+
+    /// The pre-nonce cookie value was a bare timestamp. It must be refused even
+    /// when correctly signed — upgrading logs sessions out once, by design.
+    #[test]
+    fn authenticate_rejects_legacy_bare_timestamp_cookie() {
+        let key = Key::generate();
+        let state = create_state(some_auth(), key.clone());
+        let legacy = Cookie::build((SESSION_COOKIE, (Utc::now().timestamp() + 3600).to_string()))
+            .path("/")
+            .build();
+        let header = signed_header(&key, legacy);
+        let request = request_with_cookie(Some(&header));
+        assert!(matches!(
+            authenticate(&state, &request),
+            AuthState::Unauthenticated
+        ));
+    }
+
+    #[test]
+    fn parse_session_value_rejects_malformed_shapes() {
+        let nonce = "0".repeat(SESSION_NONCE_BYTES * 2);
+        assert_eq!(Some(42), parse_session_value(&format!("{nonce}.42")));
+        // No separator, short nonce, non-hex nonce, non-numeric expiry.
+        assert_eq!(None, parse_session_value("42"));
+        assert_eq!(None, parse_session_value("abc.42"));
+        assert_eq!(None, parse_session_value(&format!("{}z.42", &nonce[1..])));
+        assert_eq!(None, parse_session_value(&format!("{nonce}.soon")));
+    }
+
+    #[test]
     fn authenticate_unauthenticated_with_expired_cookie() {
         let key = Key::generate();
         let state = create_state(some_auth(), key.clone());
-        let expired = Cookie::build((SESSION_COOKIE, (Utc::now().timestamp() - 1).to_string()))
-            .path("/")
-            .build();
+        let nonce = "0".repeat(SESSION_NONCE_BYTES * 2);
+        let expired = Cookie::build((
+            SESSION_COOKIE,
+            format!("{nonce}.{}", Utc::now().timestamp() - 1),
+        ))
+        .path("/")
+        .build();
         let header = signed_header(&key, expired);
         let request = request_with_cookie(Some(&header));
         assert!(matches!(

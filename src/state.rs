@@ -11,8 +11,9 @@ use crate::models::BookScan;
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: AuthConfig,
-    /// Secret key used to sign session cookies. Generated at startup, so a
-    /// restart invalidates every existing session.
+    /// Secret key used to sign session cookies. Taken from `COMICS_SESSION_KEY`
+    /// when set; otherwise generated at startup, in which case a restart
+    /// invalidates every existing session.
     pub key: Key,
     pub data_dir: PathBuf,
     pub scan: Arc<RwLock<Option<BookScan>>>,

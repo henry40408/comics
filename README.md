@@ -37,12 +37,20 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
 | `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
 | `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
+| `COMICS_SESSION_KEY` | Secret signing the session cookie: 128 hex characters (`openssl rand -hex 64`) | _(random per start)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
 | `COMICS_LOG_FORMAT` | Log format (`full`, `compact`, `pretty`, `json`) | `full` |
 | `NO_COLOR` | Disable color output ([no-color.org](https://no-color.org/)) | _(off)_ |
 | `COMICS_SEED` | Seed to generate hashed IDs | _(random)_ |
+
+> **`COMICS_SESSION_KEY`:** generate one with `openssl rand -hex 64` and supply
+> it through the environment or a secret file — never on a shell command line
+> (it lands in the history) and never committed. Without it a random key is
+> generated at each start, which logs everyone out on restart and cannot be
+> shared across replicas. Rotating the value is a global logout; anyone holding
+> it can forge a session.
 
 > **Login throttling:** `POST /login` allows 5 attempts per client IP per 60
 > seconds; further attempts get `429` until the window passes. Behind a reverse

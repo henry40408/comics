@@ -33,8 +33,9 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
     FAVICON_SVG, RateLimiter, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route,
-    index_route, login_route, login_submit_route, logout_route, rescan_books_route, scan_books,
-    show_book_route, show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
+    index_route, login_route, login_submit_route, logout_route, parse_session_key,
+    rescan_books_route, scan_books, show_book_route, show_page_route, show_thumb_route,
+    shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -85,6 +86,12 @@ struct Opts {
         default_missing_value = "true"
     )]
     cookie_secure: Option<bool>,
+    /// Secret used to sign session cookies: 128 hex characters (64 bytes).
+    /// Generate one with `openssl rand -hex 64`. When unset a random key is
+    /// generated at startup, which logs every session out on restart and cannot
+    /// be shared across replicas. Rotating this value is a global logout.
+    #[arg(long, env = "COMICS_SESSION_KEY")]
+    session_key: Option<String>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -166,12 +173,19 @@ fn spawn_initial_scan(state: Arc<AppState>, shutdown_tx: Sender<()>) {
     });
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "init entry point; keeps a fallible signature for future fallible setup steps"
-)]
 fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
     let data_dir = &opts.data_dir;
+
+    let key = if let Some(raw) = opts.session_key.as_deref() {
+        parse_session_key(raw)?
+    } else {
+        warn!(
+            "no --session-key provided; generating a random one — all sessions \
+             will be invalidated on restart. Generate a persistent key with \
+             `openssl rand -hex 64` and set COMICS_SESSION_KEY."
+        );
+        Key::generate()
+    };
 
     let seed = opts.seed.unwrap_or_else(|| {
         let seed = SystemTime::now()
@@ -189,7 +203,7 @@ fn init_route(opts: &Opts) -> anyhow::Result<(Router, Arc<AppState>)> {
             },
             _ => AuthConfig::None,
         },
-        key: Key::generate(),
+        key,
         data_dir: data_dir.clone(),
         scan: Arc::new(RwLock::new(None)),
         seed,
@@ -866,6 +880,36 @@ mod tests {
         assert_eq!(401, res.status_code());
         assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
         assert!(res.text().contains("帳號或密碼錯誤"));
+    }
+
+    /// A configured signing key survives a rebuild of the router: a cookie
+    /// issued by one server is accepted by the next. This is what stops a
+    /// restart (or a container update) from logging everyone out.
+    #[tokio::test]
+    async fn session_key_survives_router_rebuild() {
+        const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\
+                           0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let first = build_auth_server_with(true, &["--session-key", KEY]).await;
+        let res = login_response(&first).await;
+        assert_eq!(303, res.status_code());
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+
+        let second = build_auth_server_with(false, &["--session-key", KEY]).await;
+        let res = second.get("/").add_cookie(cookie).await;
+        assert_eq!(200, res.status_code());
+    }
+
+    #[tokio::test]
+    async fn session_cookie_value_is_a_nonce_and_expiry() {
+        let server = build_auth_server(true).await;
+        let res = login_response(&server).await;
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+        // The signed value is `<signature><nonce>.<expiry>`; only the shape of
+        // the trailing plaintext matters here.
+        let (head, expiry) = cookie.value().rsplit_once('.').expect("nonce.expiry");
+        assert!(expiry.parse::<i64>().is_ok(), "{expiry}");
+        assert!(head.len() > 32, "{head}");
     }
 
     /// The sixth attempt inside the window is refused, and the refusal happens
