@@ -6,7 +6,7 @@
 # builds at the host's native speed. The only C dependency is mimalloc, which
 # zig cc compiles from source; everything else (image codecs, bcrypt, xxhash) is
 # pure Rust, so no CMake or system libraries are required.
-FROM --platform=$BUILDPLATFORM rust:1.96-bookworm AS build
+FROM --platform=$BUILDPLATFORM rust:1.97-bookworm AS build
 
 # curl + xz fetch zig; that is the only build-time system dependency.
 RUN apt-get update \
