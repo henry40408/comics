@@ -28,7 +28,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 # Already in the tree as a transitive dependency of `cookie`'s `signed` feature.
 # Used to salt-and-hash session identifiers before they reach the audit log;
 # `xxhash-rust` is not a cryptographic hash and would not do.
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 tokio = { version = "1.52.3", features = [
   "fs",
   "macros",
