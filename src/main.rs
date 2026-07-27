@@ -442,8 +442,8 @@ async fn main() -> anyhow::Result<()> {
             let _ = writeln!(
                 stdout,
                 "{} book(s), {} page(s), scanned in {:?}",
-                &scan.books.len(),
-                &scan.pages_map.len(),
+                scan.books.len(),
+                scan.pages_map.len(),
                 scan.scan_duration
                     .to_std()
                     .expect("failed to convert duration")
