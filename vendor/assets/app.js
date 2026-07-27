@@ -22,18 +22,19 @@
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
 
   // ---- library: render server-side timestamps in the viewer's locale ----
-  if (window.customElements && !customElements.get("x-time")) {
-    class TimeComponent extends HTMLTimeElement {
-      connectedCallback() {
-        const d = new Date(this.getAttribute("datetime"));
-        this.innerHTML = new Intl.DateTimeFormat(undefined, {
-          dateStyle: "medium",
-          timeStyle: "medium",
-        }).format(d);
-      }
-    }
-    customElements.define("x-time", TimeComponent, { extends: "time" });
-  }
+  // Plain DOM rather than a customized built-in (`<time is="x-time">`): WebKit
+  // has declined to implement those (WebKit bug 182671), so the `extends` form
+  // of customElements.define is dead on Safari — and it lived in this file's
+  // single IIFE, where a throw would have taken the reader down with it.
+  // The server-rendered text is the fallback when this never runs.
+  document.querySelectorAll("time[data-localtime]").forEach(function (el) {
+    var d = new Date(el.getAttribute("datetime"));
+    if (Number.isNaN(d.getTime())) return; // keep whatever the server rendered
+    el.textContent = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }).format(d);
+  });
 
   // ---- reader ----
   if (!document.body.classList.contains("reader")) return;

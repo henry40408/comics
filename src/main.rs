@@ -519,6 +519,20 @@ mod tests {
         assert!(t.contains("Pepper and Carrot 02 - Rainbow Potions"));
     }
 
+    // The scan timestamp is localised client-side, but never through a
+    // customized built-in: WebKit does not implement `<time is="…">` (WebKit
+    // bug 182671), so that form is dead on Safari and app.js is one IIFE where
+    // a throw would cost the reader too. Opt in per element, so the sibling
+    // `<time>` holding an ISO duration is left alone.
+    #[tokio::test]
+    async fn index_opts_timestamps_into_client_side_localisation() {
+        let server = build_server().await;
+        let t = server.get("/").await.text();
+
+        assert!(!t.contains("is=\"x-time\""));
+        assert_eq!(1, t.matches("data-localtime").count());
+    }
+
     #[tokio::test]
     async fn get_book() {
         let book_id = DATA_IDS.first().unwrap();
