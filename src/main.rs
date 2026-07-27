@@ -533,6 +533,26 @@ mod tests {
         assert_eq!(1, t.matches("data-localtime").count());
     }
 
+    // A duration's time components sit behind the `T` designator, so a bare
+    // `P0.003S` parses as nothing at all — in ISO 8601 and in HTML's own
+    // duration-string grammar alike. The localised timestamp above carries
+    // `data-localtime`, so `<time datetime=` matches only the duration.
+    #[tokio::test]
+    async fn index_renders_the_scan_duration_as_a_valid_duration() {
+        let server = build_server().await;
+        let t = server.get("/").await.text();
+
+        let marker = "<time datetime=\"";
+        let start = t.find(marker).expect("a duration <time>") + marker.len();
+        let end = start + t[start..].find('"').expect("a closing quote");
+        let duration = &t[start..end];
+
+        assert!(
+            duration.starts_with("PT") && duration.ends_with('S'),
+            "not a valid duration string: {duration}"
+        );
+    }
+
     #[tokio::test]
     async fn get_book() {
         let book_id = DATA_IDS.first().unwrap();
