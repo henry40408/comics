@@ -64,7 +64,10 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
 > per 60 seconds; further attempts get `429` until the window passes. A
 > successful login costs nothing. The client IP is the TCP peer unless
-> `COMICS_TRUSTED_PROXIES` says otherwise — see below.
+> `COMICS_TRUSTED_PROXIES` says otherwise — see below. At most 10 000 sources are
+> tracked individually; beyond that — a spray from more live addresses than the
+> cap — further sources share one global 5-per-60-seconds window until it passes,
+> so the limit degrades to a coarser one rather than switching off.
 
 > **`COMICS_TRUSTED_PROXIES`:** set this to the address your reverse proxy
 > *connects from*, not to the range your clients are in. Until you do,

@@ -16,6 +16,40 @@ use super::TrustedProxies;
 /// bound.
 const MAX_ENTRIES: usize = 10_000;
 
+/// One fixed window: attempts charged so far, and when the window opened.
+#[derive(Clone, Copy)]
+struct Window {
+    count: u32,
+    started: Instant,
+}
+
+impl Window {
+    /// A window that has just opened with nothing charged to it.
+    fn empty() -> Self {
+        Self {
+            count: 0,
+            started: Instant::now(),
+        }
+    }
+
+    /// Whether nothing has been charged to this window for `window_secs`.
+    fn is_expired(&self, window_secs: u64) -> bool {
+        self.started.elapsed().as_secs() >= window_secs
+    }
+}
+
+/// Every window the limiter owns, behind one lock.
+///
+/// One lock rather than two so that check-and-charge stays a single critical
+/// section on both paths; concurrent requests must never all observe the same
+/// pre-attack count.
+struct Buckets {
+    per_ip: HashMap<IpAddr, Window>,
+    /// Shared by every source that arrives once `per_ip` is full. See
+    /// [`RateLimiter::try_acquire`].
+    overflow: Window,
+}
+
 /// Per-client-IP fixed-window limiter for login attempts.
 ///
 /// In-memory only: comics has no database, and a restart resetting the counters
@@ -25,7 +59,7 @@ const MAX_ENTRIES: usize = 10_000;
 /// Automated Attacks"); bcrypt's ~100 ms per verification is a speed bump, not
 /// a control.
 pub struct RateLimiter {
-    attempts: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    buckets: Mutex<Buckets>,
     max_attempts: u32,
     window_secs: u64,
     max_entries: usize,
@@ -35,7 +69,10 @@ impl RateLimiter {
     /// Create a limiter allowing `max_attempts` within `window_secs`.
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self {
-            attempts: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(Buckets {
+                per_ip: HashMap::new(),
+                overflow: Window::empty(),
+            }),
             max_attempts,
             window_secs,
             max_entries: MAX_ENTRIES,
@@ -49,31 +86,49 @@ impl RateLimiter {
     /// *before* the credential comparison — which costs ~100 ms of bcrypt — and
     /// is handed back by [`release`](Self::release) when the credentials turn
     /// out to be valid, so only failures ultimately consume the window.
+    ///
+    /// At capacity the map is first pruned of expired windows. If it is still
+    /// full — a spray from more live sources than the cap — the attempt is
+    /// charged to a single shared *overflow* window instead. The three
+    /// alternatives are all worse: admitting the source untracked makes password
+    /// guessing free and unbounded (an attacker with a `/64` has effectively
+    /// unlimited source addresses, and each admitted attempt still costs a
+    /// bcrypt verify); `clear()`ing the map hands anyone already throttled a way
+    /// to reset their own budget by spraying keys; and refusing outright turns
+    /// the same spray into a total login lockout. Sharing one finite window
+    /// degrades to a global limit under attack while keeping every source
+    /// already in the map on its own budget.
     pub fn try_acquire(&self, ip: IpAddr) -> bool {
-        let mut map = self.attempts.lock();
-        if map.len() >= self.max_entries && !map.contains_key(&ip) {
+        let mut buckets = self.buckets.lock();
+        if buckets.per_ip.len() >= self.max_entries && !buckets.per_ip.contains_key(&ip) {
             let window_secs = self.window_secs;
-            map.retain(|_, (_, started)| started.elapsed().as_secs() < window_secs);
-            if map.len() >= self.max_entries {
-                // Every entry is still live: a spray from more distinct sources
-                // than the cap. Leave the existing counters alone and let this
-                // untracked source through. Clearing the map instead would hand
-                // anyone who is already throttled a way to reset their own
-                // budget, and refusing would turn the same spray into a global
-                // login lockout. Whoever can hold this many live buckets already
-                // commands more addresses than the limit meaningfully bounds.
-                return true;
+            buckets
+                .per_ip
+                .retain(|_, window| !window.is_expired(window_secs));
+            if buckets.per_ip.len() >= self.max_entries {
+                return self.charge(&mut buckets.overflow);
             }
         }
-        let entry = map.entry(ip).or_insert((0, Instant::now()));
-        if entry.1.elapsed().as_secs() >= self.window_secs {
-            *entry = (1, Instant::now());
+        let window = buckets.per_ip.entry(ip).or_insert_with(Window::empty);
+        self.charge(window)
+    }
+
+    /// Charge one attempt to `window`, returning whether it fit.
+    ///
+    /// An expired window is rolled over rather than topped up, which is what
+    /// makes this a fixed-window rather than a sliding-window limiter.
+    fn charge(&self, window: &mut Window) -> bool {
+        if window.is_expired(self.window_secs) {
+            *window = Window {
+                count: 1,
+                started: Instant::now(),
+            };
             return true;
         }
-        if entry.0 >= self.max_attempts {
+        if window.count >= self.max_attempts {
             return false;
         }
-        entry.0 += 1;
+        window.count += 1;
         true
     }
 
@@ -83,13 +138,21 @@ impl RateLimiter {
     /// guessing, and a legitimate user who signs in repeatedly (new device,
     /// cleared cookies, a test suite) should not be locked out by it; an
     /// attacker's every attempt is a failure, so their budget is unchanged.
+    ///
+    /// An address with no window of its own was charged to the overflow bucket,
+    /// so that is what gets the refund — otherwise signing in during a spray
+    /// would quietly eat the shared budget everyone else is waiting on. Only a
+    /// caller who passed the credential check reaches here, so the refund cannot
+    /// be used to top the shared window back up.
     pub fn release(&self, ip: IpAddr) {
-        let mut map = self.attempts.lock();
-        if let Some(entry) = map.get_mut(&ip) {
-            entry.0 = entry.0.saturating_sub(1);
-            if entry.0 == 0 {
-                map.remove(&ip);
-            }
+        let mut buckets = self.buckets.lock();
+        let Some(window) = buckets.per_ip.get_mut(&ip) else {
+            buckets.overflow.count = buckets.overflow.count.saturating_sub(1);
+            return;
+        };
+        window.count = window.count.saturating_sub(1);
+        if window.count == 0 {
+            buckets.per_ip.remove(&ip);
         }
     }
 }
@@ -227,7 +290,7 @@ mod tests {
             assert!(limiter.try_acquire(addr));
             limiter.release(addr);
         }
-        assert!(limiter.attempts.lock().is_empty());
+        assert!(limiter.buckets.lock().per_ip.is_empty());
     }
 
     #[test]
@@ -237,7 +300,7 @@ mod tests {
         for last in 0..50u8 {
             limiter.try_acquire(ip(last));
         }
-        assert!(limiter.attempts.lock().len() <= 4);
+        assert!(limiter.buckets.lock().per_ip.len() <= 4);
     }
 
     /// Regression: a spray of fresh keys used to hit `map.clear()`, handing an
@@ -254,6 +317,64 @@ mod tests {
             limiter.try_acquire(ip(last));
         }
         assert!(!limiter.try_acquire(victim), "spray reset the counter");
+    }
+
+    /// Regression: at capacity the limiter used to admit a fresh source *without*
+    /// inserting it, so anyone holding more addresses than the cap — a single
+    /// IPv6 `/64` is enough — got unlimited attempts, each still costing a bcrypt
+    /// verify. The shared overflow window is what bounds that.
+    #[test]
+    fn overflow_bucket_is_shared_and_finite() {
+        let mut limiter = RateLimiter::new(3, 60);
+        // Nothing can be tracked individually, so every source overflows.
+        limiter.max_entries = 0;
+
+        let allowed = (0..50u8)
+            .filter(|&last| limiter.try_acquire(ip(last)))
+            .count();
+        assert_eq!(3, allowed, "50 distinct sources got {allowed} attempts");
+    }
+
+    /// Exhausting the shared window must not spend the budget of a source that
+    /// already has one — otherwise a spray locks out whoever is mid-login.
+    #[test]
+    fn overflow_does_not_spend_a_tracked_source_budget() {
+        let mut limiter = RateLimiter::new(3, 60);
+        limiter.max_entries = 1;
+        let tracked = ip(1);
+        assert!(limiter.try_acquire(tracked));
+
+        // The map is now full, so these all land on the shared window.
+        for last in 10..40u8 {
+            limiter.try_acquire(ip(last));
+        }
+
+        // Two of the tracked source's three attempts are still there.
+        assert!(limiter.try_acquire(tracked));
+        assert!(limiter.try_acquire(tracked));
+        assert!(!limiter.try_acquire(tracked));
+    }
+
+    /// The shared window rolls over on expiry like any other, so an attack does
+    /// not lock the form out permanently once it stops.
+    #[test]
+    fn overflow_window_expires_like_any_other() {
+        let mut limiter = RateLimiter::new(1, 0);
+        limiter.max_entries = 0;
+        assert!(limiter.try_acquire(ip(1)));
+        assert!(limiter.try_acquire(ip(2)));
+    }
+
+    /// A successful login costs nothing even when it was charged to the shared
+    /// window — otherwise signing in during a spray eats budget others wait on.
+    #[test]
+    fn release_refunds_the_overflow_bucket() {
+        let mut limiter = RateLimiter::new(1, 60);
+        limiter.max_entries = 0;
+        for round in 0..10 {
+            assert!(limiter.try_acquire(ip(1)), "round {round}");
+            limiter.release(ip(1));
+        }
     }
 
     /// Regression: checking and counting used to take the lock separately, so
