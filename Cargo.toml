@@ -19,6 +19,9 @@ clap = { version = "4.6.1", features = ["derive", "env"] }
 cookie = { version = "0.18.1", default-features = false, features = ["signed", "percent-encode"] }
 http = "1.4.1"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# CIDR parsing and prefix matching for `COMICS_TRUSTED_PROXIES`. Default features
+# are `std` only, so it adds no transitive dependencies.
+ipnet = "2.12.0"
 mimalloc = "0.1"
 parking_lot = "0.12.1"
 rand = "0.10.0"

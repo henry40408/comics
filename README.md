@@ -39,6 +39,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
 | `COMICS_SECRET` | The one secret: at least 64 hex characters (`openssl rand -hex 32`). Signs the session cookie and salts hashed book/page IDs | _(random per start)_ |
 | `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
+| `COMICS_TRUSTED_PROXIES` | Reverse proxies whose `X-Forwarded-For` may set the login rate-limit key: comma-separated IPs and CIDR prefixes (e.g. `172.16.0.0/12,10.0.0.2`) | _(empty — header ignored)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
@@ -62,14 +63,27 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 
 > **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
 > per 60 seconds; further attempts get `429` until the window passes. A
-> successful login costs nothing. `X-Forwarded-For` is trusted only when the
-> connection itself comes from loopback (comics on the same host or in the same
-> compose stack as the proxy), and only its last entry — the hop the proxy
-> appended. Behind a reverse proxy that is *not* on loopback, every request
-> appears to come from the proxy and therefore shares one bucket — safe for a
-> single-account service, but a burst of failed logins locks the form for a
-> minute. If your proxy is chained behind another one, the last entry is the
-> inner proxy rather than the client, and the same shared-bucket caveat applies.
+> successful login costs nothing. The client IP is the TCP peer unless
+> `COMICS_TRUSTED_PROXIES` says otherwise — see below. At most 10 000 sources are
+> tracked individually; beyond that — a spray from more live addresses than the
+> cap — further sources share one global 5-per-60-seconds window until it passes,
+> so the limit degrades to a coarser one rather than switching off.
+
+> **`COMICS_TRUSTED_PROXIES`:** set this to the address your reverse proxy
+> *connects from*, not to the range your clients are in. Until you do,
+> `X-Forwarded-For` is ignored entirely and every request behind the proxy shares
+> the proxy's single rate-limit bucket — safe for a single-account service, but a
+> burst of failed logins locks the form for a minute. The default is empty
+> because the header is forgeable by anyone who can reach the port: believing it
+> on presence alone would let an attacker mint a fresh bucket per request and
+> bypass the limit outright. comics logs a warning the first time it drops an
+> `X-Forwarded-For` from an unlisted peer, which is usually this setting missing.
+>
+> Once a peer is listed, the client is the rightmost `X-Forwarded-For` entry that
+> is not itself in the list, so a chain of proxies works as long as every hop is
+> listed. Common values: `127.0.0.1` for a proxy on the same host, or the compose
+> network's subnet (`172.16.0.0/12` covers Docker's default range) when the proxy
+> is a sibling container.
 
 > **`COMICS_COOKIE_SECURE`:** comics never terminates TLS itself, so it cannot
 > tell whether it is reached over HTTPS behind a reverse proxy — hence the

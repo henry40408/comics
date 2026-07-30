@@ -11,8 +11,8 @@ pub mod state;
 
 pub use assets::{APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, assets_version};
 pub use auth::{
-    AuthConfig, RateLimiter, SessionAuditSalt, auth_middleware_fn, build_session_removal_cookie,
-    rate_limit_key, session_cookie_name,
+    AuthConfig, RateLimiter, SessionAuditSalt, TrustedProxies, auth_middleware_fn,
+    build_session_removal_cookie, rate_limit_key, session_cookie_name,
 };
 pub use csrf::csrf_origin_guard;
 pub use error::{AppError, AppResult};

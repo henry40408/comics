@@ -165,7 +165,11 @@ pub async fn login_submit_route(
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
+    let ip = rate_limit_key(
+        connect.as_deref().map(|ci| ci.0.ip()),
+        &headers,
+        &state.trusted_proxies,
+    );
     let user_agent = user_agent(&headers);
     if !state.login_limiter.try_acquire(ip) {
         warn!(
@@ -203,7 +207,11 @@ pub async fn logout_route(
     headers: HeaderMap,
     request: Request,
 ) -> Response {
-    let ip = rate_limit_key(connect.as_deref().map(|ci| ci.0.ip()), &headers);
+    let ip = rate_limit_key(
+        connect.as_deref().map(|ci| ci.0.ip()),
+        &headers,
+        &state.trusted_proxies,
+    );
     let session = session_nonce_of(&state, &request).map_or_else(
         || "-".to_string(),
         |nonce| state.audit_salt.fingerprint(&nonce),
@@ -259,6 +267,7 @@ mod tests {
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
             hsts_max_age: None,
+            trusted_proxies: crate::auth::TrustedProxies::default(),
         })
     }
 
