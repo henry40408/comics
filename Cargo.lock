@@ -452,6 +452,7 @@ dependencies = [
  "cookie",
  "http",
  "image",
+ "ipnet",
  "mimalloc",
  "parking_lot",
  "rand 0.10.2",
@@ -1168,6 +1169,12 @@ checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
 dependencies = [
  "rustversion",
 ]
+
+[[package]]
+name = "ipnet"
+version = "2.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
 name = "is_terminal_polyfill"

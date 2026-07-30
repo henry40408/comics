@@ -24,10 +24,10 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt, VERSION, auth_middleware_fn,
-    csrf_origin_guard, healthz_route, hsts_layer, index_route, login_route, login_submit_route,
-    logout_route, no_store_html, rescan_books_route, scan_books, show_book_route, show_page_route,
-    show_thumb_route, shuffle_book_route, shuffle_route,
+    FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt, TrustedProxies, VERSION,
+    auth_middleware_fn, csrf_origin_guard, healthz_route, hsts_layer, index_route, login_route,
+    login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
+    show_book_route, show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -94,6 +94,16 @@ struct Opts {
     /// HTTPS. Suggested value: 63072000 (2 years).
     #[arg(long, env = "COMICS_HSTS_MAX_AGE")]
     hsts_max_age: Option<u64>,
+    /// Reverse proxies whose `X-Forwarded-For` may set the login rate-limit key:
+    /// a comma-separated list of IP addresses and CIDR prefixes (e.g.
+    /// `172.16.0.0/12,10.0.0.2`). Empty by default, which ignores the header and
+    /// keys on the TCP peer — the header is forgeable by anyone who can reach
+    /// the port, so only an explicit list can make it meaningful. Set it to the
+    /// address the proxy connects from, not to the client range. Leaving it
+    /// unset behind a proxy is safe but blunt: every client shares the proxy's
+    /// single bucket.
+    #[arg(long, env = "COMICS_TRUSTED_PROXIES")]
+    trusted_proxies: Option<TrustedProxies>,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -209,6 +219,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
         audit_salt: Arc::new(SessionAuditSalt::generate()),
         hsts_max_age: opts.hsts_max_age,
+        trusted_proxies: opts.trusted_proxies.clone().unwrap_or_default(),
     });
 
     let router = Router::new()
@@ -1111,6 +1122,47 @@ mod tests {
             .await;
         assert_eq!(429, res.status_code());
         assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
+    }
+
+    /// Fail a login `n` times as the client `X-Forwarded-For` names, returning
+    /// the status of the last attempt.
+    async fn failed_login_from(server: &TestServer, forwarded_for: &str) -> http::StatusCode {
+        server
+            .post("/login")
+            .add_header("x-forwarded-for", forwarded_for)
+            .form(&[("username", "user"), ("password", "nope")])
+            .await
+            .status_code()
+    }
+
+    /// End-to-end proof that `--trusted-proxies` reaches the limiter: the test
+    /// server's peer is loopback, so naming it as the proxy makes
+    /// `X-Forwarded-For` authoritative and each forwarded client gets its own
+    /// budget. Guards the `Opts` → `AppState` → handler wiring, which no unit
+    /// test on `rate_limit_key` can see.
+    #[tokio::test]
+    async fn auth_trusted_proxy_gives_each_forwarded_client_its_own_budget() {
+        let server = build_auth_server_with(false, &["--trusted-proxies", "127.0.0.1"]).await;
+        for attempt in 1..=LOGIN_MAX_ATTEMPTS {
+            let status = failed_login_from(&server, "203.0.113.1").await;
+            assert_eq!(401, status, "attempt {attempt}");
+        }
+        assert_eq!(429, failed_login_from(&server, "203.0.113.1").await);
+
+        // A different forwarded client is untouched by the first one's lockout.
+        assert_eq!(401, failed_login_from(&server, "203.0.113.2").await);
+    }
+
+    /// The default. With no proxy configured the header is ignored outright, so
+    /// two forwarded clients share the peer's single bucket — safe, and blunt.
+    #[tokio::test]
+    async fn auth_untrusted_forwarded_clients_share_one_budget() {
+        let server = build_auth_server(false).await;
+        for attempt in 1..=LOGIN_MAX_ATTEMPTS {
+            let status = failed_login_from(&server, &format!("203.0.113.{attempt}")).await;
+            assert_eq!(401, status, "attempt {attempt}");
+        }
+        assert_eq!(429, failed_login_from(&server, "203.0.113.99").await);
     }
 
     #[tokio::test]

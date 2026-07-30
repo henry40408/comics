@@ -1,11 +1,15 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr},
+    sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 
 use http::HeaderMap;
 use parking_lot::Mutex;
+use tracing::warn;
+
+use super::TrustedProxies;
 
 /// Hard cap on tracked IPs. When the cap is hit the map is pruned of expired
 /// windows first, so a spray from many source addresses cannot grow it without
@@ -92,30 +96,85 @@ impl RateLimiter {
 
 /// Client address used as the rate-limit key.
 ///
-/// `X-Forwarded-For` is honoured **only** when the TCP peer is loopback — the
-/// standard same-host/docker-compose reverse-proxy layout. From any other peer
-/// the header is client-controlled, and honouring it would let an attacker
-/// rotate a fake source IP to bypass the limit entirely. A missing peer is
-/// treated the same way: fail closed rather than let a degraded service stack
-/// silently re-open the header.
+/// `X-Forwarded-For` is honoured **only** when the TCP peer is inside
+/// [`TrustedProxies`] — an explicit operator setting, empty by default. Header
+/// presence proves nothing: anyone who can reach the port can write one, and the
+/// minimal nginx snippet in wide circulation sets only `X-Real-IP` while
+/// forwarding a client-supplied `X-Forwarded-For` verbatim. So the header is
+/// believed on the strength of *who sent it*, never of the fact that it exists.
+/// A missing peer means no connection info at all: fail closed onto a single
+/// shared bucket, which throttles rather than exempts.
 ///
-/// The **last** hop is the one taken, not the first. nginx's stock
-/// `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` (and Caddy's
-/// `reverse_proxy`) *append* the peer address to whatever the client sent, so
-/// the leftmost entry is attacker-chosen and only the rightmost was written by
-/// the trusted proxy. Reading the left would make the limit free to bypass by
-/// varying a header. This assumes exactly one trusted proxy; a chain would need
-/// the Nth from the right, which is what a `--trusted-proxies` option would buy.
-pub fn rate_limit_key(peer: Option<IpAddr>, headers: &HeaderMap) -> IpAddr {
-    if peer.is_some_and(|ip| ip.is_loopback())
-        && let Some(value) = headers.get("x-forwarded-for")
-        && let Ok(raw) = value.to_str()
-        && let Some(last) = raw.rsplit(',').next()
-        && let Ok(ip) = last.trim().parse::<IpAddr>()
-    {
-        return ip;
+/// Which hop is the client is decided by walking the chain from the right and
+/// skipping every address that is itself a trusted proxy. Right-to-left because
+/// nginx's stock `$proxy_add_x_forwarded_for` (and Caddy's `reverse_proxy`)
+/// *append* the peer to whatever the client sent, leaving the leftmost entry
+/// attacker-chosen; skipping trusted hops because that generalises the same rule
+/// to a proxy chain, which the old fixed "take the last one" could not express.
+/// Every hop is canonicalised, so a mapped `::ffff:` form cannot open a second
+/// bucket for one client.
+///
+/// All `X-Forwarded-For` header lines are read, not just the first. Proxies that
+/// *append a line* rather than extending the existing one (`HAProxy`'s `option
+/// forwardfor`, Caddy's `header_up +X-Forwarded-For`) put the trusted hop in the
+/// last line, so reading only `headers.get(..)` would hand back a line the client
+/// wrote.
+pub fn rate_limit_key(
+    peer: Option<IpAddr>,
+    headers: &HeaderMap,
+    trusted: &TrustedProxies,
+) -> IpAddr {
+    let Some(peer) = peer.as_ref().map(IpAddr::to_canonical) else {
+        return IpAddr::V4(Ipv4Addr::LOCALHOST);
+    };
+    if !trusted.contains(peer) {
+        warn_once_about_ignored_forwarding(peer, headers);
+        return peer;
     }
-    peer.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    forwarded_client(headers, trusted).unwrap_or(peer)
+}
+
+/// Fires at most once per process, the first time a forwarding header arrives
+/// from a peer that is not a configured proxy.
+static UNTRUSTED_FORWARD_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Point out a forwarding header that is being dropped.
+///
+/// A startup warning cannot tell whether a proxy exists, so it would either cry
+/// wolf at every direct deployment or say nothing. Waiting for a header to
+/// actually show up makes the signal exact: either a proxy is in front and its
+/// address is missing from the list — the misconfiguration worth catching, since
+/// it silently collapses every client into one bucket — or somebody is trying to
+/// forge the header, which is worth seeing too. Once is enough for both.
+fn warn_once_about_ignored_forwarding(peer: IpAddr, headers: &HeaderMap) {
+    if headers.contains_key("x-forwarded-for")
+        && !UNTRUSTED_FORWARD_WARNED.swap(true, Ordering::Relaxed)
+    {
+        warn!(
+            %peer,
+            "ignoring X-Forwarded-For from a peer that is not a trusted proxy; \
+             if this is your reverse proxy, add its address to --trusted-proxies \
+             (COMICS_TRUSTED_PROXIES), or every client behind it shares one \
+             login rate-limit bucket"
+        );
+    }
+}
+
+/// The rightmost `X-Forwarded-For` hop that is not itself a trusted proxy.
+///
+/// `None` when the header is absent, unparseable, or names nothing but trusted
+/// infrastructure — in each case the caller falls back to the peer, so a
+/// misconfigured proxy degrades to "everything behind it shares one bucket"
+/// rather than to "no limit at all".
+fn forwarded_client(headers: &HeaderMap, trusted: &TrustedProxies) -> Option<IpAddr> {
+    headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|raw| raw.split(','))
+        .filter_map(|hop| hop.trim().parse::<IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+        .rfind(|ip| !trusted.contains(*ip))
 }
 
 #[cfg(test)]
@@ -224,22 +283,41 @@ mod tests {
         assert_eq!(5, allowed, "concurrent requests overran the limit");
     }
 
-    #[test]
-    fn rate_limit_key_prefers_xff_only_from_loopback() {
+    const PROXY: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
+
+    fn trusting(raw: &str) -> TrustedProxies {
+        raw.parse().expect("valid trusted proxy list")
+    }
+
+    fn xff(value: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.9, 10.0.0.1".parse().unwrap());
+        headers.insert("x-forwarded-for", value.parse().unwrap());
+        headers
+    }
 
+    /// The default. Nothing is trusted, so the header is not even looked at —
+    /// including from loopback, which the previous rule trusted implicitly.
+    #[test]
+    fn xff_is_ignored_when_no_proxy_is_trusted() {
+        let trusted = TrustedProxies::default();
+        let headers = xff("203.0.113.9");
         let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let appended = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-        assert_eq!(appended, rate_limit_key(Some(loopback), &headers));
 
-        let proxy = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
-        assert_eq!(proxy, rate_limit_key(Some(proxy), &headers));
+        assert_eq!(loopback, rate_limit_key(Some(loopback), &headers, &trusted));
+        assert_eq!(PROXY, rate_limit_key(Some(PROXY), &headers, &trusted));
+    }
 
-        // No TCP peer: fail closed, the header is not trusted either.
-        assert_eq!(loopback, rate_limit_key(None, &headers));
-        assert_eq!(loopback, rate_limit_key(None, &HeaderMap::new()));
-        assert_eq!(proxy, rate_limit_key(Some(proxy), &HeaderMap::new()));
+    #[test]
+    fn xff_is_honoured_only_from_a_trusted_peer() {
+        let trusted = trusting("10.0.0.5");
+        let headers = xff("203.0.113.9");
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+
+        assert_eq!(client, rate_limit_key(Some(PROXY), &headers, &trusted));
+
+        // Same header, a peer nobody vouched for: the header is ignored.
+        let stranger = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1));
+        assert_eq!(stranger, rate_limit_key(Some(stranger), &headers, &trusted));
     }
 
     /// Regression: nginx's stock `$proxy_add_x_forwarded_for` appends the peer,
@@ -247,23 +325,106 @@ mod tests {
     /// attacker mint a fresh bucket per request.
     #[test]
     fn spoofed_leading_xff_hops_do_not_change_the_key() {
-        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let trusted = trusting("10.0.0.5");
         let real = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
         for spoof in ["1.2.3.4", "5.6.7.8", "9.9.9.9, 8.8.8.8"] {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "x-forwarded-for",
-                format!("{spoof}, 198.51.100.7").parse().unwrap(),
-            );
-            assert_eq!(real, rate_limit_key(Some(loopback), &headers));
+            let headers = xff(&format!("{spoof}, 198.51.100.7"));
+            assert_eq!(real, rate_limit_key(Some(PROXY), &headers, &trusted));
         }
     }
 
+    /// A chain of two proxies. The rightmost *untrusted* hop is the client; the
+    /// old fixed "take the last entry" would have keyed on the inner proxy and
+    /// collapsed every client behind it into one bucket.
     #[test]
-    fn rate_limit_key_honours_ipv6_loopback_and_ignores_garbage_headers() {
-        let v6_loopback = IpAddr::V6(Ipv6Addr::LOCALHOST);
+    fn trusted_hops_are_skipped_from_the_right() {
+        let trusted = trusting("10.0.0.0/24");
+        let headers = xff("203.0.113.9, 10.0.0.9, 10.0.0.5");
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+        assert_eq!(client, rate_limit_key(Some(PROXY), &headers, &trusted));
+    }
+
+    /// Regression for reading only the first header line: `HAProxy`'s `option
+    /// forwardfor` and Caddy's `header_up +X-Forwarded-For` append a *new* line,
+    /// putting the trusted hop last. `headers.get(..)` returns only the first,
+    /// which is the one the client wrote.
+    #[test]
+    fn xff_spread_across_header_lines_is_read_whole() {
+        let trusted = trusting("10.0.0.5");
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "not-an-ip".parse().unwrap());
-        assert_eq!(v6_loopback, rate_limit_key(Some(v6_loopback), &headers));
+        headers.append("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        headers.append("x-forwarded-for", "198.51.100.7".parse().unwrap());
+
+        let real = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
+        assert_eq!(real, rate_limit_key(Some(PROXY), &headers, &trusted));
+    }
+
+    /// Every hop is infrastructure, so there is no client to find. Falling back
+    /// to the peer throttles the proxy as a whole rather than lifting the limit.
+    #[test]
+    fn all_trusted_hops_falls_back_to_the_peer() {
+        let trusted = trusting("10.0.0.0/24");
+        let headers = xff("10.0.0.9, 10.0.0.5");
+        assert_eq!(PROXY, rate_limit_key(Some(PROXY), &headers, &trusted));
+    }
+
+    #[test]
+    fn garbage_and_absent_headers_fall_back_to_the_peer() {
+        let trusted = trusting("10.0.0.5");
+        assert_eq!(
+            PROXY,
+            rate_limit_key(Some(PROXY), &xff("not-an-ip"), &trusted)
+        );
+        assert_eq!(
+            PROXY,
+            rate_limit_key(Some(PROXY), &HeaderMap::new(), &trusted)
+        );
+    }
+
+    /// Regression: a `[::]`-bound listener reports an IPv4 peer in mapped form,
+    /// which matches no IPv4 prefix until canonicalised — so the proxy would not
+    /// be recognised and every client behind it would share the peer's bucket.
+    #[test]
+    fn ipv4_mapped_peer_is_canonicalised_before_matching() {
+        let trusted = trusting("10.0.0.0/24");
+        let mapped: IpAddr = "::ffff:10.0.0.5".parse().unwrap();
+        let headers = xff("203.0.113.9");
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+        assert_eq!(client, rate_limit_key(Some(mapped), &headers, &trusted));
+    }
+
+    /// A mapped and a plain form of one address must not open two buckets.
+    #[test]
+    fn ipv4_mapped_hops_key_the_same_as_their_plain_form() {
+        let trusted = trusting("10.0.0.5");
+        let plain = rate_limit_key(Some(PROXY), &xff("203.0.113.9"), &trusted);
+        let mapped = rate_limit_key(Some(PROXY), &xff("::ffff:203.0.113.9"), &trusted);
+        assert_eq!(plain, mapped);
+    }
+
+    /// No connection info: fail closed onto one shared bucket. It throttles
+    /// everyone rather than exempting anyone, which is the safe direction.
+    #[test]
+    fn missing_peer_fails_closed() {
+        let trusted = trusting("10.0.0.5");
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert_eq!(
+            loopback,
+            rate_limit_key(None, &xff("203.0.113.9"), &trusted)
+        );
+        assert_eq!(loopback, rate_limit_key(None, &HeaderMap::new(), &trusted));
+    }
+
+    #[test]
+    fn ipv6_peer_and_hops_work_end_to_end() {
+        let trusted = trusting("fd00::/8");
+        let headers = xff("2001:db8::1, fd00::5");
+        let client: IpAddr = "2001:db8::1".parse().unwrap();
+        let peer: IpAddr = "fd00::5".parse().unwrap();
+        assert_eq!(client, rate_limit_key(Some(peer), &headers, &trusted));
+        assert_eq!(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            rate_limit_key(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)), &headers, &trusted)
+        );
     }
 }

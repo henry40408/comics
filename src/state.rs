@@ -4,7 +4,7 @@ use cookie::Key;
 use parking_lot::RwLock;
 use tokio::sync::Semaphore;
 
-use crate::auth::{AuthConfig, RateLimiter, SessionAuditSalt};
+use crate::auth::{AuthConfig, RateLimiter, SessionAuditSalt, TrustedProxies};
 use crate::models::BookScan;
 
 /// Application state shared across all handlers
@@ -28,6 +28,9 @@ pub struct AppState {
     pub cookie_secure: bool,
     /// Throttles `POST /login` per client IP.
     pub login_limiter: Arc<RateLimiter>,
+    /// Reverse proxies whose `X-Forwarded-For` is believed when deriving that
+    /// client IP. Empty by default, which means the TCP peer is used instead.
+    pub trusted_proxies: TrustedProxies,
     /// Salts session identifiers before they reach the audit log. Never logged.
     pub audit_salt: Arc<SessionAuditSalt>,
     /// `Strict-Transport-Security` max-age in seconds, when HSTS is enabled.

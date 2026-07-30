@@ -2,6 +2,7 @@ mod audit;
 mod config;
 mod middleware;
 mod ratelimit;
+mod trusted_proxies;
 
 pub use audit::SessionAuditSalt;
 pub use config::AuthConfig;
@@ -10,3 +11,4 @@ pub use middleware::{
     build_session_removal_cookie, session_cookie_name, session_cookie_nonce, session_nonce_of,
 };
 pub use ratelimit::{RateLimiter, rate_limit_key};
+pub use trusted_proxies::TrustedProxies;
