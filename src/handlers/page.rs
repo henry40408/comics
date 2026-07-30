@@ -9,7 +9,6 @@ use tracing::{debug, error};
 
 use crate::state::AppState;
 
-/// Infer Content-Type from file extension
 pub(crate) fn content_type_from_path(path: &str) -> &'static str {
     match path
         .rsplit('.')
@@ -30,7 +29,7 @@ pub async fn show_page_route(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Copy page path while holding lock, then release lock before I/O
+    // Release the lock before any I/O.
     let page_path = {
         let locked = state.scan.read();
         let Some(scan) = locked.as_ref() else {
@@ -41,7 +40,6 @@ pub async fn show_page_route(
             Some(page) => page.path.clone(),
         }
     };
-    // Use async file read to avoid blocking other requests
     let content = match tokio::fs::read(&page_path).await {
         Ok(content) => content,
         // The file vanished between scan and request — expected, not an error.

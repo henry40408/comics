@@ -4,8 +4,6 @@ use anyhow::{Context as _, bail};
 use cookie::Key;
 use sha2::{Digest as _, Sha256, Sha512};
 
-/// Smallest secret accepted, in bytes (256 bits).
-///
 /// Sized to the thing it actually protects: `cookie`'s signed jar is
 /// HMAC-SHA256 keyed with 32 bytes, so 256 bits of input entropy already
 /// saturates it. (`cookie::Key` holds 64 bytes, but the second half is the
@@ -13,7 +11,6 @@ use sha2::{Digest as _, Sha256, Sha512};
 /// secrets are accepted and hashed just the same — they buy nothing.
 const SECRET_MIN_BYTES: usize = 32;
 
-/// Smallest number of hex characters the secret may have.
 const SECRET_MIN_HEX_LEN: usize = SECRET_MIN_BYTES * 2;
 
 /// Domain separators. Every value comics derives from the secret is the hash of
@@ -35,13 +32,11 @@ const ID_SEED_DOMAIN: &[u8] = b"comics/id-seed/v1";
 pub struct Secret(Vec<u8>);
 
 impl Secret {
-    /// A fresh random secret, used when none is configured.
+    /// Used when none is configured.
     pub fn generate() -> Self {
         Self(rand::random::<[u8; SECRET_MIN_BYTES]>().to_vec())
     }
 
-    /// The key that signs session cookies.
-    ///
     /// SHA-512 is what makes this a one-liner: its output is exactly the 64
     /// bytes `Key` wants. comics does not enable the `cookie` crate's
     /// `key-expansion` feature (which would pull in `hkdf` for
@@ -112,8 +107,8 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// Lower-case hex encoding, shared by the session nonce and any other place that
-/// needs to render bytes without pulling in a hex crate.
+/// Here rather than from a crate: rendering bytes as hex is not worth a
+/// dependency.
 pub fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);

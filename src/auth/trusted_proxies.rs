@@ -22,13 +22,11 @@ use ipnet::IpNet;
 pub struct TrustedProxies(Vec<IpNet>);
 
 impl TrustedProxies {
-    /// Whether no proxy is trusted, i.e. forwarding headers are ignored.
+    /// When true, forwarding headers are ignored entirely.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Whether `ip` falls inside any configured prefix.
-    ///
     /// The address is canonicalised first, so a dual-stack listener reporting a
     /// peer as `::ffff:10.0.0.2` still matches a `10.0.0.0/8` entry. Without
     /// that, an operator who wrote the obvious IPv4 prefix would silently get no
@@ -42,8 +40,6 @@ impl TrustedProxies {
 impl FromStr for TrustedProxies {
     type Err = anyhow::Error;
 
-    /// Parse a comma-separated list of CIDR prefixes and bare addresses.
-    ///
     /// Empty entries are skipped so a trailing comma — or an env var set to the
     /// empty string, which is how a container image ends up passing "unset" —
     /// is not an error. A bare address parses as a single-host prefix, since

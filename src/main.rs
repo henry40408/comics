@@ -153,7 +153,6 @@ enum Commands {
 /// exposed as an option: a single-account service has one legitimate user, for
 /// whom five tries a minute is ample.
 const LOGIN_MAX_ATTEMPTS: u32 = 5;
-/// Length of the login rate-limit window, in seconds.
 const LOGIN_WINDOW_SECS: u64 = 60;
 
 /// Whether the session cookie carries `Secure`. comics never terminates TLS, so
@@ -269,11 +268,9 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
-        // First-line CSRF defence: a stateless cross-site check on every
-        // unsafe-method request. Applied as a global outer layer so it also
-        // covers the public `/login` and `/logout` POSTs, which sit outside the
-        // auth layer. It is inert for safe methods, so every asset/image/
-        // `/healthz` GET passes untouched.
+        // Global outer layer so the check also covers the public `/login` and
+        // `/logout` POSTs, which sit outside the auth layer; inert for safe
+        // methods, so every asset/image/`/healthz` GET passes untouched.
         .layer(middleware::from_fn(csrf_origin_guard))
         // Global outer layer so HSTS also covers `/login`, `/healthz` and the
         // assets; inert unless a max-age is configured.
@@ -717,7 +714,6 @@ mod tests {
         let res = server.post(&path).await;
         assert_eq!(303, res.status_code());
 
-        // Verify redirect is to a different book
         let location = res.headers().get("location").unwrap().to_str().unwrap();
         assert!(location.starts_with("/book/"));
         let redirected_id = location.strip_prefix("/book/").unwrap();
@@ -1350,6 +1346,58 @@ mod tests {
         );
     }
 
+    /// Logout ends *every* session, not just the one that submitted it, so a
+    /// reader who suspects a stolen cookie can invalidate it by signing out
+    /// anywhere. Without this the only remedy was restarting the server.
+    #[tokio::test]
+    async fn auth_logout_ends_sessions_on_other_devices() {
+        let server = build_auth_server(false).await;
+        let phone = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a session cookie");
+        let desktop = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a second session cookie");
+        assert_ne!(
+            phone.value(),
+            desktop.value(),
+            "the two logins should be distinct sessions"
+        );
+
+        assert_eq!(
+            303,
+            server.post("/logout").add_cookie(phone).await.status_code()
+        );
+
+        assert_eq!(
+            303,
+            server.get("/").add_cookie(desktop).await.status_code(),
+            "the other device's session outlived the logout"
+        );
+    }
+
+    /// `/logout` sits outside the auth middleware and the CSRF guard passes
+    /// header-less clients, so an anonymous `POST` must not be able to sign
+    /// everyone out.
+    #[tokio::test]
+    async fn auth_anonymous_logout_ends_nothing() {
+        let server = build_auth_server(false).await;
+        let cookie = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a session cookie");
+
+        assert_eq!(303, server.post("/logout").await.status_code());
+
+        assert_eq!(
+            200,
+            server.get("/").add_cookie(cookie).await.status_code(),
+            "an anonymous logout ended a live session"
+        );
+    }
+
     #[tokio::test]
     async fn auth_logout_clears_session() {
         let server = build_auth_server(true).await;
@@ -1454,7 +1502,6 @@ mod tests {
         assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
     }
 
-    // Error handling tests
     #[tokio::test]
     async fn book_not_found() {
         let server = build_server().await;

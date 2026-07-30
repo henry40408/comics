@@ -1,7 +1,6 @@
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 
-/// Application error types
 #[derive(Debug)]
 pub enum AppError {
     ServiceUnavailable,
@@ -25,7 +24,6 @@ impl IntoResponse for AppError {
     }
 }
 
-/// Result type alias for application errors
 pub type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]

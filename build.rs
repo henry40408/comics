@@ -9,8 +9,7 @@ fn main() {
 }
 
 fn get_git_version() -> String {
-    // First, check if GIT_VERSION is set via environment variable
-    // This is used for Docker builds where .git directory is not available
+    // Docker builds have no .git directory, so they pass the version in.
     if let Ok(version) = std::env::var("GIT_VERSION")
         && !version.is_empty()
         && version != "dev"
@@ -18,7 +17,6 @@ fn get_git_version() -> String {
         return version;
     }
 
-    // git describe --tags --always --dirty
     Command::new("git")
         .args(["describe", "--always", "--dirty=-modified", "--tags"])
         .output()

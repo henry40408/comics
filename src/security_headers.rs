@@ -9,8 +9,7 @@ use http::{HeaderValue, header};
 
 use crate::state::AppState;
 
-/// Add `Cache-Control: no-store` (and `Pragma: no-cache` for HTTP/1.0 caches) to
-/// authenticated HTML responses.
+/// Adds `Pragma: no-cache` alongside, for HTTP/1.0 caches.
 ///
 /// OWASP's *Web Content Caching* guidance is about the rendered page persisting
 /// in the browser cache, where a back-button press after logout would still show
@@ -38,8 +37,6 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
     res
 }
 
-/// Add `Strict-Transport-Security` when a `max-age` is configured.
-///
 /// Applied as a global outer layer so it also covers `/login`, `/healthz`, and
 /// the assets. Off unless configured: comics does not terminate TLS, so HSTS
 /// properly belongs on the reverse proxy that does, and a browser that has

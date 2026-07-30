@@ -2,7 +2,6 @@ use std::fmt;
 
 use xxhash_rust::xxh3::Xxh3;
 
-/// Newtype wrapper for book IDs
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BookId(pub String);
 
@@ -24,7 +23,6 @@ impl AsRef<str> for BookId {
     }
 }
 
-/// Newtype wrapper for page IDs
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PageId(pub String);
 
@@ -46,7 +44,6 @@ impl AsRef<str> for PageId {
     }
 }
 
-/// Hash a string with a seed to generate an ID
 pub fn hash_string<S: AsRef<str>>(seed: u64, s: S) -> String {
     let mut hasher = Xxh3::with_seed(seed);
     hasher.update(s.as_ref().as_bytes());

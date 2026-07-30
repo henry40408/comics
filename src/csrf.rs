@@ -29,9 +29,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// Reject a state-changing request that is provably cross-site. See the module
-/// docs for the classification. Safe methods (GET/HEAD/OPTIONS/TRACE) never
-/// change state and pass through untouched.
+/// Reject a state-changing request that is provably cross-site; see the module
+/// docs for the classification.
 pub async fn csrf_origin_guard(req: Request, next: Next) -> Response {
     if is_safe(req.method()) || !is_cross_site(&req) {
         return next.run(req).await;
@@ -39,7 +38,6 @@ pub async fn csrf_origin_guard(req: Request, next: Next) -> Response {
     StatusCode::FORBIDDEN.into_response()
 }
 
-/// Whether `method` cannot change server state and so needs no CSRF check.
 fn is_safe(method: &Method) -> bool {
     matches!(
         *method,
@@ -47,10 +45,8 @@ fn is_safe(method: &Method) -> bool {
     )
 }
 
-/// Whether the request is one a browser has told us — via `Sec-Fetch-Site` or a
-/// mismatched `Origin` — is cross-site. A request a browser did not mark, and
-/// that carries no `Origin`, is treated as not-cross-site (a non-browser
-/// client); see the module docs.
+/// Only what a browser has *told us* is cross-site counts; anything unclassified
+/// is passed through. See the module docs.
 fn is_cross_site(req: &Request) -> bool {
     let headers = req.headers();
 
@@ -59,7 +55,6 @@ fn is_cross_site(req: &Request) -> bool {
         return site.eq_ignore_ascii_case("cross-site");
     }
 
-    // Fall back to comparing the Origin's host with the request's own Host.
     let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         // No Sec-Fetch-Site and no Origin → a non-browser client.
         return false;
@@ -95,7 +90,6 @@ fn strip_port(authority: &str) -> String {
         .strip_prefix('[')
         .and_then(|_| authority.find(']'))
     {
-        // Bracketed IPv6: keep through the closing bracket, drop any `:port`.
         return authority[..=end].to_ascii_lowercase();
     }
     authority

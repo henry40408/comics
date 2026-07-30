@@ -6,8 +6,7 @@ use parking_lot::RwLockWriteGuard;
 use crate::models::BookScan;
 use crate::state::AppState;
 
-/// Helper to acquire read access to the scan data
-/// Returns `SERVICE_UNAVAILABLE` status if scan is not ready
+/// `SERVICE_UNAVAILABLE` until the initial scan has finished.
 pub fn with_scan<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode, &'static str)>
 where
     F: FnOnce(&BookScan) -> T,
@@ -19,8 +18,7 @@ where
     }
 }
 
-/// Helper to acquire mutable access to the scan data
-/// Returns `SERVICE_UNAVAILABLE` status if scan is not ready
+/// `SERVICE_UNAVAILABLE` until the initial scan has finished.
 pub fn with_scan_mut<T, F>(state: &Arc<AppState>, f: F) -> Result<T, (StatusCode, &'static str)>
 where
     F: FnOnce(&mut BookScan) -> T,
@@ -32,7 +30,6 @@ where
     }
 }
 
-/// Get the write lock guard for the scan data
 pub fn get_scan_lock(state: &Arc<AppState>) -> RwLockWriteGuard<'_, Option<BookScan>> {
     state.scan.write()
 }

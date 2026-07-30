@@ -2,11 +2,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::secret::hex_lower;
 
-/// Bytes of the per-process salt.
 const SALT_BYTES: usize = 16;
-/// Bytes of the digest kept in a fingerprint. Eight bytes are ample to
-/// correlate the handful of session events one process emits, and truncation
-/// removes any temptation to treat the value as reversible.
+/// Eight bytes are ample to correlate the handful of session events one process
+/// emits, and truncation removes any temptation to treat the value as
+/// reversible.
 const FINGERPRINT_BYTES: usize = 8;
 
 /// Per-process salt for session-identifier hashing.

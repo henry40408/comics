@@ -15,7 +15,6 @@ use crate::state::AppState;
 
 /// Base name of the signed session cookie, without the `__Host-` prefix.
 pub const SESSION_COOKIE: &str = "comics_session";
-/// Name of the session cookie when the `__Host-` prefix applies.
 const SESSION_COOKIE_HOST_PREFIXED: &str = "__Host-comics_session";
 
 /// Cookie name with the `__Host-` prefix applied when it is legal to do so.
@@ -36,7 +35,6 @@ pub fn session_cookie_name(secure: bool) -> &'static str {
         SESSION_COOKIE
     }
 }
-/// Authentication state after checking the request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthState {
     /// No credentials are configured; everything is public.
@@ -47,7 +45,6 @@ pub enum AuthState {
         /// Worth recording; never worth acting on. See [`super::SessionStore`].
         user_agent_changed: bool,
     },
-    /// The request carries no usable session, and why.
     Unauthenticated(Rejection),
 }
 
@@ -73,8 +70,6 @@ pub enum Rejection {
     Expired(Expiry),
 }
 
-/// Build a signed-cookie-ready session cookie carrying `id`.
-///
 /// The value is the store's opaque identifier and nothing else — 128 CSPRNG bits
 /// as hex, with no expiry, no username and no structure of any kind, which is
 /// exactly what the OWASP Session Management Cheat Sheet asks of a session ID
@@ -116,8 +111,6 @@ pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
         .build()
 }
 
-/// Build the removal counterpart of [`build_session_cookie`].
-///
 /// A browser matches a removal cookie on name + `Path` + `Domain`, and rejects a
 /// `__Host-`-named cookie that is missing `Secure`, so every attribute must
 /// mirror the cookie that was issued. Kept directly below `build_session_cookie`
@@ -132,12 +125,9 @@ pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
         .build()
 }
 
-/// The session identifier the request's signed cookie carries, if any.
-///
 /// Exposed so logout can both end the session and fingerprint it for the audit
-/// log without the handler having to know about jars or signatures. The value is
-/// a session identifier — never log it directly, hash it with
-/// [`crate::auth::SessionAuditSalt`].
+/// log without the handler having to know about jars or signatures. **Never log
+/// the value directly** — hash it with [`crate::auth::SessionAuditSalt`].
 pub fn session_id_of(state: &Arc<AppState>, request: &Request) -> Option<String> {
     let jar = jar_from_request(request);
     let cookie = jar
@@ -146,9 +136,9 @@ pub fn session_id_of(state: &Arc<AppState>, request: &Request) -> Option<String>
     is_session_id(cookie.value()).then(|| cookie.value().to_owned())
 }
 
-/// The `User-Agent` of a request. Absent or non-ASCII values become `-` rather
-/// than being dropped, so every audit event carries the field and the session
-/// store always has something stable to compare against.
+/// Absent or non-ASCII values become `-` rather than being dropped, so every
+/// audit event carries the field and the session store always has something
+/// stable to compare against.
 pub fn user_agent(headers: &HeaderMap) -> &str {
     headers
         .get(header::USER_AGENT)
@@ -156,7 +146,6 @@ pub fn user_agent(headers: &HeaderMap) -> &str {
         .unwrap_or("-")
 }
 
-/// Parse the request's `Cookie` header into a jar.
 fn jar_from_request(request: &Request) -> CookieJar {
     let mut jar = CookieJar::new();
     for value in request.headers().get_all(header::COOKIE) {
@@ -168,8 +157,6 @@ fn jar_from_request(request: &Request) -> CookieJar {
     jar
 }
 
-/// Authenticate a request against the configured credentials.
-///
 /// Three gates, cheapest first: the signature, the identifier's shape, then the
 /// store. Only the last one takes a lock, and it is the only one that can say
 /// the session is *live* — which is what makes logout effective, since the
@@ -205,7 +192,7 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
     }
 }
 
-/// Record what the authentication check found, at a level matching what it says.
+/// The level is chosen to match what each rejection actually says.
 ///
 /// `Absent` is silent: an anonymous visitor hitting a protected URL is the
 /// ordinary case, not an event. `Unknown` is `DEBUG` because every valid cookie
@@ -250,7 +237,6 @@ fn record_rejection(state: &Arc<AppState>, request: &Request, why: Rejection) {
     }
 }
 
-/// Axum middleware function for authentication.
 pub async fn auth_middleware_fn(
     State(state): State<Arc<AppState>>,
     request: Request,
@@ -275,8 +261,8 @@ pub async fn auth_middleware_fn(
         }
         AuthState::Unauthenticated(why) => {
             record_rejection(&state, &request, why);
-            // Bounce browsers (GET navigations) to the login form, preserving
-            // where they were headed; reject API-style writes with 401.
+            // A GET is a browser navigation, so send it somewhere useful; any
+            // other method is an API-style write, which gets a bare 401.
             if request.method() == Method::GET {
                 let next_path = request.uri().path_and_query().map_or_else(
                     || request.uri().path().to_owned(),
