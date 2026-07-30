@@ -147,6 +147,10 @@ mod tests {
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
             hsts_max_age: None,
+            sessions: Arc::new(crate::auth::SessionStore::new(
+                crate::auth::DEFAULT_IDLE_TTL,
+                crate::auth::DEFAULT_ABSOLUTE_TTL,
+            )),
             trusted_proxies: crate::auth::TrustedProxies::default(),
         })
     }
