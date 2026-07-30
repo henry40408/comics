@@ -23,11 +23,12 @@ use tracing_subscriber::{
 };
 
 use comics::{
-    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, FAVICON_PNG,
-    FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt, TrustedProxies, VERSION,
-    auth_middleware_fn, csrf_origin_guard, healthz_route, hsts_layer, index_route, login_route,
-    login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
-    show_book_route, show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
+    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, DEFAULT_ABSOLUTE_TTL,
+    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt,
+    SessionStore, TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route,
+    hsts_layer, index_route, login_route, login_submit_route, logout_route, no_store_html,
+    rescan_books_route, scan_books, show_book_route, show_page_route, show_thumb_route,
+    shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -79,11 +80,13 @@ struct Opts {
     )]
     cookie_secure: Option<bool>,
     /// The one secret comics is configured with: at least 64 hex characters
-    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session cookie
-    /// signing key and the salt for hashed book/page IDs are derived from it.
-    /// When unset a random secret is generated at startup, which logs every
-    /// session out and reshuffles every URL on restart, and cannot be shared
-    /// across replicas. Rotating it is a global logout *and* changes every URL.
+    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session
+    /// cookie signing key and the salt for hashed book/page IDs are derived from
+    /// it. Sessions live in memory and end at every restart regardless of this
+    /// value; what it buys is stable book and page URLs across restarts, and a
+    /// signature that stays valid so a stale cookie is distinguishable from a
+    /// forged one. When unset a random secret is generated at startup, which
+    /// reshuffles every URL on restart. Rotating it changes every URL.
     #[arg(long, env = "COMICS_SECRET")]
     secret: Option<Secret>,
     /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
@@ -217,6 +220,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         )),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
         login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
+        sessions: Arc::new(SessionStore::new(DEFAULT_IDLE_TTL, DEFAULT_ABSOLUTE_TTL)),
         audit_salt: Arc::new(SessionAuditSalt::generate()),
         hsts_max_age: opts.hsts_max_age,
         trusted_proxies: opts.trusted_proxies.clone().unwrap_or_default(),
@@ -1052,11 +1056,21 @@ mod tests {
         );
     }
 
-    /// A configured signing key survives a rebuild of the router: a cookie
-    /// issued by one server is accepted by the next. This is what stops a
-    /// restart (or a container update) from logging everyone out.
+    /// Sessions do **not** survive a rebuild of the router, and that is the
+    /// deliberate trade the session store makes.
+    ///
+    /// This test previously asserted the opposite: a fixed `COMICS_SECRET` made
+    /// a cookie issued by one server acceptable to the next, because the cookie
+    /// described itself and the server kept no record of it. That is exactly what
+    /// made logout unenforceable — nothing existed to delete — so ending a
+    /// session and surviving a restart were the same property, and only one of
+    /// them could be had. Being able to revoke won.
+    ///
+    /// What the secret still buys is asserted below: stable URLs, and a
+    /// signature that stays valid across the rebuild, so a stale cookie is
+    /// distinguishable from a forged one.
     #[tokio::test]
-    async fn secret_survives_router_rebuild() {
+    async fn sessions_do_not_survive_a_router_rebuild() {
         // Deliberately not TEST_SECRET: the flag, not the helper default, has to
         // be what makes the two routers agree.
         const SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\
@@ -1067,21 +1081,68 @@ mod tests {
         assert_eq!(303, res.status_code());
         let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
 
+        // The same cookie against a fresh process: the store never heard of it.
         let second = build_auth_server_with(false, &["--secret", SECRET]).await;
         let res = second.get("/").add_cookie(cookie).await;
-        assert_eq!(200, res.status_code());
+        assert_eq!(303, res.status_code(), "a stale session was accepted");
+        assert!(
+            res.headers()["location"]
+                .to_str()
+                .unwrap()
+                .starts_with("/login")
+        );
     }
 
+    /// The shared secret still keeps book and page URLs stable across a restart.
+    /// That, and signature continuity, is what it is for now that it no longer
+    /// decides whether a session lives.
     #[tokio::test]
-    async fn session_cookie_value_is_a_nonce_and_expiry() {
+    async fn secret_keeps_urls_stable_across_router_rebuild() {
+        const SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\
+                              fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+        let first = build_auth_server_with(true, &["--secret", SECRET]).await;
+        login_response(&first).await;
+        let first_page = first.get("/").await.text();
+
+        let second = build_auth_server_with(true, &["--secret", SECRET]).await;
+        login_response(&second).await;
+        let second_page = second.get("/").await.text();
+
+        // Not DATA_IDS: those are derived from TEST_SECRET, and this test uses
+        // its own so the flag rather than the helper default is what makes the
+        // two agree. Comparing the two sets is the property either way.
+        let ids = |page: &str| -> Vec<String> {
+            page.match_indices("/book/")
+                .map(|(at, marker)| {
+                    let rest = &page[at + marker.len()..];
+                    rest[..rest.find('"').expect("a closing quote")].to_string()
+                })
+                .collect()
+        };
+        let before = ids(&first_page);
+        assert_eq!(2, before.len(), "expected the two fixture books");
+        assert_eq!(before, ids(&second_page));
+    }
+
+    /// The cookie carries the session identifier and nothing else — no expiry,
+    /// no username, nothing an attacker could decode or an operator could be
+    /// tempted to trust. Everything else lives in the store.
+    #[tokio::test]
+    async fn session_cookie_value_is_a_bare_identifier() {
         let server = build_auth_server(true).await;
         let res = login_response(&server).await;
         let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
-        // The signed value is `<signature><nonce>.<expiry>`; only the shape of
-        // the trailing plaintext matters here.
-        let (head, expiry) = cookie.value().rsplit_once('.').expect("nonce.expiry");
-        assert!(expiry.parse::<i64>().is_ok(), "{expiry}");
-        assert!(head.len() > 32, "{head}");
+
+        // The signed value is `<signature><id>`.
+        let value = cookie.value();
+        assert!(
+            !value.contains('.'),
+            "value still carries a separator: {value}"
+        );
+        let id = &value[value.len() - 32..];
+        assert!(id.bytes().all(|b| b.is_ascii_hexdigit()), "{id}");
+        assert!(value.len() > 32, "{value}");
     }
 
     /// A successful login must not consume the anti-brute-force budget: the
@@ -1181,6 +1242,48 @@ mod tests {
         assert_eq!(
             "/",
             res.headers().get("location").unwrap().to_str().unwrap()
+        );
+    }
+
+    /// The change this branch exists for: after logout the *same* cookie is
+    /// refused, because the session it names is gone from the server.
+    ///
+    /// The cookie is replayed by hand rather than through the client jar,
+    /// precisely because the jar would honour the removal cookie and prove
+    /// nothing — a browser that ignores it, or an attacker holding a copy taken
+    /// earlier, is exactly the case that used to keep working for a further
+    /// seven days.
+    #[tokio::test]
+    async fn auth_logout_invalidates_the_session_server_side() {
+        let server = build_auth_server(false).await;
+        let res = login_response(&server).await;
+        assert_eq!(303, res.status_code());
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+
+        assert_eq!(
+            200,
+            server
+                .get("/")
+                .add_cookie(cookie.clone())
+                .await
+                .status_code(),
+            "the fresh session should work"
+        );
+
+        let res = server.post("/logout").add_cookie(cookie.clone()).await;
+        assert_eq!(303, res.status_code());
+
+        let res = server.get("/").add_cookie(cookie).await;
+        assert_eq!(
+            303,
+            res.status_code(),
+            "a destroyed session was still accepted"
+        );
+        assert!(
+            res.headers()["location"]
+                .to_str()
+                .unwrap()
+                .starts_with("/login")
         );
     }
 

@@ -15,7 +15,7 @@ use crate::VERSION;
 use crate::assets::assets_version;
 use crate::auth::{
     AuthConfig, AuthState, authenticate, build_session_cookie, build_session_removal_cookie,
-    rate_limit_key, session_cookie_nonce, session_nonce_of,
+    rate_limit_key, session_id_of, user_agent,
 };
 use crate::state::AppState;
 
@@ -101,11 +101,11 @@ fn render_login(error: bool, next: &str) -> Response {
     }
 }
 
-/// Attach a freshly-signed session cookie to a response, returning the nonce it
-/// carries so the caller can record a fingerprint of it in the audit log.
-fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) -> Option<String> {
-    let cookie = build_session_cookie(state.cookie_secure);
-    let nonce = session_cookie_nonce(&cookie);
+/// Open a session and attach its signed cookie to a response, returning the
+/// identifier so the caller can record a fingerprint of it in the audit log.
+fn set_session_cookie(response: &mut Response, state: &Arc<AppState>, user_agent: &str) -> String {
+    let id = state.sessions.create(user_agent);
+    let cookie = build_session_cookie(state.cookie_secure, &id);
     let mut jar = CookieJar::new();
     jar.signed_mut(&state.key).add(cookie);
     for cookie in jar.delta() {
@@ -113,7 +113,7 @@ fn set_session_cookie(response: &mut Response, state: &Arc<AppState>) -> Option<
             response.headers_mut().append(header::SET_COOKIE, value);
         }
     }
-    nonce
+    id
 }
 
 /// `Clear-Site-Data` is not in `http`'s constant list, so name it here.
@@ -127,15 +127,6 @@ static CLEAR_SITE_DATA: HeaderName = HeaderName::from_static("clear-site-data");
 /// `/login` that logout already performs.
 const CLEAR_SITE_DATA_VALUE: &str = "\"cache\", \"cookies\", \"storage\"";
 
-/// The `User-Agent` of a request, for the audit log. Absent or non-ASCII values
-/// become `-` rather than being dropped, so every event has the field.
-fn user_agent(headers: &HeaderMap) -> &str {
-    headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("-")
-}
-
 /// `GET /login` — render the login form. Skips it (redirecting home) when auth
 /// is disabled or the visitor already holds a valid session.
 pub async fn login_route(
@@ -144,7 +135,10 @@ pub async fn login_route(
     request: Request,
 ) -> Response {
     if matches!(state.auth_config, AuthConfig::None)
-        || matches!(authenticate(&state, &request), AuthState::Authenticated)
+        || matches!(
+            authenticate(&state, &request),
+            AuthState::Authenticated { .. }
+        )
     {
         return Redirect::to(&safe_next(&query.next)).into_response();
     }
@@ -189,18 +183,22 @@ pub async fn login_submit_route(
     // it, so signing in repeatedly never exhausts the window.
     state.login_limiter.release(ip);
     let mut response = Redirect::to(&safe_next(&form.next)).into_response();
-    let session = set_session_cookie(&mut response, &state).map_or_else(
-        || "-".to_string(),
-        |nonce| state.audit_salt.fingerprint(&nonce),
-    );
+    let id = set_session_cookie(&mut response, &state, user_agent);
     info!(
         event = "session_created",
-        session, %ip, user_agent, "session created"
+        session = state.audit_salt.fingerprint(&id),
+        %ip, user_agent, "session created"
     );
     response
 }
 
-/// `POST /logout` — clear the session cookie and return to the login form.
+/// `POST /logout` — end the session, clear its cookie, and return to the login
+/// form.
+///
+/// The session is destroyed **server-side** first. That is the half the OWASP
+/// Session Expiration guidance calls mandatory and the half a cookie-only
+/// implementation cannot do: the removal cookie and `Clear-Site-Data` below only
+/// ask the browser to forget, which does nothing about a copy taken earlier.
 pub async fn logout_route(
     State(state): State<Arc<AppState>>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -212,13 +210,15 @@ pub async fn logout_route(
         &headers,
         &state.trusted_proxies,
     );
-    let session = session_nonce_of(&state, &request).map_or_else(
-        || "-".to_string(),
-        |nonce| state.audit_salt.fingerprint(&nonce),
-    );
+    let id = session_id_of(&state, &request);
+    // `destroyed` distinguishes ending a live session from a logout that had
+    // nothing to end (an already-expired cookie, a double submit).
+    let destroyed = id.as_deref().is_some_and(|id| state.sessions.destroy(id));
+    let session = id.map_or_else(|| "-".to_string(), |id| state.audit_salt.fingerprint(&id));
     info!(
         event = "session_destroyed",
         session,
+        destroyed,
         %ip,
         user_agent = user_agent(&headers),
         "session destroyed"
@@ -267,6 +267,10 @@ mod tests {
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
             hsts_max_age: None,
+            sessions: Arc::new(crate::auth::SessionStore::new(
+                crate::auth::DEFAULT_IDLE_TTL,
+                crate::auth::DEFAULT_ABSOLUTE_TTL,
+            )),
             trusted_proxies: crate::auth::TrustedProxies::default(),
         })
     }
@@ -292,11 +296,18 @@ mod tests {
         }
     }
 
-    /// The nonce a `Set-Cookie` header carries: the 32 hex characters preceding
-    /// the `.` separator, after the jar's signature prefix.
-    fn nonce_from_set_cookie(header: &str) -> String {
-        let dot = header.find('.').expect("nonce.expiry separator");
-        header[dot - 32..dot].to_string()
+    /// The session identifier a `Set-Cookie` header carries: the signed value is
+    /// the jar's signature followed by the identifier, so it is the last 32
+    /// characters of the value before the attributes begin.
+    fn id_from_set_cookie(header: &str) -> String {
+        let value = header
+            .split_once('=')
+            .expect("a name=value pair")
+            .1
+            .split(';')
+            .next()
+            .expect("a value");
+        value[value.len() - 32..].to_string()
     }
 
     /// OWASP is explicit that a session identifier must never be logged in
@@ -331,15 +342,15 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        let nonce = nonce_from_set_cookie(&set_cookie);
+        let id = id_from_set_cookie(&set_cookie);
 
         let logs = String::from_utf8(capture.0.lock().clone()).unwrap();
         assert!(logs.contains("session_created"), "{logs}");
         assert!(
-            logs.contains(&state.audit_salt.fingerprint(&nonce)),
+            logs.contains(&state.audit_salt.fingerprint(&id)),
             "expected the fingerprint in {logs}"
         );
-        assert!(!logs.contains(&nonce), "nonce leaked into {logs}");
+        assert!(!logs.contains(&id), "identifier leaked into {logs}");
     }
 
     #[tokio::test]

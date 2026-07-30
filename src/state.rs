@@ -4,7 +4,7 @@ use cookie::Key;
 use parking_lot::RwLock;
 use tokio::sync::Semaphore;
 
-use crate::auth::{AuthConfig, RateLimiter, SessionAuditSalt, TrustedProxies};
+use crate::auth::{AuthConfig, RateLimiter, SessionAuditSalt, SessionStore, TrustedProxies};
 use crate::models::BookScan;
 
 /// Application state shared across all handlers
@@ -31,6 +31,9 @@ pub struct AppState {
     /// Reverse proxies whose `X-Forwarded-For` is believed when deriving that
     /// client IP. Empty by default, which means the TCP peer is used instead.
     pub trusted_proxies: TrustedProxies,
+    /// The live sessions. Held in memory only, so a restart ends every session —
+    /// the price of being able to end one deliberately.
+    pub sessions: Arc<SessionStore>,
     /// Salts session identifiers before they reach the audit log. Never logged.
     pub audit_salt: Arc<SessionAuditSalt>,
     /// `Strict-Transport-Security` max-age in seconds, when HSTS is enabled.

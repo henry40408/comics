@@ -51,14 +51,30 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > lands in the history) and never committed. Two independent values are derived
 > from it, each behind its own domain-separated hash: the key that signs session
 > cookies, and the seed that salts hashed book and page IDs. Without it a random
-> secret is generated at each start, which logs everyone out *and* changes every
-> book/page URL on restart, and cannot be shared across replicas. Rotating the
-> value does the same on purpose; anyone holding it can forge a session.
+> secret is generated at each start, which changes every book/page URL on
+> restart. Rotating the value does the same on purpose. It does **not** control
+> how long you stay logged in — see the session note below.
 
-> **Audit logging:** logins, logouts, failed logins and throttled attempts are
-> logged with the client IP and `User-Agent` (and, for sessions, a salted hash of
-> the session identifier — never the identifier itself, and never the submitted
-> username or password). If you would rather not record IP and `User-Agent`, drop
+> **Sessions:** logging in opens a session that comics holds in memory, and the
+> cookie carries only an opaque identifier for it. That is what makes logging out
+> actually work: the session is deleted server-side, so a copy of the cookie
+> taken beforehand stops working immediately rather than lasting until it
+> expires.
+>
+> The trade is that **restarting comics logs everyone out** — including a
+> container update — because the sessions were only ever in memory. In practice
+> this replaces a schedule you already had: sessions expire after 7 days
+> regardless of activity, or 3 days without a request, so a restart is usually
+> the rarer of the two. Log in again and carry on.
+
+> **Audit logging:** logins, logouts, expiries, failed logins and throttled
+> attempts are logged with the client IP and `User-Agent` (and, for sessions, a
+> salted hash of the session identifier — never the identifier itself, and never
+> the submitted username or password). Two `WARN`s are worth alerting on because
+> they cannot happen by accident: `session_rejected` with `reason=bad_signature`
+> or `reason=malformed` means a cookie this server never issued. A cookie that is
+> merely stale — after a restart, say — logs at `DEBUG` instead, so an upgrade
+> does not fill the log. If you would rather not record IP and `User-Agent`, drop
 > the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
 
 > **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
