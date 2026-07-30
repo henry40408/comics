@@ -92,13 +92,22 @@ pub enum Rejection {
 /// forcing it on would lock plain-HTTP LAN deployments out of the login form
 /// with no visible error.
 ///
+/// `SameSite=Strict` is the cheat sheet's stated preference, and comics can
+/// afford it where a general web application often cannot: there is no OAuth
+/// callback, no payment return, no third party that ever navigates *into* an
+/// authenticated URL. The visible cost is that following an external link to a
+/// book lands on the login form even while signed in, because the browser
+/// withholds the cookie on that first cross-site navigation; the next
+/// same-site navigation carries it and the reader continues. `Lax` would avoid
+/// that at the price of sending the cookie on every top-level cross-site GET.
+///
 /// `Max-Age` mirrors the store's absolute ceiling. It is a hint to the browser
 /// only — the server enforces both deadlines itself, and a cookie kept past
 /// either is refused on arrival.
 pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), id.to_owned()))
         .http_only(true)
-        .same_site(SameSite::Lax)
+        .same_site(SameSite::Strict)
         .path("/")
         .secure(secure)
         .max_age(
@@ -116,7 +125,7 @@ pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
 pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), ""))
         .http_only(true)
-        .same_site(SameSite::Lax)
+        .same_site(SameSite::Strict)
         .path("/")
         .secure(secure)
         .max_age(Duration::ZERO)
