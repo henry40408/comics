@@ -1,6 +1,6 @@
 // Comics — shared front-end behaviour for the library and reader pages.
 // Loaded with `defer`, so the DOM is ready when this runs. The pre-paint
-// theme is set by a tiny inline snippet in each template's <head>.
+// theme is set by theme.js, loaded synchronously in each template's <head>.
 (function () {
   "use strict";
 

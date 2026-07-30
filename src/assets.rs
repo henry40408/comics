@@ -6,6 +6,12 @@ pub const APP_CSS: &str = include_str!("../vendor/assets/app.css");
 
 pub const APP_JS: &str = include_str!("../vendor/assets/app.js");
 
+/// The pre-paint theme snippet. Served separately from [`APP_JS`] because it
+/// must run synchronously in `<head>` while `app.js` is deferred — and it lives
+/// in a file rather than inline in the templates so the CSP can stay at
+/// `script-src 'self'`.
+pub const THEME_JS: &str = include_str!("../vendor/assets/theme.js");
+
 pub const FAVICON_SVG: &str = include_str!("../vendor/assets/favicon.svg");
 
 /// Raster fallback for browsers that will not take the SVG favicon.
@@ -24,6 +30,7 @@ pub fn assets_version() -> &'static str {
             let mut hasher = Xxh3::with_seed(0);
             hasher.update(APP_CSS.as_bytes());
             hasher.update(APP_JS.as_bytes());
+            hasher.update(THEME_JS.as_bytes());
             hasher.update(FAVICON_SVG.as_bytes());
             hasher.update(FAVICON_PNG);
             hasher.update(APPLE_TOUCH_ICON_PNG);

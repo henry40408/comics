@@ -9,7 +9,9 @@ pub mod secret;
 pub mod security_headers;
 pub mod state;
 
-pub use assets::{APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, assets_version};
+pub use assets::{
+    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, THEME_JS, assets_version,
+};
 pub use auth::{
     AuthConfig, DEFAULT_ABSOLUTE_TTL, DEFAULT_IDLE_TTL, RateLimiter, SessionAuditSalt,
     SessionStore, TrustedProxies, auth_middleware_fn, build_session_removal_cookie, rate_limit_key,
@@ -24,7 +26,7 @@ pub use handlers::{
 };
 pub use models::{Book, BookScan, Page, scan_books};
 pub use secret::{Secret, hex_lower};
-pub use security_headers::{hsts_layer, no_store_html};
+pub use security_headers::{no_store_html, security_headers_layer};
 pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");
