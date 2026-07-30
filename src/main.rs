@@ -1350,6 +1350,58 @@ mod tests {
         );
     }
 
+    /// Logout ends *every* session, not just the one that submitted it, so a
+    /// reader who suspects a stolen cookie can invalidate it by signing out
+    /// anywhere. Without this the only remedy was restarting the server.
+    #[tokio::test]
+    async fn auth_logout_ends_sessions_on_other_devices() {
+        let server = build_auth_server(false).await;
+        let phone = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a session cookie");
+        let desktop = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a second session cookie");
+        assert_ne!(
+            phone.value(),
+            desktop.value(),
+            "the two logins should be distinct sessions"
+        );
+
+        assert_eq!(
+            303,
+            server.post("/logout").add_cookie(phone).await.status_code()
+        );
+
+        assert_eq!(
+            303,
+            server.get("/").add_cookie(desktop).await.status_code(),
+            "the other device's session outlived the logout"
+        );
+    }
+
+    /// `/logout` sits outside the auth middleware and the CSRF guard passes
+    /// header-less clients, so an anonymous `POST` must not be able to sign
+    /// everyone out.
+    #[tokio::test]
+    async fn auth_anonymous_logout_ends_nothing() {
+        let server = build_auth_server(false).await;
+        let cookie = login_response(&server)
+            .await
+            .maybe_cookie(SESSION_COOKIE)
+            .expect("a session cookie");
+
+        assert_eq!(303, server.post("/logout").await.status_code());
+
+        assert_eq!(
+            200,
+            server.get("/").add_cookie(cookie).await.status_code(),
+            "an anonymous logout ended a live session"
+        );
+    }
+
     #[tokio::test]
     async fn auth_logout_clears_session() {
         let server = build_auth_server(true).await;

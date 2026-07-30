@@ -205,6 +205,35 @@ impl SessionStore {
         self.sessions.write().remove(id).is_some()
     }
 
+    /// End every live session, but only when `id` names one of them; returns how
+    /// many were ended.
+    ///
+    /// This is what logout calls. Comics authenticates a single set of
+    /// credentials, so every live session belongs to the same person and
+    /// "log me out" can mean all of them — which is the only way a reader who
+    /// suspects a stolen cookie can invalidate it without restarting the server
+    /// (the cheat sheet leaves whether to do this to the application, under
+    /// *Simultaneous Session Logons*).
+    ///
+    /// **Membership is the authorisation.** `/logout` sits outside the auth
+    /// middleware, and the CSRF guard deliberately passes requests carrying
+    /// neither `Sec-Fetch-Site` nor `Origin` (a non-browser client), so an
+    /// unconditional clear would let any anonymous `POST /logout` sign everyone
+    /// out. Requiring `id` to already be in the store means the caller had to
+    /// present a cookie that survived the signature and shape gates *and* names
+    /// a live session — the same bar as reading a page.
+    ///
+    /// Taken under one write lock so the count cannot race a concurrent login.
+    pub fn destroy_all(&self, id: &str) -> usize {
+        let mut sessions = self.sessions.write();
+        if !sessions.contains_key(id) {
+            return 0;
+        }
+        let ended = sessions.len();
+        sessions.clear();
+        ended
+    }
+
     /// Number of live sessions.
     pub fn len(&self) -> usize {
         self.sessions.read().len()
@@ -300,6 +329,33 @@ mod tests {
 
         // Destroying twice is not an error, just a no-op.
         assert!(!store.destroy(&id));
+    }
+
+    /// Logout ends the other sessions too, which is what makes a cookie copied
+    /// from another device invalidatable without restarting the server.
+    #[test]
+    fn destroy_all_ends_every_session() {
+        let store = store();
+        let phone = store.create(UA);
+        let desktop = store.create(UA);
+        let stolen = store.create(UA);
+
+        assert_eq!(3, store.destroy_all(&phone));
+
+        assert_eq!(Validation::Unknown, store.validate(&desktop, UA));
+        assert_eq!(Validation::Unknown, store.validate(&stolen, UA));
+        assert!(store.is_empty());
+    }
+
+    /// Membership is the authorisation: `/logout` is public, so an identifier
+    /// the store never issued must not be able to sign everyone else out.
+    #[test]
+    fn destroy_all_ignores_an_identifier_it_never_issued() {
+        let store = store();
+        let live = store.create(UA);
+
+        assert_eq!(0, store.destroy_all(&"0".repeat(32)));
+        assert!(valid(&store, &live), "an outsider ended a live session");
     }
 
     #[test]

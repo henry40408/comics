@@ -62,6 +62,7 @@ The initial scan runs on a background thread (`spawn_initial_scan`) *after* the 
 Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` are set; otherwise the server is fully public (and logs a warning). Unauthenticated `GET`s redirect to `/login?next=…` (constrained by `safe_next`); other methods get `401`.
 
 - Sessions live in the in-memory `SessionStore`; the cookie carries an opaque 128-bit identifier and nothing else. **Sessions do not survive a restart** — that is deliberate, and it is what makes logout enforceable.
+- `POST /logout` ends **every** live session, not just the caller's — comics has one set of credentials, so they are all the same person's, and this is the only way to invalidate a stolen cookie short of a restart. The route is public, so store membership is what authorises the clear (`SessionStore::destroy_all`).
 - Cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`; `Secure` + renamed `__Host-comics_session` only when `COMICS_COOKIE_SECURE` is set. Exactly one name is accepted.
 - TTLs: idle `DEFAULT_IDLE_TTL` (3 days), absolute `DEFAULT_ABSOLUTE_TTL` (7 days). Capacity 1 000, LRU-evicting.
 - `POST /login` is rate-limited to 5 attempts per client IP per 60 s (`auth/ratelimit.rs`). The key is the TCP peer unless `COMICS_TRUSTED_PROXIES` lists it — **empty by default**, so `X-Forwarded-For` is ignored out of the box.

@@ -226,13 +226,16 @@ pub async fn login_submit_route(
     response
 }
 
-/// `POST /logout` — end the session, clear its cookie, and return to the login
-/// form.
+/// `POST /logout` — end every live session, clear the cookie, and return to the
+/// login form.
 ///
-/// The session is destroyed **server-side** first. That is the half the OWASP
+/// Sessions are destroyed **server-side** first. That is the half the OWASP
 /// Session Expiration guidance calls mandatory and the half a cookie-only
 /// implementation cannot do: the removal cookie and `Clear-Site-Data` below only
-/// ask the browser to forget, which does nothing about a copy taken earlier.
+/// ask the browser to forget, which does nothing about a copy taken earlier —
+/// and ending *every* session is what lets a reader who suspects such a copy
+/// invalidate it. See [`crate::auth::SessionStore::destroy_all`] for why store
+/// membership is what authorises that on an otherwise public route.
 pub async fn logout_route(
     State(state): State<Arc<AppState>>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -245,9 +248,11 @@ pub async fn logout_route(
         &state.trusted_proxies,
     );
     let id = session_id_of(&state, &request);
-    // `destroyed` distinguishes ending a live session from a logout that had
-    // nothing to end (an already-expired cookie, a double submit).
-    let destroyed = id.as_deref().is_some_and(|id| state.sessions.destroy(id));
+    // `destroyed` counts what this logout ended: every live session, since they
+    // all belong to the same credentials (see `SessionStore::destroy_all`). Zero
+    // distinguishes a logout that had nothing to end — an already-expired
+    // cookie, a double submit, or an anonymous POST — from one that did.
+    let destroyed = id.as_deref().map_or(0, |id| state.sessions.destroy_all(id));
     let session = id.map_or_else(|| "-".to_string(), |id| state.audit_salt.fingerprint(&id));
     info!(
         event = "session_destroyed",
