@@ -80,11 +80,13 @@ struct Opts {
     )]
     cookie_secure: Option<bool>,
     /// The one secret comics is configured with: at least 64 hex characters
-    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session cookie
-    /// signing key and the salt for hashed book/page IDs are derived from it.
-    /// When unset a random secret is generated at startup, which logs every
-    /// session out and reshuffles every URL on restart, and cannot be shared
-    /// across replicas. Rotating it is a global logout *and* changes every URL.
+    /// (32 bytes). Generate one with `openssl rand -hex 32`. Both the session
+    /// cookie signing key and the salt for hashed book/page IDs are derived from
+    /// it. Sessions live in memory and end at every restart regardless of this
+    /// value; what it buys is stable book and page URLs across restarts, and a
+    /// signature that stays valid so a stale cookie is distinguishable from a
+    /// forged one. When unset a random secret is generated at startup, which
+    /// reshuffles every URL on restart. Rotating it changes every URL.
     #[arg(long, env = "COMICS_SECRET")]
     secret: Option<Secret>,
     /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
