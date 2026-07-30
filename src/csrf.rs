@@ -6,12 +6,13 @@
 //! request that is provably cross-site; anything it cannot classify is passed
 //! through, so it never breaks a legitimate caller:
 //!
-//! - **`Sec-Fetch-Site`** (sent by every current browser) is authoritative when
-//!   present. `same-origin`, `same-site`, and `none` (a direct navigation or a
-//!   user-typed URL) are allowed; only `cross-site` is rejected.
-//! - **`Origin`** is the fallback for the rare browser that omits
-//!   `Sec-Fetch-Site`. Its host is compared against the request's own `Host`;
-//!   a mismatch — or an opaque `Origin: null` — is rejected.
+//! - **`Sec-Fetch-Site`** (sent by every current browser) normally identifies
+//!   cross-site requests. A matching `Origin` and `Host` takes precedence,
+//!   since a reverse proxy may inject or overwrite fetch-metadata headers.
+//! - **`Origin`** is used to confirm same-origin requests or as the fallback
+//!   for the rare browser that omits `Sec-Fetch-Site`. Its host is compared
+//!   against the request's own `Host`; a mismatch — or an opaque `Origin: null`
+//!   — is rejected.
 //! - **Neither header** means a non-browser client (`curl`, a server-to-server
 //!   call). Those do not ride an ambient session cookie, so they are not
 //!   exposed to CSRF and are allowed through.
@@ -49,23 +50,30 @@ fn is_safe(method: &Method) -> bool {
 /// is passed through. See the module docs.
 fn is_cross_site(req: &Request) -> bool {
     let headers = req.headers();
+    let origin_is_same = origin_is_same(headers);
 
-    // `Sec-Fetch-Site` is authoritative where the browser sends it.
+    // A proxy can inject a stale or generic fetch-metadata value. A browser's
+    // `Origin` is more specific evidence when it matches the target host, so
+    // never reject that valid same-origin form submission.
     if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
-        return site.eq_ignore_ascii_case("cross-site");
+        return site.eq_ignore_ascii_case("cross-site") && origin_is_same != Some(true);
     }
 
+    origin_is_same.is_some_and(|same| !same)
+}
+
+fn origin_is_same(headers: &http::HeaderMap) -> Option<bool> {
     let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         // No Sec-Fetch-Site and no Origin → a non-browser client.
-        return false;
+        return None;
     };
     // `Origin: null` is opaque (a sandboxed iframe, a cross-origin redirect) and
     // never legitimate for a state-changing request here.
     if origin.eq_ignore_ascii_case("null") {
-        return true;
+        return Some(false);
     }
     let Some(origin_host) = host_of(origin) else {
-        return true;
+        return Some(false);
     };
     let request_host = headers
         .get(header::HOST)
@@ -73,7 +81,7 @@ fn is_cross_site(req: &Request) -> bool {
         .map(strip_port);
     // A missing/garbled Host with a present Origin cannot be confirmed
     // same-origin, so treat it as cross-site.
-    request_host != Some(origin_host)
+    Some(request_host == Some(origin_host))
 }
 
 /// The host of an `Origin` value (`scheme://host[:port]`), lower-cased and with
@@ -119,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn sec_fetch_site_is_authoritative() {
+    fn sec_fetch_site_rejects_cross_site_requests() {
         for allowed in ["same-origin", "same-site", "none", "SAME-ORIGIN"] {
             assert!(
                 !is_cross_site(&req(Method::POST, &[("sec-fetch-site", allowed)])),
@@ -130,8 +138,21 @@ mod tests {
             Method::POST,
             &[("sec-fetch-site", "cross-site")]
         )));
-        // It wins over a same-looking Origin/Host, in both directions.
+        // A mismatched Origin remains cross-site even when a proxy supplies
+        // fetch metadata.
         assert!(is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "https://evil.example.com"),
+                ("host", "app.example.com"),
+            ]
+        )));
+    }
+
+    #[test]
+    fn matching_origin_overrides_a_proxy_injected_cross_site_header() {
+        assert!(!is_cross_site(&req(
             Method::POST,
             &[
                 ("sec-fetch-site", "cross-site"),
