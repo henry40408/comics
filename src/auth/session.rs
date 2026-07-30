@@ -21,7 +21,8 @@ pub const SESSION_ID_HEX_LEN: usize = SESSION_ID_BYTES * 2;
 
 /// Bytes of the stored `User-Agent` digest. Only ever compared, never logged or
 /// reversed, so eight bytes is ample and storing the string itself would just be
-/// a larger thing to leak.
+/// a larger thing to leak. Exactly a `u64`, which is what lets the digest live
+/// in an atomic and be swapped in place — see [`Record::user_agent`].
 const USER_AGENT_DIGEST_BYTES: usize = 8;
 
 /// How long a session survives with no requests on it.
@@ -97,7 +98,12 @@ struct Record {
     /// a single page turn is one HTML request plus one per image; taking a write
     /// lock on each would serialise the read path against itself for no reason.
     last_seen: AtomicU64,
-    user_agent: [u8; USER_AGENT_DIGEST_BYTES],
+    /// Digest of the `User-Agent` last seen on this session.
+    ///
+    /// Swapped rather than merely compared, so a change is reported *once*
+    /// instead of on every subsequent request. Without that, one browser update
+    /// would put a warning in the log for every image of every page turn.
+    user_agent: AtomicU64,
 }
 
 /// The live sessions, in memory.
@@ -152,7 +158,7 @@ impl SessionStore {
         let record = Arc::new(Record {
             created_at: Instant::now(),
             last_seen: AtomicU64::new(self.now()),
-            user_agent: digest(user_agent),
+            user_agent: AtomicU64::new(digest(user_agent)),
         });
 
         let mut sessions = self.sessions.write();
@@ -184,8 +190,9 @@ impl SessionStore {
         }
 
         record.last_seen.store(now, Ordering::Relaxed);
+        let user_agent = digest(user_agent);
         Validation::Valid {
-            user_agent_changed: record.user_agent != digest(user_agent),
+            user_agent_changed: record.user_agent.swap(user_agent, Ordering::Relaxed) != user_agent,
         }
     }
 
@@ -231,12 +238,12 @@ fn evict_oldest(sessions: &mut HashMap<String, Arc<Record>>) {
 }
 
 /// Truncated SHA-256 of a `User-Agent`, for comparison only.
-fn digest(user_agent: &str) -> [u8; USER_AGENT_DIGEST_BYTES] {
+fn digest(user_agent: &str) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(user_agent.as_bytes());
     let mut out = [0u8; USER_AGENT_DIGEST_BYTES];
     out.copy_from_slice(&hasher.finalize()[..USER_AGENT_DIGEST_BYTES]);
-    out
+    u64::from_be_bytes(out)
 }
 
 /// Whether `value` has the shape of an identifier this store issues.
@@ -347,25 +354,48 @@ mod tests {
         assert!(valid(&store, &id));
     }
 
-    /// At capacity the least recently used session goes, so a login is never
-    /// refused for lack of room.
+    /// The digest is swapped in, not just compared, so one change is one report.
+    /// Otherwise a browser update would warn on every image of every page turn.
     #[test]
-    fn at_capacity_the_oldest_session_is_evicted() {
+    fn a_changed_user_agent_is_reported_only_once() {
+        let store = store();
+        let id = store.create(UA);
+
+        assert_eq!(
+            Validation::Valid {
+                user_agent_changed: true
+            },
+            store.validate(&id, "curl/8.0")
+        );
+        for _ in 0..5 {
+            assert_eq!(
+                Validation::Valid {
+                    user_agent_changed: false
+                },
+                store.validate(&id, "curl/8.0")
+            );
+        }
+    }
+
+    /// At capacity a session is evicted rather than the login refused — a full
+    /// store must not become a lockout.
+    ///
+    /// Pinned at one session so the choice is forced: `last_seen` has
+    /// second resolution, so sessions touched within the same second tie and the
+    /// least-recently-used pick among them is arbitrary. That is immaterial
+    /// against a three-day idle window, but it does mean the *selection* cannot
+    /// be asserted without controlling the clock.
+    #[test]
+    fn at_capacity_a_session_is_evicted_rather_than_the_login_refused() {
         let mut store = store();
-        store.max_sessions = 3;
+        store.max_sessions = 1;
 
         let first = store.create(UA);
         let second = store.create(UA);
-        // Touch `first` so `second` becomes the least recently used.
-        assert!(valid(&store, &first));
-        let third = store.create(UA);
-        let fourth = store.create(UA);
 
-        assert_eq!(3, store.len());
-        assert_eq!(Validation::Unknown, store.validate(&second, UA));
-        for id in [&first, &third, &fourth] {
-            assert!(valid(&store, id), "{id} should have survived");
-        }
+        assert_eq!(1, store.len());
+        assert_eq!(Validation::Unknown, store.validate(&first, UA));
+        assert!(valid(&store, &second));
     }
 
     /// Creating a session sweeps out the ones that have already lapsed, so an
