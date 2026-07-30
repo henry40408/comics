@@ -1,4 +1,3 @@
-/// Authentication configuration
 #[derive(Clone)]
 pub enum AuthConfig {
     None,

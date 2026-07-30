@@ -16,7 +16,6 @@ use crate::secret::hex_lower;
 /// Cheat Sheet's minimum for a value it also requires to be meaningless.
 const SESSION_ID_BYTES: usize = 16;
 
-/// Characters a session identifier occupies on the wire.
 pub const SESSION_ID_HEX_LEN: usize = SESSION_ID_BYTES * 2;
 
 /// Bytes of the stored `User-Agent` digest. Only ever compared, never logged or
@@ -25,8 +24,6 @@ pub const SESSION_ID_HEX_LEN: usize = SESSION_ID_BYTES * 2;
 /// in an atomic and be swapped in place — see [`Record::user_agent`].
 const USER_AGENT_DIGEST_BYTES: usize = 8;
 
-/// How long a session survives with no requests on it.
-///
 /// The cheat sheet's 15–30 minutes is written for applications where a session
 /// is a unit of work. A comic reader is opened, left, and come back to; an idle
 /// window that short would make it unusable and teach the one user to pick a
@@ -48,12 +45,10 @@ pub const DEFAULT_ABSOLUTE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60)
 /// would turn a full store into a login lockout.
 const MAX_SESSIONS: usize = 1_000;
 
-/// Why a session is no longer valid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Expiry {
-    /// No request arrived within the idle window.
     Idle,
-    /// The session outlived the absolute ceiling, however active it was.
+    /// Outlived the ceiling, however active it was.
     Absolute,
 }
 
@@ -67,7 +62,6 @@ impl Expiry {
     }
 }
 
-/// The outcome of looking a session identifier up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validation {
     Valid {
@@ -88,7 +82,6 @@ pub enum Validation {
     Expired(Expiry),
 }
 
-/// One live session.
 struct Record {
     created_at: Instant,
     /// Seconds since [`SessionStore::start`] at the most recent request.
@@ -130,8 +123,6 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// A store holding sessions for `idle_ttl` of inactivity, and `absolute_ttl`
-    /// in total.
     pub fn new(idle_ttl: Duration, absolute_ttl: Duration) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -147,8 +138,6 @@ impl SessionStore {
         self.start.elapsed().as_secs()
     }
 
-    /// Open a session and return its identifier.
-    ///
     /// The identifier is 128 CSPRNG bits rendered as hex and carries no
     /// structure at all: expiry, `User-Agent` and creation time are held here,
     /// so there is nothing in the value for an attacker to decode or an operator
@@ -196,34 +185,27 @@ impl SessionStore {
         }
     }
 
-    /// End the session named by `id`, reporting whether one was there.
-    ///
-    /// This is the whole point of the store: after it returns, the identifier is
-    /// refused on every subsequent request, which is what the cheat sheet
-    /// requires of logout and what a cookie-only implementation cannot do.
+    /// After this the identifier is refused on every subsequent request — the
+    /// server-side revocation a cookie-only implementation cannot do.
     pub fn destroy(&self, id: &str) -> bool {
         self.sessions.write().remove(id).is_some()
     }
 
-    /// End every live session, but only when `id` names one of them; returns how
-    /// many were ended.
+    /// End every live session, but only when `id` names one of them.
     ///
-    /// This is what logout calls. Comics authenticates a single set of
-    /// credentials, so every live session belongs to the same person and
-    /// "log me out" can mean all of them — which is the only way a reader who
-    /// suspects a stolen cookie can invalidate it without restarting the server
-    /// (the cheat sheet leaves whether to do this to the application, under
-    /// *Simultaneous Session Logons*).
+    /// What logout calls: comics authenticates one set of credentials, so every
+    /// session is the same person's and "log me out" can mean all of them — the
+    /// only way to invalidate a stolen cookie short of a restart (the cheat
+    /// sheet leaves this to the application, under *Simultaneous Session
+    /// Logons*).
     ///
     /// **Membership is the authorisation.** `/logout` sits outside the auth
-    /// middleware, and the CSRF guard deliberately passes requests carrying
-    /// neither `Sec-Fetch-Site` nor `Origin` (a non-browser client), so an
+    /// middleware and the CSRF guard passes header-less clients, so an
     /// unconditional clear would let any anonymous `POST /logout` sign everyone
-    /// out. Requiring `id` to already be in the store means the caller had to
-    /// present a cookie that survived the signature and shape gates *and* names
-    /// a live session — the same bar as reading a page.
+    /// out. Requiring `id` to already be in the store puts the caller through
+    /// the same gates as reading a page.
     ///
-    /// Taken under one write lock so the count cannot race a concurrent login.
+    /// One write lock, so the count cannot race a concurrent login.
     pub fn destroy_all(&self, id: &str) -> usize {
         let mut sessions = self.sessions.write();
         if !sessions.contains_key(id) {
@@ -234,12 +216,10 @@ impl SessionStore {
         ended
     }
 
-    /// Number of live sessions.
     pub fn len(&self) -> usize {
         self.sessions.read().len()
     }
 
-    /// Whether no session is live.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -275,8 +255,6 @@ fn digest(user_agent: &str) -> u64 {
     u64::from_be_bytes(out)
 }
 
-/// Whether `value` has the shape of an identifier this store issues.
-///
 /// A cheap filter so a malformed cookie is refused without touching the lock.
 /// It says nothing about whether the session exists.
 pub fn is_session_id(value: &str) -> bool {

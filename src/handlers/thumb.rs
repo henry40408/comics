@@ -12,10 +12,9 @@ use tracing::{debug, error};
 use super::page::content_type_from_path;
 use crate::state::AppState;
 
-/// JPEG quality used for generated thumbnails.
 const THUMB_QUALITY: u8 = 72;
 
-/// Map a size keyword to a maximum edge length in pixels.
+/// Maximum edge length, in pixels, for a size keyword.
 fn size_px(name: &str) -> Option<u32> {
     match name {
         "sm" => Some(120), // reader thumbnail rail
@@ -24,7 +23,6 @@ fn size_px(name: &str) -> Option<u32> {
     }
 }
 
-/// Decode `path`, shrink it to fit within `max`×`max`, and JPEG-encode it.
 fn generate(path: &str, max: u32) -> anyhow::Result<Vec<u8>> {
     let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
     let thumb = img.thumbnail(max, max).to_rgb8();
@@ -51,11 +49,11 @@ fn jpeg_response(bytes: Vec<u8>) -> Response {
         .into_response()
 }
 
-/// Serve a cached or freshly generated thumbnail for a page.
+/// `GET /thumb/{size}/{id}`, size being `sm` or `md`.
 ///
-/// `GET /thumb/{size}/{id}` where size is `sm` or `md`. Thumbnails are written
-/// to the cache dir on first request and read back on subsequent ones, so the
-/// full-resolution source is opened at most once per (size, page).
+/// Thumbnails are written to the cache dir on first request and read back
+/// afterwards, so the full-resolution source is opened at most once per
+/// (size, page).
 pub async fn show_thumb_route(
     State(state): State<Arc<AppState>>,
     Path((size, id)): Path<(String, String)>,
@@ -64,7 +62,7 @@ pub async fn show_thumb_route(
         return (StatusCode::NOT_FOUND, Vec::new()).into_response();
     };
 
-    // Resolve the source path, releasing the lock before any I/O.
+    // Release the lock before any I/O.
     let src = {
         let locked = state.scan.read();
         let Some(scan) = locked.as_ref() else {
@@ -76,20 +74,18 @@ pub async fn show_thumb_route(
         }
     };
 
-    // Serve from cache when present.
     let cache_path = state.cache_dir.join(&size).join(format!("{id}.jpg"));
     if let Ok(bytes) = fs::read(&cache_path).await {
         return jpeg_response(bytes);
     }
 
-    // Generate, bounding concurrency so opening a book does not spawn a decode
-    // storm. The permit is held across the blocking work.
+    // Bound concurrency so opening a book does not spawn a decode storm. The
+    // permit is held across the blocking work.
     let _permit = state.thumb_sem.acquire().await;
     let src_for_gen = src.clone();
     let bytes = match tokio::task::spawn_blocking(move || generate(&src_for_gen, max)).await {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(err)) => {
-            // Undecodable source: fall back to the original so the UI still shows something.
             debug!(%err, path = %src, "thumbnail generation failed; serving original");
             return serve_original(&src).await;
         }
@@ -109,7 +105,6 @@ pub async fn show_thumb_route(
     jpeg_response(bytes)
 }
 
-/// Fallback: stream the original image when a thumbnail cannot be produced.
 async fn serve_original(path: &str) -> Response {
     match fs::read(path).await {
         Ok(content) => (

@@ -6,7 +6,6 @@ use tracing::{Span, error, field, trace_span};
 
 use super::book::{Book, Page};
 
-/// Result of scanning books from the data directory
 #[derive(Debug)]
 pub struct BookScan {
     pub books: Vec<Book>,
@@ -21,7 +20,7 @@ pub struct BookScan {
 }
 
 impl BookScan {
-    /// Resolve a page by its id in O(1) via [`pages_map`](Self::pages_map).
+    /// O(1) via [`pages_map`](Self::pages_map).
     #[must_use]
     pub fn page_by_id(&self, id: &str) -> Option<&Page> {
         let &(book_idx, page_idx) = self.pages_map.get(id)?;
@@ -29,7 +28,6 @@ impl BookScan {
     }
 }
 
-/// Scan pages in a book directory
 pub fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> anyhow::Result<Vec<Page>> {
     let s = trace_span!(parent: span, "scan pages", ?book_path, pages = field::Empty).entered();
     let entries: Vec<_> = fs::read_dir(book_path)?.collect();
@@ -55,7 +53,6 @@ pub fn scan_pages(span: &Span, seed: u64, book_path: &path::Path) -> anyhow::Res
     Ok(pages)
 }
 
-/// Scan all books in the data directory
 pub fn scan_books(seed: u64, data_path: &path::Path) -> anyhow::Result<BookScan> {
     let span = trace_span!("scan books").entered();
     let scanned_at = Utc::now();
@@ -119,7 +116,6 @@ mod tests {
         }
         let scan = scan_books(1, dir.path()).unwrap();
 
-        // Every page id resolves back to the exact page it was indexed from.
         for book in &scan.books {
             for page in &book.pages {
                 let resolved = scan.page_by_id(&page.id).expect("id should resolve");

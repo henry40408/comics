@@ -6,7 +6,6 @@ use tracing::{Span, trace_span};
 use super::ids::hash_string;
 use super::scan::scan_pages;
 
-/// A single page in a book
 #[derive(Clone, Debug)]
 pub struct Page {
     pub filename: String,
@@ -15,9 +14,9 @@ pub struct Page {
 }
 
 impl Page {
-    /// Build a page from its path. This performs no image I/O — dimensions are
-    /// intentionally not read here so the initial scan only lists directories
-    /// instead of opening every image (a big win on spinning disks).
+    /// Performs no image I/O — dimensions are deliberately not read, so the scan
+    /// only lists directories instead of opening every image (a big win on
+    /// spinning disks).
     pub fn new(seed: u64, path: &path::Path) -> anyhow::Result<Self> {
         if !path.is_file() {
             bail!("Not a file: {}", path.display());
@@ -35,7 +34,6 @@ impl Page {
     }
 }
 
-/// A book containing multiple pages
 #[derive(Clone, Debug)]
 pub struct Book {
     pub cover: Page,

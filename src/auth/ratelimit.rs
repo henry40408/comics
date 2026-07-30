@@ -16,7 +16,6 @@ use super::TrustedProxies;
 /// bound.
 const MAX_ENTRIES: usize = 10_000;
 
-/// One fixed window: attempts charged so far, and when the window opened.
 #[derive(Clone, Copy)]
 struct Window {
     count: u32,
@@ -24,7 +23,6 @@ struct Window {
 }
 
 impl Window {
-    /// A window that has just opened with nothing charged to it.
     fn empty() -> Self {
         Self {
             count: 0,
@@ -32,7 +30,8 @@ impl Window {
         }
     }
 
-    /// Whether nothing has been charged to this window for `window_secs`.
+    /// Measured from when the window opened, not from the last attempt — this is
+    /// a fixed window, not a sliding one.
     fn is_expired(&self, window_secs: u64) -> bool {
         self.started.elapsed().as_secs() >= window_secs
     }
@@ -66,7 +65,6 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// Create a limiter allowing `max_attempts` within `window_secs`.
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self {
             buckets: Mutex::new(Buckets {
@@ -113,8 +111,6 @@ impl RateLimiter {
         self.charge(window)
     }
 
-    /// Charge one attempt to `window`, returning whether it fit.
-    ///
     /// An expired window is rolled over rather than topped up, which is what
     /// makes this a fixed-window rather than a sliding-window limiter.
     fn charge(&self, window: &mut Window) -> bool {

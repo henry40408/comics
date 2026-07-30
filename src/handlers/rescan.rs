@@ -13,7 +13,6 @@ pub async fn rescan_books_route(State(state): State<Arc<AppState>>) -> impl Into
     let seed = state.seed;
     let data_dir = state.data_dir.clone();
 
-    // Run blocking I/O on dedicated thread pool to avoid blocking async runtime
     let scan_result =
         tokio::task::spawn_blocking(move || scan_books(seed, data_dir.as_path())).await;
 
