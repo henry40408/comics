@@ -1245,6 +1245,69 @@ mod tests {
         );
     }
 
+    /// `SameSite=Strict` is the cheat sheet's stated preference and comics can
+    /// afford it: nothing third-party ever navigates into an authenticated URL.
+    #[tokio::test]
+    async fn session_cookie_is_same_site_strict() {
+        let server = build_auth_server(false).await;
+        let res = login_response(&server).await;
+        let issued = set_cookie_headers(&res)
+            .into_iter()
+            .find(|h| h.starts_with(&format!("{SESSION_COOKIE}=")))
+            .expect("a session cookie");
+        assert!(issued.contains("SameSite=Strict"), "{issued}");
+    }
+
+    /// Both responses that carry a session identifier are redirects, and neither
+    /// is reached by `no_store_html` — `/login` and `/logout` sit outside the
+    /// auth layer, and a redirect is not `text/html`. The cheat sheet asks for
+    /// `no-store` on exactly these.
+    #[tokio::test]
+    async fn responses_carrying_a_session_cookie_are_not_cacheable() {
+        let server = build_auth_server(false).await;
+
+        let res = login_response(&server).await;
+        assert_eq!(303, res.status_code());
+        assert_eq!("no-store", res.headers()["cache-control"]);
+        assert_eq!("no-cache", res.headers()["pragma"]);
+
+        let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
+        let res = server.post("/logout").add_cookie(cookie).await;
+        assert_eq!(303, res.status_code());
+        assert_eq!("no-store", res.headers()["cache-control"]);
+        assert_eq!("no-cache", res.headers()["pragma"]);
+    }
+
+    /// End-to-end for the backslash open redirect: the endpoint must send the
+    /// visitor home, not to `//evil.example`, which is where a browser resolves
+    /// `Location: /\evil.example`.
+    #[tokio::test]
+    async fn auth_login_rejects_backslash_redirect_targets() {
+        let server = build_auth_server(false).await;
+        let res = server
+            .post("/login")
+            .form(&[
+                ("username", "user"),
+                ("password", "password"),
+                ("next", r"/\evil.example"),
+            ])
+            .await;
+        assert_eq!(303, res.status_code());
+        assert_eq!("/", res.headers()["location"]);
+    }
+
+    /// `next` reaches the handler percent-decoded, and `Redirect::to` panics on
+    /// a value `HeaderValue` refuses — so this must answer, not drop the
+    /// connection. Reachable without credentials: `GET /login` redirects before
+    /// authenticating whenever auth is disabled.
+    #[tokio::test]
+    async fn login_survives_a_control_character_in_next() {
+        let server = build_server().await;
+        let res = server.get("/login?next=%2F%0Ax").await;
+        assert_eq!(303, res.status_code());
+        assert_eq!("/", res.headers()["location"]);
+    }
+
     /// The change this branch exists for: after logout the *same* cookie is
     /// refused, because the session it names is gone from the server.
     ///
@@ -1314,7 +1377,7 @@ mod tests {
             .find(|h| h.starts_with(&format!("{SESSION_COOKIE}=")))
             .expect("a removal cookie");
         assert!(removal.contains("HttpOnly"), "{removal}");
-        assert!(removal.contains("SameSite=Lax"), "{removal}");
+        assert!(removal.contains("SameSite=Strict"), "{removal}");
         assert!(removal.contains("Path=/"), "{removal}");
 
         // Session is gone, so the protected page bounces to login again.

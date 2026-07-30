@@ -58,10 +58,27 @@ pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> 
     }
 }
 
-/// Constrain a post-login redirect target to a local path, blocking open
-/// redirects to absolute URLs or protocol-relative `//host` targets.
+/// Constrain a post-login redirect target to a local path.
+///
+/// Two things are checked, and both are load-bearing.
+///
+/// **It must be a path, not an authority.** A leading `//` makes the rest a
+/// host, so `//evil.example` is an absolute URL wearing a path's clothes. So is
+/// `/\evil.example`: the WHATWG URL parser treats a backslash as a slash for
+/// http(s), so browsers resolve `Location: /\evil.example` to `//evil.example`
+/// and follow it off-site. Testing only for `//` therefore left the open
+/// redirect open — the second character has to be neither.
+///
+/// **It must survive being put in a header.** `Redirect::to` *panics* on a value
+/// `HeaderValue` will not take, and `next` arrives percent-decoded, so
+/// `?next=/%0Ax` reaches here holding a real newline. Validating here rather
+/// than trusting the caller keeps a crafted query string from taking the
+/// connection down — reachable without credentials, since `GET /login` redirects
+/// before authenticating whenever auth is disabled.
 fn safe_next(next: &str) -> String {
-    if next.starts_with('/') && !next.starts_with("//") {
+    let mut chars = next.chars();
+    let is_local_path = chars.next() == Some('/') && !matches!(chars.next(), Some('/' | '\\'));
+    if is_local_path && HeaderValue::from_str(next).is_ok() {
         next.to_string()
     } else {
         "/".to_string()
@@ -99,6 +116,22 @@ fn render_login(error: bool, next: &str) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// Stamp `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0 caches) on a
+/// response.
+///
+/// The cheat sheet asks for `no-store` specifically on responses that carry a
+/// session ID, and the two that do are redirects: the 303 that issues the cookie
+/// and the 303 that removes it. Neither is reached by the `no_store_html`
+/// middleware — `/login` and `/logout` sit outside the auth layer, and a
+/// redirect is not `text/html` anyway — so it has to be done here. Redirects are
+/// rarely cached without explicit freshness, but "rarely" is not a property to
+/// hang a `Set-Cookie` on.
+fn set_no_store(response: &mut Response) {
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
 }
 
 /// Open a session and attach its signed cookie to a response, returning the
@@ -184,6 +217,7 @@ pub async fn login_submit_route(
     state.login_limiter.release(ip);
     let mut response = Redirect::to(&safe_next(&form.next)).into_response();
     let id = set_session_cookie(&mut response, &state, user_agent);
+    set_no_store(&mut response);
     info!(
         event = "session_created",
         session = state.audit_salt.fingerprint(&id),
@@ -238,6 +272,7 @@ pub async fn logout_route(
         CLEAR_SITE_DATA.clone(),
         HeaderValue::from_static(CLEAR_SITE_DATA_VALUE),
     );
+    set_no_store(&mut response);
     response
 }
 
@@ -412,5 +447,41 @@ mod tests {
         assert_eq!(safe_next("//evil.example"), "/");
         assert_eq!(safe_next("https://evil.example"), "/");
         assert_eq!(safe_next("javascript:alert(1)"), "/");
+    }
+
+    /// Regression: only `//` was rejected, but browsers resolve a backslash as a
+    /// slash for http(s), so `Location: /\evil.example` navigates off-site just
+    /// the same. The second character has to be neither.
+    #[test]
+    fn safe_next_blocks_backslash_authorities() {
+        for target in [
+            r"/\evil.example",
+            r"/\/evil.example",
+            r"/\\evil.example",
+            r"/\evil.example/path",
+        ] {
+            assert_eq!(safe_next(target), "/", "{target} was accepted");
+        }
+        // A single backslash is not a path at all.
+        assert_eq!(safe_next(r"\evil.example"), "/");
+    }
+
+    /// Regression: `next` arrives percent-decoded and lands in a `Location`
+    /// header, and `Redirect::to` panics on a value `HeaderValue` refuses. A
+    /// crafted query string must not be able to take the connection down.
+    #[test]
+    fn safe_next_rejects_values_a_header_cannot_carry() {
+        for target in ["/foo\nbar", "/foo\rbar", "/foo\r\nSet-Cookie: x=y", "/\0"] {
+            assert_eq!(safe_next(target), "/", "{target:?} was accepted");
+        }
+    }
+
+    /// The paths comics actually generates keep working. `next` is built by the
+    /// auth middleware's percent-encoder, so it is always ASCII.
+    #[test]
+    fn safe_next_still_accepts_ordinary_paths() {
+        for target in ["/", "/book/1f1c111677715adf", "/book/abc?page=2", "/a%20b"] {
+            assert_eq!(safe_next(target), target, "{target} was rejected");
+        }
     }
 }

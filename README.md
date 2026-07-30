@@ -28,7 +28,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 
 - **Simple Structure**: Comics looks only at the immediate subdirectories of your chosen folder. Each directory is treated as a book, and the files inside as the pages. No nested subfolders will be scanned. This simplicity ensures you have a clear structure for your comics.
 - **Manga-friendly Reader**: Read right-to-left page by page or as a continuous vertical scroll, switchable on the fly. Includes a progress bar, a thumbnail strip for jumping between pages, keyboard navigation, and a light/dark theme that follows your system and can be toggled manually. Covers and the thumbnail strip are served as small JPEG thumbnails generated on demand and cached on disk, so browsing stays light even on slow storage.
-- **Web Login**: Safeguard your comics with a username-password login form backed by a signed session cookie (valid for 7 days). Credentials are verified once at login instead of on every request, and every page — including the images and thumbnails themselves — is served only to logged-in users. See [Commands](#commands) and [Configuration](#configuration) for setup.
+- **Web Login**: Safeguard your comics with a username-password login form. Credentials are verified once at login instead of on every request, and every page — including the images and thumbnails themselves — is served only to logged-in users. Sessions last 7 days, or 3 days without a visit, and logging out ends them immediately on the server. See [Commands](#commands) and [Configuration](#configuration) for setup.
 
 ## Configuration
 
@@ -65,7 +65,16 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > container update — because the sessions were only ever in memory. In practice
 > this replaces a schedule you already had: sessions expire after 7 days
 > regardless of activity, or 3 days without a request, so a restart is usually
-> the rarer of the two. Log in again and carry on.
+> the rarer of the two. Log in again and carry on. It also gives you a cheap
+> panic button: if you think a session cookie has leaked, restarting revokes
+> every session without changing a single URL.
+>
+> The cookie is `SameSite=Strict`, so **following a link into comics from
+> somewhere else shows the login page even when you are already signed in** —
+> the browser withholds the cookie on that first cross-site navigation. Reload,
+> or navigate from within comics, and you are through. This is deliberate: comics
+> has no third-party sign-in or payment flow that needs to land on an
+> authenticated page, so the stricter setting costs almost nothing.
 
 > **Audit logging:** logins, logouts, expiries, failed logins and throttled
 > attempts are logged with the client IP and `User-Agent` (and, for sessions, a
