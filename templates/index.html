@@ -4,15 +4,8 @@
     <title>{{ books.len() }} book(s) | Comics {{ version }}</title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script>
-      // set theme before paint to avoid a flash of the wrong palette
-      (function () {
-        var t =
-          localStorage.getItem("comics-theme") ||
-          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-        document.documentElement.setAttribute("data-theme", t);
-      })();
-    </script>
+    <!-- sets the theme before paint; not deferred, and not inline (see theme.js) -->
+    <script src="/assets/theme.js?v={{ assets_version }}"></script>
     <link rel="preconnect" href="https://fonts.bunny.net" />
     <link
       href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600|shippori-mincho:500,700"

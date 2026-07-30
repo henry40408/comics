@@ -126,6 +126,17 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > `includeSubDomains` and `preload` are deliberately not offered — their blast
 > radius covers the whole domain, so they belong to whoever operates the proxy.
 
+> **Security headers:** every response carries a `Content-Security-Policy`
+> (`default-src 'none'`, no `'unsafe-inline'`), `X-Content-Type-Options`,
+> `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy`,
+> `Cross-Origin-Opener-Policy` and a `Permissions-Policy` that denies the
+> features comics never uses. None of these are configurable — they describe
+> what the app actually loads, so anything looser would only be wrong. The one
+> third party in the policy is `fonts.bunny.net`, which serves the webfonts.
+> Behind a reverse proxy, check that it does not also add its own copies: two
+> `Content-Security-Policy` headers are intersected, not merged, and the result
+> is usually a blank page.
+
 > **Migrating from an older release:** `COMICS_SEED` and `COMICS_SESSION_KEY`
 > were folded into the single `COMICS_SECRET` both are now derived from, and
 > before that these variables were unprefixed (`BIND`, `SEED`, `AUTH_USERNAME`,

@@ -25,10 +25,10 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, DEFAULT_ABSOLUTE_TTL,
     DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt,
-    SessionStore, TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route,
-    hsts_layer, index_route, login_route, login_submit_route, logout_route, no_store_html,
-    rescan_books_route, scan_books, show_book_route, show_page_route, show_thumb_route,
-    shuffle_book_route, shuffle_route,
+    SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard,
+    healthz_route, index_route, login_route, login_submit_route, logout_route, no_store_html,
+    rescan_books_route, scan_books, security_headers_layer, show_book_route, show_page_route,
+    show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -250,6 +250,9 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
+        // Separate from app.js because it is loaded synchronously in <head>;
+        // see the module comment in vendor/assets/theme.js.
+        .route("/assets/theme.js", get(|| async { (JS_HEADERS, THEME_JS) }))
         .route("/favicon.svg", get(|| async { (SVG_HEADERS, FAVICON_SVG) }))
         .route(
             "/favicon-32.png",
@@ -272,9 +275,13 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         // `/logout` POSTs, which sit outside the auth layer; inert for safe
         // methods, so every asset/image/`/healthz` GET passes untouched.
         .layer(middleware::from_fn(csrf_origin_guard))
-        // Global outer layer so HSTS also covers `/login`, `/healthz` and the
-        // assets; inert unless a max-age is configured.
-        .layer(middleware::from_fn_with_state(state.clone(), hsts_layer))
+        // Global outer layer so the policy also covers `/login`, `/healthz` and
+        // the assets. Everything but HSTS is unconditional; HSTS stays inert
+        // unless a max-age is configured.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers_layer,
+        ))
         .with_state(state.clone());
 
     (router, state)
@@ -988,6 +995,109 @@ mod tests {
                 "GET {path}"
             );
         }
+    }
+
+    /// The constant part of the policy is a global outer layer, so it must reach
+    /// the public routes and the assets as well as the protected pages — an
+    /// asset served without `nosniff` is exactly the one worth sniffing.
+    #[tokio::test]
+    async fn security_headers_present_on_every_response() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        for path in [
+            "/".to_string(),
+            format!("/book/{book}"),
+            "/healthz".to_string(),
+            "/assets/app.css".to_string(),
+            "/assets/theme.js".to_string(),
+            "/favicon.svg".to_string(),
+        ] {
+            let res = server.get(&path).await;
+            assert_eq!(200, res.status_code(), "GET {path}");
+            assert_security_headers(res.headers(), &path);
+        }
+
+        // The login form, and the redirect an anonymous visitor is bounced with
+        // before ever reaching a handler — the layer is outermost, so both.
+        let server = build_auth_server(false).await;
+        let res = server.get("/login").await;
+        assert_eq!(200, res.status_code());
+        assert_security_headers(res.headers(), "/login");
+        let res = server.get("/").await;
+        assert_eq!(303, res.status_code());
+        assert_security_headers(res.headers(), "/ (anonymous redirect)");
+    }
+
+    fn assert_security_headers(headers: &http::HeaderMap, what: &str) {
+        for name in [
+            "content-security-policy",
+            "x-content-type-options",
+            "x-frame-options",
+            "referrer-policy",
+            "cross-origin-resource-policy",
+            "cross-origin-opener-policy",
+            "permissions-policy",
+        ] {
+            assert!(headers.contains_key(name), "{what} is missing {name}");
+        }
+        assert_eq!("nosniff", headers["x-content-type-options"], "{what}");
+        assert_eq!("DENY", headers["x-frame-options"], "{what}");
+        let csp = headers["content-security-policy"].to_str().unwrap();
+        assert!(!csp.contains("unsafe-inline"), "{what} -> {csp}");
+    }
+
+    /// The CSP is only worth the header bytes if the pages it guards actually
+    /// obey it. Every `<script>` comics renders must be an external `src`, or
+    /// the browser will drop the inline one and the page breaks — which is the
+    /// failure this asserts against, since nothing else in the suite runs a
+    /// script.
+    #[tokio::test]
+    async fn rendered_pages_carry_no_inline_scripts() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        let pages = [
+            server.get("/").await.text(),
+            server.get(&format!("/book/{book}")).await.text(),
+            // `/login` only renders as a page when auth is on; otherwise it
+            // redirects to the library.
+            build_auth_server(false).await.get("/login").await.text(),
+        ];
+
+        for html in pages {
+            assert!(html.contains("<script"), "no script rendered");
+            for tag in html.split("<script").skip(1) {
+                let open = &tag[..tag.find('>').expect("an unclosed <script")];
+                assert!(open.contains("src="), "inline script: <script{open}>");
+            }
+            // A CSP without `unsafe-inline` drops event-handler attributes too.
+            assert!(!html.contains("onclick="));
+        }
+    }
+
+    /// Loaded synchronously in `<head>`, so it must not be deferred — the point
+    /// is that it runs before the first paint.
+    #[tokio::test]
+    async fn theme_script_is_served_and_not_deferred() {
+        let server = build_server().await;
+
+        let res = server.get("/assets/theme.js").await;
+        assert_eq!(200, res.status_code());
+        assert_eq!("text/javascript", res.headers()["content-type"]);
+        assert_eq!(
+            "public, max-age=31536000, immutable",
+            res.headers()["cache-control"]
+        );
+        assert!(res.text().contains("data-theme"));
+
+        let html = server.get("/").await.text();
+        let marker = "/assets/theme.js";
+        let at = html.find(marker).expect("the theme script");
+        let tag_start = html[..at].rfind("<script").expect("a <script> tag");
+        let tag = &html[tag_start..at + html[at..].find('>').expect("an unclosed tag")];
+        assert!(!tag.contains("defer"), "{tag}");
+        assert!(!tag.contains("async"), "{tag}");
     }
 
     #[tokio::test]

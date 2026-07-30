@@ -36,7 +36,7 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 | `handlers/` | One module per route: `index`, `book`, `page`, `thumb`, `shuffle`, `rescan`, `login`, `health` |
 | `auth/` | `config`, `session`, `middleware`, `ratelimit`, `trusted_proxies`, `audit` |
 | `csrf.rs` | Stateless `Sec-Fetch-Site`/`Origin` check on unsafe methods; global outer layer |
-| `security_headers.rs` | `hsts_layer` (global, off unless `COMICS_HSTS_MAX_AGE`), `no_store_html` (inside auth) |
+| `security_headers.rs` | `security_headers_layer` (global: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-*`, `Permissions-Policy`, plus HSTS when `COMICS_HSTS_MAX_AGE` is set), `no_store_html` (inside auth) |
 | `secret.rs` | `Secret` → `session_key()` (SHA-512) and `id_seed()` (SHA-256), each domain-separated |
 | `state.rs` | `AppState`: signing `Key`, `RwLock<Option<BookScan>>`, cache dir, thumbnail `Semaphore` |
 | `assets.rs` | Embedded CSS/JS/icons + `assets_version()` (the `?v=<hash>` fingerprint) |
@@ -49,9 +49,13 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 
 Protected: `GET /`, `GET /book/{id}`, `GET /data/{id}` (page image), `GET /thumb/{size}/{id}`, `POST /shuffle`, `POST /shuffle/{id}`, `POST /rescan`.
 
-Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, and the static assets (`/assets/app.css`, `/assets/app.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`).
+Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, and the static assets (`/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`).
 
-Layers, outermost first: `hsts_layer` → `csrf_origin_guard` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`.
+Layers, outermost first: `security_headers_layer` → `csrf_origin_guard` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`.
+
+### Content-Security-Policy
+
+The policy is `default-src 'none'` with no `'unsafe-inline'`, which is what makes the `<head>` theme snippet a separate `/assets/theme.js` (loaded synchronously, *not* deferred) rather than an inline `<script>`. Adding an inline script or an `on*=` attribute to a template will be dropped by the browser — `rendered_pages_carry_no_inline_scripts` fails first. `style-src`/`font-src` name `fonts.bunny.net` because the templates load webfonts from it; drop the `<link>`s and the policy can drop the host too.
 
 ### Scan lifecycle
 
