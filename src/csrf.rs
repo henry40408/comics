@@ -17,6 +17,17 @@
 //!   call). Those do not ride an ambient session cookie, so they are not
 //!   exposed to CSRF and are allowed through.
 //!
+//! Letting `Origin` overrule a `cross-site` label is a deliberate relaxation:
+//! `Sec-Fetch-Site` is no longer an unappealable verdict. It costs nothing an
+//! attacker can spend, because both headers are set by the browser and neither
+//! is reachable from script. For the two hosts to match, the attacking page
+//! would have to be served from the target host — at which point it is
+//! same-origin and this is not CSRF. The one way a cross-site request arrives
+//! carrying the target's own `Origin` is a redirect chain, and the browser
+//! taints that to `null`, which is still rejected. What is *not* covered is a
+//! proxy that strips `Origin` outright: there is nothing left to confirm with,
+//! and an injected `cross-site` label then still wins.
+//!
 //! Scheme and port are deliberately ignored in the `Origin`/`Host` comparison:
 //! behind a TLS-terminating reverse proxy the browser's `Origin` is `https://`
 //! while the forwarded `Host` carries no scheme, and the proxy commonly strips
@@ -50,23 +61,27 @@ fn is_safe(method: &Method) -> bool {
 /// is passed through. See the module docs.
 fn is_cross_site(req: &Request) -> bool {
     let headers = req.headers();
-    let origin_is_same = origin_is_same(headers);
 
     // A proxy can inject a stale or generic fetch-metadata value. A browser's
     // `Origin` is more specific evidence when it matches the target host, so
-    // never reject that valid same-origin form submission.
+    // never reject that valid same-origin form submission. `&&` short-circuits,
+    // so the comparison only runs for the requests that would be rejected.
     if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
-        return site.eq_ignore_ascii_case("cross-site") && origin_is_same != Some(true);
+        return site.eq_ignore_ascii_case("cross-site") && origin_is_same(headers) != Some(true);
     }
 
-    origin_is_same.is_some_and(|same| !same)
+    // No `Sec-Fetch-Site` at all: `None` here means no `Origin` either, which
+    // makes this a non-browser client — see the module docs.
+    origin_is_same(headers).is_some_and(|same| !same)
 }
 
+/// Whether the request's `Origin` names the same host as its `Host`.
+///
+/// `None` means there is no `Origin` to judge by; the caller decides what that
+/// absence implies. `Some(false)` covers every `Origin` that cannot be
+/// confirmed to match, including an opaque or unparseable one.
 fn origin_is_same(headers: &http::HeaderMap) -> Option<bool> {
-    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
-        // No Sec-Fetch-Site and no Origin → a non-browser client.
-        return None;
-    };
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())?;
     // `Origin: null` is opaque (a sandboxed iframe, a cross-origin redirect) and
     // never legitimate for a state-changing request here.
     if origin.eq_ignore_ascii_case("null") {
@@ -157,6 +172,38 @@ mod tests {
             &[
                 ("sec-fetch-site", "cross-site"),
                 ("origin", "https://app.example.com"),
+                ("host", "app.example.com"),
+            ]
+        )));
+    }
+
+    /// The `Origin` override only rescues a request whose origin is *confirmed*
+    /// same-host. Anything short of that leaves the `cross-site` label standing.
+    #[test]
+    fn an_unconfirmable_origin_does_not_override_the_cross_site_header() {
+        // A cross-origin redirect chain: the browser taints Origin to null.
+        assert!(is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "null"),
+                ("host", "app.example.com"),
+            ]
+        )));
+        // No Host to compare against.
+        assert!(is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "https://app.example.com"),
+            ]
+        )));
+        // An Origin with no `://` authority cannot be parsed into a host.
+        assert!(is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "app.example.com"),
                 ("host", "app.example.com"),
             ]
         )));
