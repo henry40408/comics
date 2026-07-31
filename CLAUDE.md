@@ -35,7 +35,7 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 | `models/` | `scan_books` (parallel via `rayon`) → `BookScan` with `books_map` / `pages_map` for O(1) lookup; IDs are `xxh3(seed, …)` (`ids.rs`) |
 | `handlers/` | One module per route: `index`, `book`, `page`, `thumb`, `shuffle`, `rescan`, `login`, `health` |
 | `auth/` | `config`, `session`, `middleware`, `ratelimit`, `trusted_proxies`, `audit` |
-| `csrf.rs` | Stateless `Sec-Fetch-Site`/`Origin` check on unsafe methods; global outer layer |
+| `csrf.rs` | Stateless `Sec-Fetch-Site`/`Origin` check on unsafe methods; global outer layer, omitted entirely under `COMICS_DISABLE_CSRF_GUARD` |
 | `security_headers.rs` | `security_headers_layer` (global: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-*`, `Permissions-Policy`, plus HSTS when `COMICS_HSTS_MAX_AGE` is set), `no_store_html` (inside auth) |
 | `secret.rs` | `Secret` → `session_key()` (SHA-512) and `id_seed()` (SHA-256), each domain-separated |
 | `state.rs` | `AppState`: signing `Key`, `RwLock<Option<BookScan>>`, cache dir, thumbnail `Semaphore` |
@@ -51,7 +51,7 @@ Protected: `GET /`, `GET /book/{id}`, `GET /data/{id}` (page image), `GET /thumb
 
 Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, and the static assets (`/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`).
 
-Layers, outermost first: `security_headers_layer` → `csrf_origin_guard` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`.
+Layers, outermost first: `security_headers_layer` → `csrf_origin_guard` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`. `COMICS_DISABLE_CSRF_GUARD` drops `csrf_origin_guard` out of that chain — it is an escape hatch for plain-HTTP LAN hosts that get no `Sec-Fetch-Site` and an opaque `Origin: null`, which otherwise locks the operator out of the login form. See the `csrf.rs` module docs before touching it.
 
 ### Content-Security-Policy
 
@@ -87,5 +87,5 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 - The toolchain is pinned in `rust-toolchain.toml` (currently `1.97.1`); CI reads the channel from that file. There is no separate MSRV.
 - Test fixtures live in `fixtures/data/`; the two fixture books have stable IDs (derived from `TEST_SECRET` in `main.rs`) hard-coded in tests as `DATA_IDS`. Changing the secret or the derivation means recomputing them — run the binary with that secret against `fixtures/data` and read the `/book/…` hrefs off the index page.
 - User-facing strings in templates/login are Traditional Chinese (e.g. the login error `帳號或密碼錯誤`).
-- Config env vars all carry a `COMICS_` prefix (`NO_COLOR` and build-time `GIT_VERSION` excepted): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`.
+- Config env vars all carry a `COMICS_` prefix (`NO_COLOR` and build-time `GIT_VERSION` excepted): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`.
 - `ensure_no_legacy_env_vars` fails fast on retired names. Keep `LEGACY_ENV_VARS` in sync when adding, renaming or removing a `#[arg(env = …)]` — a silently-ignored variable is worse than a startup failure, because the fallback (a random secret) looks like it works.

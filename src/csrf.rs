@@ -21,6 +21,25 @@
 //! while the forwarded `Host` carries no scheme, and the proxy commonly strips
 //! the port. Matching on host alone is what keeps the check working in that
 //! standard deployment without a configured public URL.
+//!
+//! # The plain-HTTP LAN hole, and the escape hatch
+//!
+//! Fetch metadata is only sent to *potentially trustworthy* origins — HTTPS, or
+//! `localhost`. A plain-HTTP LAN host such as `http://nas.local` is neither, so
+//! **no `Sec-Fetch-Site` ever arrives** and every request falls through to the
+//! `Origin` branch. That is survivable until a browser reports an opaque
+//! `Origin: null` (a sandboxed iframe, or a privacy setting that suppresses the
+//! header): the login `POST` is then rejected, and because the operator cannot
+//! log in, there is no way back from inside the app.
+//!
+//! `--disable-csrf-guard` / `COMICS_DISABLE_CSRF_GUARD` exists for exactly that
+//! dead end — it removes this layer from the router altogether. Reaching the
+//! server over HTTPS or through a `localhost` tunnel restores `Sec-Fetch-Site`
+//! and fixes the same lockout while giving nothing up, so it is the better
+//! answer wherever it is available. What survives the escape hatch is the
+//! session cookie's `SameSite=Strict`, which is what actually stops a
+//! cross-site `POST` from carrying credentials; this module is defence in depth
+//! layered on that, never the only lock.
 
 use axum::{
     extract::Request,

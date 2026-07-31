@@ -107,6 +107,28 @@ struct Opts {
     /// single bucket.
     #[arg(long, env = "COMICS_TRUSTED_PROXIES")]
     trusted_proxies: Option<TrustedProxies>,
+    /// Turn off the CSRF origin guard entirely. Off by default, and there is no
+    /// good reason to set it on a deployment reachable from anywhere untrusted.
+    ///
+    /// It exists for one shape the guard cannot serve: a plain-HTTP LAN host
+    /// (`http://nas.local`). Fetch-metadata headers are only sent to
+    /// potentially-trustworthy origins — HTTPS or `localhost` — so no
+    /// `Sec-Fetch-Site` ever arrives, the guard falls back to `Origin`, and a
+    /// browser that reports an opaque `Origin: null` then locks the operator out
+    /// of the login form with no way back. Serving over HTTPS fixes the same
+    /// problem without giving anything up; prefer that when it is available.
+    ///
+    /// What is left when this is set: the session cookie's `SameSite=Strict`,
+    /// which is what actually keeps a cross-site POST from carrying credentials.
+    /// This guard is defence in depth on top of it, not the only lock.
+    #[arg(
+        long,
+        env = "COMICS_DISABLE_CSRF_GUARD",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        default_value = "false"
+    )]
+    disable_csrf_guard: bool,
     /// Bind host & port. Defaults to loopback so a bare-metal run is not
     /// exposed on all interfaces without opting in; the container image sets
     /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
@@ -270,11 +292,26 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
-        )
-        // Global outer layer so the check also covers the public `/login` and
-        // `/logout` POSTs, which sit outside the auth layer; inert for safe
-        // methods, so every asset/image/`/healthz` GET passes untouched.
-        .layer(middleware::from_fn(csrf_origin_guard))
+        );
+
+    // Global outer layer so the check also covers the public `/login` and
+    // `/logout` POSTs, which sit outside the auth layer; inert for safe
+    // methods, so every asset/image/`/healthz` GET passes untouched. Skipped
+    // entirely rather than made permissive when disabled, so the disabled build
+    // has no classification logic left to get wrong.
+    let router = if opts.disable_csrf_guard {
+        warn!(
+            "CSRF origin guard disabled by --disable-csrf-guard; every \
+             state-changing request is accepted whatever its origin. The \
+             session cookie's SameSite=Strict is the only cross-site defence \
+             left. Serving over HTTPS is the way to undo this."
+        );
+        router
+    } else {
+        router.layer(middleware::from_fn(csrf_origin_guard))
+    };
+
+    let router = router
         // Global outer layer so the policy also covers `/login`, `/healthz` and
         // the assets. Everything but HSTS is unconditional; HSTS stays inert
         // unless a max-age is configured.
@@ -504,10 +541,16 @@ mod tests {
     }
 
     async fn build_server_at(data_dir: &str) -> TestServer {
+        build_server_with(data_dir, &[]).await
+    }
+
+    async fn build_server_with(data_dir: &str, extra_args: &[&str]) -> TestServer {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let mut opts = Opts::parse_from(["comics", "--data-dir", data_dir]);
+        let mut args = vec!["comics", "--data-dir", data_dir];
+        args.extend_from_slice(extra_args);
+        let mut opts = Opts::parse_from(args);
         // Only when the caller did not pass `--secret` itself.
         opts.secret
             .get_or_insert_with(|| TEST_SECRET.parse().unwrap());
@@ -778,6 +821,40 @@ mod tests {
             .post("/shuffle")
             .add_header("origin", "http://localhost")
             .add_header("host", "localhost")
+            .await;
+        assert_eq!(303, res.status_code());
+    }
+
+    /// The plain-HTTP LAN lockout the escape hatch exists for: no
+    /// `Sec-Fetch-Site` (the origin is not potentially trustworthy, so the
+    /// browser sends none) plus an opaque `Origin: null` is rejected by default.
+    #[tokio::test]
+    async fn csrf_null_origin_post_is_forbidden_by_default() {
+        let server = build_server().await;
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "null")
+            .add_header("host", "nas.local")
+            .await;
+        assert_eq!(403, res.status_code());
+    }
+
+    /// With the guard disabled the same request reaches the handler. The layer
+    /// is not installed at all, so this also covers the `cross-site` label.
+    #[tokio::test]
+    async fn csrf_guard_can_be_disabled() {
+        let server = build_server_with("./fixtures/data", &["--disable-csrf-guard"]).await;
+
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "null")
+            .add_header("host", "nas.local")
+            .await;
+        assert_eq!(303, res.status_code());
+
+        let res = server
+            .post("/shuffle")
+            .add_header("sec-fetch-site", "cross-site")
             .await;
         assert_eq!(303, res.status_code());
     }
