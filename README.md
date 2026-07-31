@@ -40,6 +40,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | `COMICS_SECRET` | The one secret: at least 64 hex characters (`openssl rand -hex 32`). Signs the session cookie and salts hashed book/page IDs | _(random per start)_ |
 | `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
 | `COMICS_TRUSTED_PROXIES` | Reverse proxies whose `X-Forwarded-For` may set the login rate-limit key: comma-separated IPs and CIDR prefixes (e.g. `172.16.0.0/12,10.0.0.2`) | _(empty — header ignored)_ |
+| `COMICS_DISABLE_CSRF_GUARD` | Turn off the CSRF origin check entirely (`true`/`false`) — an escape hatch for plain-HTTP LAN hosts locked out of the login form | _(off)_ |
 | `COMICS_BIND` | Bind host & port (defaults to loopback; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Directory for cached thumbnails | `comics-thumbs` under the system temp dir |
@@ -125,6 +126,23 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > means clearing the browser's HSTS entry by hand (`chrome://net-internals/#hsts`).
 > `includeSubDomains` and `preload` are deliberately not offered — their blast
 > radius covers the whole domain, so they belong to whoever operates the proxy.
+
+> **`COMICS_DISABLE_CSRF_GUARD`:** every state-changing request is checked
+> against `Sec-Fetch-Site`, falling back to comparing `Origin` with `Host`.
+> Browsers only send fetch metadata to *potentially trustworthy* origins — HTTPS,
+> or `localhost` — so a plain-HTTP LAN host such as `http://nas.local` never
+> receives `Sec-Fetch-Site` and always falls through to the `Origin` check. If
+> the browser reports an opaque `Origin: null` there (a sandboxed iframe, or a
+> privacy setting that suppresses the header), the login `POST` is rejected with
+> a bare `403` — and because you cannot log in, there is no way back from inside
+> the app. This flag exists for exactly that dead end; it removes the check from
+> the request path altogether and logs a warning at startup. Reaching the server
+> over HTTPS, or through an SSH tunnel to `localhost`, restores `Sec-Fetch-Site`
+> and fixes the same lockout while giving nothing up, so prefer either where you
+> can. What still protects you with the flag on is the session cookie's
+> `SameSite=Strict`, which is what actually stops a cross-site `POST` from
+> carrying credentials — this check is defence in depth on top of it, not the
+> only lock. Accepts `true`/`false` only, not `1`/`0`.
 
 > **Security headers:** every response carries a `Content-Security-Policy`
 > (`default-src 'none'`, no `'unsafe-inline'`), `X-Content-Type-Options`,
