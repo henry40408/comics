@@ -28,6 +28,17 @@
 //! proxy that strips `Origin` outright: there is nothing left to confirm with,
 //! and an injected `cross-site` label then still wins.
 //!
+//! That last point has a sharper edge, and it is the one prerequisite this
+//! relaxation carries: **a proxy in front must leave `Origin` alone.** A
+//! configuration that rewrites it to the backend host — `proxy_set_header
+//! Origin $host`, the usual way to talk a backend's own origin check into
+//! accepting a WebSocket upgrade — makes `Origin` match unconditionally, and
+//! this guard then accepts every request. That is strictly worse than the
+//! `Sec-Fetch-Site`-only rule it replaces, which would have gone on rejecting a
+//! genuine cross-site POST. The session cookie's `SameSite=Strict` is what
+//! stops such a deployment from being exploitable; this layer is defence in
+//! depth and must not be the one anything relies on.
+//!
 //! Scheme and port are deliberately ignored in the `Origin`/`Host` comparison:
 //! behind a TLS-terminating reverse proxy the browser's `Origin` is `https://`
 //! while the forwarded `Host` carries no scheme, and the proxy commonly strips
