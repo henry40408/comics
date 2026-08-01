@@ -82,14 +82,21 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > salted hash of the session identifier — never the identifier itself, and never
 > the submitted username or password). Two `WARN`s are worth alerting on because
 > they cannot happen by accident: `session_rejected` with `reason=bad_signature`
-> or `reason=malformed` means a cookie this server never issued. A cookie that is
+> or `reason=malformed` means a cookie this server never issued. A third is worth
+> alerting on because of what it implies rather than what it proves:
+> `login_lockout` means the account-wide attempt budget is spent — several
+> addresses are guessing, and *you* cannot sign in either until the window
+> passes. An ordinary per-client throttle stays `login_rate_limited`, carrying a
+> `scope` field (`per_ip`, or `shared` once more addresses are active than comics
+> tracks individually), so a filter written for it keeps matching. A cookie that is
 > merely stale — after a restart, say — logs at `DEBUG` instead, so an upgrade
 > does not fill the log. If you would rather not record IP and `User-Agent`, drop
 > the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
 
 > **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
 > per 60 seconds, **and 20 across all addresses together**; further attempts get
-> `429` until the window passes. A successful login costs nothing against either.
+> `429` with a `Retry-After` naming the exact second the window resets. A
+> successful login costs nothing against either.
 > The client IP is the TCP peer unless `COMICS_TRUSTED_PROXIES` says otherwise —
 > see below. At most 10 000 sources are tracked individually; beyond that — a
 > spray from more live addresses than the cap — further sources share one 5-per-60-seconds

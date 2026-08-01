@@ -15,8 +15,8 @@ use tracing::{error, info, warn};
 
 use crate::assets::assets_version;
 use crate::auth::{
-    AuthConfig, AuthState, authenticate, build_session_cookie, build_session_removal_cookie,
-    rate_limit_key, session_id_of, user_agent,
+    AuthConfig, AuthState, Scope, Throttle, authenticate, build_session_cookie,
+    build_session_removal_cookie, rate_limit_key, session_id_of, user_agent,
 };
 use crate::state::AppState;
 use crate::{MAX_PASSWORD_BYTES, VERSION};
@@ -246,12 +246,41 @@ pub async fn login_submit_route(
         &state.trusted_proxies,
     );
     let user_agent = user_agent(&headers);
-    if !state.login_limiter.try_acquire(ip) {
-        warn!(
-            event = "login_rate_limited",
-            %ip, user_agent, "login rate limited"
-        );
-        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    if let Throttle::Refused {
+        scope,
+        retry_after_secs,
+    } = state.login_limiter.try_acquire(ip)
+    {
+        // The global window is an *account lockout*, not a busy client, and the
+        // two want different reactions: one is a person mistyping, the other says
+        // several addresses are guessing and that the reader cannot get in
+        // either. They get separate event names so a log filter can tell them
+        // apart without parsing fields.
+        if scope == Scope::Global {
+            warn!(
+                event = "login_lockout",
+                retry_after_secs,
+                %ip, user_agent,
+                "login refused for every client address: the account-wide attempt \
+                 budget is spent, which also locks out legitimate sign-ins until \
+                 the window passes"
+            );
+        } else {
+            warn!(
+                event = "login_rate_limited",
+                scope = scope.as_str(),
+                retry_after_secs,
+                %ip, user_agent,
+                "login rate limited"
+            );
+        }
+        let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+        // Tell the client when to come back rather than leaving it to guess; the
+        // window is fixed, so this is exact rather than an estimate.
+        if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        return response;
     }
     // Bound how many Argon2id verifications are in flight; each wants 19 MiB.
     // Acquired *after* the throttle, so a refused attempt never queues, and held
@@ -350,6 +379,12 @@ mod tests {
     }
 
     fn test_state() -> Arc<AppState> {
+        test_state_with(crate::auth::RateLimiter::new(5, 20, 60))
+    }
+
+    /// The limiter's ceilings decide which window refuses first, so a test about
+    /// one of them has to be able to set both.
+    fn test_state_with(limiter: crate::auth::RateLimiter) -> Arc<AppState> {
         Arc::new(AppState {
             auth_config: some_auth(),
             key: cookie::Key::generate(),
@@ -360,7 +395,7 @@ mod tests {
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             verify_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
-            login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 20, 60)),
+            login_limiter: Arc::new(limiter),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
             hsts_max_age: None,
             sessions: Arc::new(crate::auth::SessionStore::new(
@@ -512,6 +547,133 @@ mod tests {
             assert!(!verify_credentials(&auth, "alice", "s3cret"), "{stored:?}");
             assert!(!verify_credentials(&auth, "alice", ""), "{stored:?}");
         }
+    }
+
+    /// A failed login, for the throttling tests below.
+    fn wrong_password() -> Form<LoginForm> {
+        Form(LoginForm {
+            username: "alice".to_string(),
+            password: "nope".to_string(),
+            next: "/".to_string(),
+        })
+    }
+
+    /// Everything the log subscriber saw.
+    fn captured(capture: &Capture) -> String {
+        String::from_utf8(capture.0.lock().clone()).expect("utf-8 logs")
+    }
+
+    /// An ordinary throttle keeps the event name it has always had, so an
+    /// operator's existing filters do not quietly stop matching, and gains a
+    /// `scope` telling which window it was.
+    #[tokio::test]
+    async fn a_per_ip_throttle_keeps_its_event_name() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // One attempt per address, against a global ceiling far out of reach.
+        let state = test_state_with(crate::auth::RateLimiter::new(1, 100, 60));
+        let first = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+        assert_eq!(StatusCode::UNAUTHORIZED, first.status());
+
+        let second = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, second.status());
+
+        let logs = captured(&capture);
+        assert!(logs.contains("login_rate_limited"), "{logs}");
+        assert!(logs.contains("per_ip"), "{logs}");
+        assert!(!logs.contains("login_lockout"), "{logs}");
+    }
+
+    /// The account-wide lockout is a different event, and must not hide inside
+    /// the ordinary one: it says several addresses are guessing *and* that the
+    /// reader cannot sign in either. Burying it under `login_rate_limited` is
+    /// what this whole distinction exists to prevent.
+    #[tokio::test]
+    async fn a_global_lockout_logs_its_own_event() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // A global ceiling of one, and a per-IP ceiling that cannot be the
+        // reason for the refusal.
+        let state = test_state_with(crate::auth::RateLimiter::new(100, 1, 60));
+        let first = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+        assert_eq!(StatusCode::UNAUTHORIZED, first.status());
+
+        let second = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, second.status());
+
+        let logs = captured(&capture);
+        assert!(logs.contains("login_lockout"), "{logs}");
+        assert!(
+            !logs.contains("login_rate_limited"),
+            "the lockout was logged as an ordinary throttle: {logs}"
+        );
+    }
+
+    /// A 429 that does not say when to come back leaves the client guessing, and
+    /// the window here is fixed, so the answer is exact rather than an estimate.
+    #[tokio::test]
+    async fn a_throttled_login_says_when_to_retry() {
+        let state = test_state_with(crate::auth::RateLimiter::new(1, 100, 60));
+        login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+
+        let response = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            wrong_password(),
+        )
+        .await;
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, response.status());
+
+        let value = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .expect("a Retry-After header")
+            .to_str()
+            .expect("an ASCII header value");
+        let seconds: u64 = value.parse().expect("delta-seconds");
+        // Never zero — that would invite an immediate retry into the same refusal.
+        assert!((1..=60).contains(&seconds), "Retry-After: {seconds}");
     }
 
     /// A permit that cannot be had is a *server* fault, and must not be reported
