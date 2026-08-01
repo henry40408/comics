@@ -1,6 +1,10 @@
 use std::{io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
+use argon2::{
+    Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _,
+    password_hash::{SaltString, rand_core::OsRng},
+};
 use axum::{
     Router, middleware,
     routing::{get, post},
@@ -23,12 +27,13 @@ use tracing_subscriber::{
 };
 
 use comics::{
-    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, DEFAULT_ABSOLUTE_TTL,
-    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_PASSWORD_BYTES, RateLimiter, Secret,
-    SessionAuditSalt, SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn,
-    csrf_origin_guard, healthz_route, index_route, login_route, login_submit_route, logout_route,
-    no_store_html, rescan_books_route, scan_books, security_headers_layer, show_book_route,
-    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
+    APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, DEFAULT_ABSOLUTE_TTL,
+    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_CONCURRENT_VERIFICATIONS, MAX_PASSWORD_BYTES,
+    RateLimiter, Secret, SessionAuditSalt, SessionStore, THEME_JS, TrustedProxies, VERSION,
+    auth_middleware_fn, csrf_origin_guard, healthz_route, index_route, login_route,
+    login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
+    security_headers_layer, show_book_route, show_page_route, show_thumb_route, shuffle_book_route,
+    shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -248,6 +253,10 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         thumb_sem: Arc::new(Semaphore::new(
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
+        // Fixed rather than scaled to the core count: what this bounds is
+        // memory, not parallelism, and the machine's core count says nothing
+        // about how much of it there is to spare.
+        verify_sem: Arc::new(Semaphore::new(MAX_CONCURRENT_VERIFICATIONS)),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
         login_limiter: Arc::new(RateLimiter::new(
             LOGIN_MAX_ATTEMPTS,
@@ -268,7 +277,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         .route("/", get(index_route))
         // Page images and thumbnails are content, so they live behind the auth
         // layer too. Cookie verification is cheap, so guarding every image
-        // request (unlike per-request bcrypt) is no longer a concern.
+        // request (unlike a per-request password hash) is no longer a concern.
         .route("/data/{id}", get(show_page_route))
         .route("/thumb/{size}/{id}", get(show_thumb_route))
         // Inside the auth layer, so it only sees responses for protected routes:
@@ -361,34 +370,81 @@ async fn shutdown_signal() {
     }
 }
 
-/// Reject a `COMICS_AUTH_PASSWORD_HASH` that bcrypt cannot read.
+/// Prefixes of the bcrypt hashes comics issued before it moved to Argon2.
 ///
-/// `bcrypt::verify` returns `Err` for a malformed hash, and the login handler
-/// treats that as a wrong password — so without this the server starts, logs
-/// that authentication is enabled, and then refuses every correct password with
-/// the same generic error a typo produces. Failing closed is the right
-/// direction; failing closed *silently* is not, because the one thing the
-/// operator cannot see is that the hash, rather than their typing, is at fault.
+/// Matched only to say so plainly. Every such hash stopped working at the
+/// switch, and the parse error alone would be `salt invalid: too short` — true,
+/// unactionable, and the sort of message that sends an operator hunting through
+/// their reverse proxy for a fault that is one command away.
+const BCRYPT_PREFIXES: [&str; 4] = ["$2a$", "$2b$", "$2x$", "$2y$"];
+
+/// Reject a `COMICS_AUTH_PASSWORD_HASH` that is not an Argon2 hash.
+///
+/// The login handler treats an unparseable hash as a wrong password — so without
+/// this the server starts, logs that authentication is enabled, and then refuses
+/// every correct password with the same generic error a typo produces. Failing
+/// closed is the right direction; failing closed *silently* is not, because the
+/// one thing the operator cannot see is that the hash, rather than their typing,
+/// is at fault. That goes double after the bcrypt-to-Argon2 switch, where every
+/// previously working configuration becomes exactly this case.
 ///
 /// Checked at startup for the same reason as [`ensure_no_legacy_env_vars`]: a
 /// configuration mistake should stop the server rather than change what it
 /// quietly does. Deliberately not checked before the `hash-password` subcommand,
 /// which is what an operator runs *to fix* a bad hash.
 ///
-/// Parsing is enough — it validates the version prefix, the cost, and the
-/// base64 of both salt and digest — and it costs none of the work a verification
-/// would.
+/// A parse alone is **not** enough, and neither is a trial verification.
+///
+/// The PHC grammar is looser than it looks: `PasswordHash::new` happily accepts
+/// `$argon2id$v=19$m=19456$nope`, a salt with no digest after it, because that
+/// shape is legal as *input* to a hasher. Such a hash can never verify anything.
+///
+/// Nor can a trial verification catch it, which is the subtle part:
+/// `PasswordVerifier` reports a missing digest as `Error::Password` — the very
+/// same answer as a merely wrong password — so a verification that fails proves
+/// nothing about the hash. The digest has to be checked for directly, and only
+/// then is `Error::Password` the reassuring answer it looks like: *this hash
+/// works; that password was wrong*.
+///
+/// What the verification does still catch is a well-formed hash the login route
+/// could not use anyway — another algorithm's, or one whose parameters do not
+/// reconstruct — each of which parses cleanly and then fails every comparison.
+/// It costs one Argon2id verification, some 15 ms and 19 MiB, once, at startup.
 fn ensure_password_hash_is_usable(opts: &Opts) -> anyhow::Result<()> {
     let Some(hash) = opts.auth_password_hash.as_deref() else {
         return Ok(());
     };
-    if let Err(err) = hash.parse::<bcrypt::HashParts>() {
+    if BCRYPT_PREFIXES
+        .iter()
+        .any(|prefix| hash.starts_with(prefix))
+    {
         bail!(
-            "COMICS_AUTH_PASSWORD_HASH is not a bcrypt hash ({err}); \
-             generate one with `comics hash-password`"
+            "COMICS_AUTH_PASSWORD_HASH is a bcrypt hash, which comics no longer accepts — \
+             it now hashes passwords with Argon2id. Your password itself is unchanged: \
+             run `comics hash-password`, enter it again, and replace the value of \
+             COMICS_AUTH_PASSWORD_HASH with the new hash."
         );
     }
-    Ok(())
+    let parsed = PasswordHash::new(hash).map_err(|err| {
+        anyhow!(
+            "COMICS_AUTH_PASSWORD_HASH is not an Argon2 hash ({err}); \
+             generate one with `comics hash-password`"
+        )
+    })?;
+    if parsed.hash.is_none() {
+        bail!(
+            "COMICS_AUTH_PASSWORD_HASH carries no digest — it is a salt without a \
+             hash after it, which can never match any password; \
+             generate a complete one with `comics hash-password`"
+        );
+    }
+    match Argon2::default().verify_password(b"", &parsed) {
+        Ok(()) | Err(argon2::password_hash::Error::Password) => Ok(()),
+        Err(err) => bail!(
+            "COMICS_AUTH_PASSWORD_HASH cannot verify a password ({err}); \
+             generate one with `comics hash-password`"
+        ),
+    }
 }
 
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
@@ -444,25 +500,37 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Refuse a password bcrypt would only partly hash.
+/// Refuse a password past [`comics::MAX_PASSWORD_BYTES`].
 ///
-/// Refusing rather than truncating is the whole point: `bcrypt::hash` accepts an
-/// over-long password, prints a hash, and leaves the operator believing in a
-/// passphrase whose tail does nothing. See [`comics::MAX_PASSWORD_BYTES`].
+/// A backstop rather than a real constraint — Argon2 truncates nothing, so
+/// unlike bcrypt's 72 bytes this limit exists only to keep the verifier from
+/// being handed something absurd. Kept in step with the identical check in
+/// `verify_credentials`, so a password that hashes here always verifies there.
 ///
 /// Split out of [`hash_password`] so it can be tested: that one reads from a tty
-/// and no test can drive it, which would leave the check below — the part that
-/// fails *silently* if it ever regresses — covered by nothing.
+/// and no test can drive it, which would leave this covered by nothing.
 fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
     let len = password.len();
     if len > MAX_PASSWORD_BYTES {
         bail!(
-            "Password is {len} bytes, but bcrypt hashes only the first \
-             {MAX_PASSWORD_BYTES} and would discard the rest silently. \
+            "Password is {len} bytes, and comics accepts at most {MAX_PASSWORD_BYTES}. \
              Shorten it — note that non-ASCII characters cost several bytes each."
         );
     }
     Ok(())
+}
+
+/// Hash a password with Argon2id at [`Argon2::default`]'s parameters, which are
+/// `m=19456, t=2, p=1` — one of the configurations the OWASP Password Storage
+/// Cheat Sheet lists as sufficient. They are recorded in the PHC string that
+/// comes out, so raising them later leaves existing hashes verifiable.
+fn argon2_hash(password: &str) -> anyhow::Result<String> {
+    ensure_password_fits(password)?;
+    let salt = SaltString::generate(&mut OsRng);
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|err| anyhow!("failed to hash the password: {err}"))?
+        .to_string())
 }
 
 fn hash_password() -> anyhow::Result<()> {
@@ -471,9 +539,7 @@ fn hash_password() -> anyhow::Result<()> {
     if password != confirmation {
         bail!("Password mismatch");
     }
-    ensure_password_fits(&password)?;
-    let hashed = bcrypt::hash(password, BCRYPT_COST)?;
-    println!("{hashed}");
+    println!("{}", argon2_hash(&password)?);
     Ok(())
 }
 
@@ -583,12 +649,12 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, ensure_password_fits,
+        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, argon2_hash, ensure_password_fits,
         ensure_password_hash_is_usable, init_route, resolve_cookie_secure, spawn_initial_scan,
     };
     use axum_test::TestServer;
     use clap::Parser as _;
-    use comics::{BCRYPT_COST, MAX_PASSWORD_BYTES, VERSION};
+    use comics::{MAX_PASSWORD_BYTES, VERSION};
     use tokio::sync::oneshot;
 
     /// Fixed secret so the derived ID seed — and therefore the URLs below — are
@@ -959,7 +1025,7 @@ mod tests {
     /// A real hash — and no credentials at all — must both start the server.
     #[test]
     fn a_usable_password_hash_starts_the_server() {
-        let hash = bcrypt::hash("password", BCRYPT_COST).unwrap();
+        let hash = argon2_hash("password").unwrap();
         assert!(ensure_password_hash_is_usable(&opts_with_hash(&hash)).is_ok());
 
         let public = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
@@ -972,7 +1038,17 @@ mod tests {
     /// empty string is the case that arrives by way of an unset shell variable.
     #[test]
     fn a_malformed_password_hash_stops_startup() {
-        for hash in ["", "not-a-hash", "$2b$11$too-short", "password"] {
+        let cases = [
+            "",
+            "not-a-hash",
+            "password",
+            // Parses, but is a salt with no digest after it — legal as *input*
+            // to a hasher, and unable to match any password.
+            "$argon2id$v=19$m=19456$nope",
+            // Another algorithm's hash: well-formed, and useless to this route.
+            "$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
+        ];
+        for hash in cases {
             let err = ensure_password_hash_is_usable(&opts_with_hash(hash))
                 .expect_err(&format!("{hash:?} was accepted"))
                 .to_string();
@@ -980,32 +1056,59 @@ mod tests {
         }
     }
 
-    /// The two lengths bcrypt still hashes in full. The second is the one worth
-    /// spelling out: `MAX_PASSWORD_BYTES` counts bytes, and a Traditional
-    /// Chinese passphrase costs three per character, so the ceiling is 24 of
-    /// them rather than 72.
+    /// Every configuration that worked before the move to Argon2 lands here, so
+    /// the message has to say what happened and what to do — not the parser's
+    /// "salt invalid: too short", which is true and useless. Covers each bcrypt
+    /// version prefix, since which one an operator holds depends only on when
+    /// they generated it.
+    #[test]
+    fn a_bcrypt_hash_names_the_migration() {
+        let hashes = [
+            "$2a$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
+            "$2b$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
+            "$2x$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
+            "$2y$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
+        ];
+        for hash in hashes {
+            let err = ensure_password_hash_is_usable(&opts_with_hash(hash))
+                .expect_err("a bcrypt hash was accepted")
+                .to_string();
+            assert!(err.contains("bcrypt"), "{err}");
+            assert!(err.contains("Argon2id"), "{err}");
+            assert!(err.contains("hash-password"), "{err}");
+            // The reassurance that matters: they do not need a new password.
+            assert!(err.contains("password itself is unchanged"), "{err}");
+        }
+    }
+
+    /// The lengths that must go through. The Chinese passphrase is the one worth
+    /// spelling out: at three bytes a character it was capped at 24 under
+    /// bcrypt's 72-byte ceiling, and a hundred of them is now unremarkable.
     #[test]
     fn hash_password_accepts_a_password_at_the_limit() {
         assert!(ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES)).is_ok());
-        let cjk = "密".repeat(24);
-        assert_eq!(MAX_PASSWORD_BYTES, cjk.len());
+
+        let cjk = "密".repeat(100);
+        assert_eq!(300, cjk.len());
         assert!(ensure_password_fits(&cjk).is_ok());
+        // And it really does hash, rather than merely passing the length check.
+        assert!(argon2_hash(&cjk).unwrap().starts_with("$argon2id$"));
     }
 
-    /// Anything longer must be rejected outright rather than hashed to its first
-    /// 72 bytes, and the message must name the size that was submitted — the
+    /// Past the ceiling the message must name the size that was submitted — the
     /// operator cannot count the bytes of a passphrase they just typed blind.
     #[test]
-    fn hash_password_refuses_what_bcrypt_would_truncate() {
+    fn hash_password_refuses_an_over_long_password() {
         let err = ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES + 1))
-            .expect_err("73 bytes was accepted")
+            .expect_err("a password past the ceiling was accepted")
             .to_string();
-        assert!(err.contains("73 bytes"), "{err}");
+        assert!(
+            err.contains(&format!("{} bytes", MAX_PASSWORD_BYTES + 1)),
+            "{err}"
+        );
 
-        let err = ensure_password_fits(&"密".repeat(25))
-            .expect_err("75 bytes was accepted")
-            .to_string();
-        assert!(err.contains("75 bytes"), "{err}");
+        // `argon2_hash` applies the same check, so the subcommand cannot bypass it.
+        assert!(argon2_hash(&"x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
     }
 
     // Authentication: form login backed by a signed session cookie.
@@ -1023,7 +1126,7 @@ mod tests {
         use std::{thread, time};
 
         let (tx, _) = oneshot::channel::<()>();
-        let hash = bcrypt::hash("password", BCRYPT_COST).unwrap();
+        let hash = argon2_hash("password").unwrap();
         let mut args = vec![
             "comics",
             "--data-dir",

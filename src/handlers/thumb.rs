@@ -138,6 +138,7 @@ mod tests {
             seed: 0,
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(Semaphore::new(1)),
+            verify_sem: Arc::new(Semaphore::new(1)),
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 20, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),

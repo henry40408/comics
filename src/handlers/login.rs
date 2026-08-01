@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
 use askama::Template;
 use axum::{
     Extension, Form,
@@ -47,15 +48,34 @@ pub struct LoginForm {
     next: String,
 }
 
+/// Verify `password` against a stored Argon2 PHC string.
+///
+/// The parameters come from the stored hash, not from [`Argon2::default`], so a
+/// hash produced by an older build — or a future one with a heavier cost — keeps
+/// verifying without a migration. `Argon2::default()` supplies only the
+/// algorithm implementation.
+///
+/// An unparseable hash is a refusal rather than a panic. It should be
+/// unreachable: `ensure_password_hash_is_usable` rejects one at startup, which
+/// is where an operator can actually act on it.
+fn verify_password_hash(password: &str, stored: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(stored) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
 /// Check submitted credentials against the configured ones. When no credentials
 /// are configured every request is already public, so anything is accepted.
 ///
 /// **Both halves always run.** The obvious spelling — `username == expected &&
-/// bcrypt::verify(…)` — short-circuits, so a wrong username answers in
-/// microseconds while a wrong password pays for a `BCRYPT_COST` verification
-/// (~100 ms). The response is byte-identical either way, but the *timing* is not,
-/// and that discrepancy is enough to enumerate the username: exactly the "quick
-/// exit" pattern the OWASP Authentication Cheat Sheet warns against under
+/// verify(…)` — short-circuits, so a wrong username answers in microseconds
+/// while a wrong password pays for a full Argon2id verification (~15 ms). The
+/// response is byte-identical either way, but the *timing* is not, and that
+/// discrepancy is enough to enumerate the username: exactly the "quick exit"
+/// pattern the OWASP Authentication Cheat Sheet warns against under
 /// *Authentication and Error Messages*. So the verification is computed
 /// unconditionally and combined with a bitwise `&` on [`Choice`], which — unlike
 /// `&&` — is not a control-flow branch.
@@ -63,6 +83,9 @@ pub struct LoginForm {
 /// The username comparison is [`ConstantTimeEq`] for the same reason at a
 /// smaller scale; it still reveals whether the lengths match, which is inherent
 /// to comparing at all and says nothing an attacker can act on.
+///
+/// Callers must hold a permit from `AppState::verify_sem` — each call allocates
+/// [`MAX_CONCURRENT_VERIFICATIONS`]-worth of memory-hard state.
 pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> bool {
     match auth {
         AuthConfig::None => true,
@@ -70,18 +93,16 @@ pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> 
             username: expected_user,
             password_hash,
         } => {
-            // Refuse before hashing what bcrypt would only truncate. This exit
-            // *is* a branch, but it turns on the length of the attacker's own
-            // submission and so tells them nothing they did not already know —
-            // and it is what keeps an oversized body from buying a verification.
-            // See `hash_password` in `main.rs` for the other half.
+            // The cheat sheet's "maximum input length" on a comparison function.
+            // This exit *is* a branch, but it turns on the length of the
+            // attacker's own submission and so tells them nothing they did not
+            // already know — and it keeps an oversized body from buying a
+            // verification. See `hash_password` in `main.rs` for the other half.
             if password.len() > MAX_PASSWORD_BYTES {
                 return false;
             }
             let username_ok = username.as_bytes().ct_eq(expected_user.as_bytes());
-            let password_ok = Choice::from(u8::from(
-                bcrypt::verify(password, password_hash).unwrap_or(false),
-            ));
+            let password_ok = Choice::from(u8::from(verify_password_hash(password, password_hash)));
             (username_ok & password_ok).into()
         }
     }
@@ -232,6 +253,14 @@ pub async fn login_submit_route(
         );
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
+    // Bound how many Argon2id verifications are in flight; each wants 19 MiB.
+    // Acquired *after* the throttle, so a refused attempt never queues, and held
+    // only across the verification itself. The semaphore is never closed, so the
+    // error case cannot arise — refuse rather than unwrap if it somehow does.
+    let Ok(_permit) = state.verify_sem.acquire().await else {
+        error!("verification semaphore closed");
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
         // Deliberately no username or password in the event: a failed login is
         // exactly where a mistyped password lands in the log otherwise.
@@ -316,7 +345,7 @@ mod tests {
     fn some_auth() -> AuthConfig {
         AuthConfig::Some {
             username: "alice".to_string(),
-            password_hash: bcrypt::hash("s3cret", 4).unwrap(),
+            password_hash: crate::test_password_hash("s3cret"),
         }
     }
 
@@ -329,6 +358,7 @@ mod tests {
             seed: 0,
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
+            verify_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 20, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
@@ -467,6 +497,47 @@ mod tests {
         assert!(verify_credentials(&AuthConfig::None, "", ""));
     }
 
+    /// A stored hash the parser rejects refuses everything, rather than panicking
+    /// or — far worse — accepting. `ensure_password_hash_is_usable` stops the
+    /// server before this can happen, but the login route must not *depend* on
+    /// that having run: the two are reached by different entry points, and only
+    /// one of them is the server.
+    #[test]
+    fn an_unusable_stored_hash_refuses_every_password() {
+        for stored in ["", "not-a-hash", "$argon2id$v=19$m=19456$nope"] {
+            let auth = AuthConfig::Some {
+                username: "alice".to_string(),
+                password_hash: stored.to_string(),
+            };
+            assert!(!verify_credentials(&auth, "alice", "s3cret"), "{stored:?}");
+            assert!(!verify_credentials(&auth, "alice", ""), "{stored:?}");
+        }
+    }
+
+    /// A permit that cannot be had is a *server* fault, and must not be reported
+    /// as a rejected password: the reader would retype a correct password for as
+    /// long as their patience held. Unreachable while nothing closes the
+    /// semaphore, which is exactly why the branch needs a test of its own.
+    #[tokio::test]
+    async fn a_closed_verification_semaphore_is_not_reported_as_a_bad_password() {
+        let state = test_state();
+        state.verify_sem.close();
+
+        let response = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            Form(LoginForm {
+                username: "alice".to_string(),
+                password: "s3cret".to_string(),
+                next: "/".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, response.status());
+    }
+
     /// Regression: the check was `username == expected && bcrypt::verify(…)`,
     /// which short-circuits — so a wrong username answered in microseconds while
     /// a wrong password paid for a whole verification. The bodies were identical,
@@ -481,7 +552,7 @@ mod tests {
     fn wrong_username_costs_what_a_wrong_password_costs() {
         let auth = AuthConfig::Some {
             username: "alice".to_string(),
-            password_hash: bcrypt::hash("s3cret", 8).unwrap(),
+            password_hash: crate::test_password_hash("s3cret"),
         };
 
         let started = Instant::now();
@@ -499,16 +570,19 @@ mod tests {
         );
     }
 
-    /// Regression: bcrypt reads only the first [`MAX_PASSWORD_BYTES`] and the
-    /// crate truncates rather than erroring, so every string sharing that prefix
-    /// verified against the same hash — the password plus any suffix at all was
-    /// accepted. Refusing over-long input is what closes that.
+    /// Argon2 reads the whole password, so a long one is not its own prefix.
+    ///
+    /// Under bcrypt every string sharing the first 72 bytes verified against the
+    /// same hash, which made a 100-byte password plus *any* suffix a valid
+    /// credential. Both assertions below held only because comics refused
+    /// anything past 72 bytes outright; now the length is unremarkable and the
+    /// property comes from the algorithm.
     #[test]
-    fn a_password_at_the_limit_does_not_accept_its_own_suffixes() {
-        let password = "x".repeat(MAX_PASSWORD_BYTES);
+    fn a_long_password_is_not_merely_its_own_prefix() {
+        let password = "x".repeat(100);
         let auth = AuthConfig::Some {
             username: "alice".to_string(),
-            password_hash: bcrypt::hash(&password, 4).unwrap(),
+            password_hash: crate::test_password_hash(&password),
         };
         assert!(verify_credentials(&auth, "alice", &password));
         assert!(!verify_credentials(
@@ -516,23 +590,41 @@ mod tests {
             "alice",
             &format!("{password}extra")
         ));
+        // The byte bcrypt would never have reached.
+        assert!(!verify_credentials(&auth, "alice", &"x".repeat(99)));
     }
 
-    /// A Traditional Chinese passphrase is three bytes per character, which is
-    /// where this limit is met soonest — 24 characters, not 72.
+    /// A Traditional Chinese passphrase costs three bytes per character, which
+    /// under bcrypt meant a ceiling of 24 characters — inside what someone might
+    /// reasonably choose. A hundred of them is now ordinary, and every one of
+    /// them counts.
     #[test]
-    fn the_password_limit_is_counted_in_bytes_not_characters() {
-        let password = "密".repeat(24);
-        assert_eq!(MAX_PASSWORD_BYTES, password.len());
+    fn a_chinese_passphrase_is_not_cut_short() {
+        let password = "密".repeat(100);
+        assert_eq!(300, password.len());
+        assert!(password.len() < MAX_PASSWORD_BYTES);
         let auth = AuthConfig::Some {
             username: "alice".to_string(),
-            password_hash: bcrypt::hash(&password, 4).unwrap(),
+            password_hash: crate::test_password_hash(&password),
+        };
+        assert!(verify_credentials(&auth, "alice", &password));
+        assert!(!verify_credentials(&auth, "alice", &"密".repeat(99)));
+    }
+
+    /// The ceiling is a backstop, not a feature: past it the verifier refuses
+    /// without hashing, which is the cheat sheet's "maximum input length".
+    #[test]
+    fn a_password_past_the_ceiling_is_refused() {
+        let password = "x".repeat(MAX_PASSWORD_BYTES);
+        let auth = AuthConfig::Some {
+            username: "alice".to_string(),
+            password_hash: crate::test_password_hash(&password),
         };
         assert!(verify_credentials(&auth, "alice", &password));
         assert!(!verify_credentials(
             &auth,
             "alice",
-            &format!("{password}密")
+            &"x".repeat(MAX_PASSWORD_BYTES + 1)
         ));
     }
 

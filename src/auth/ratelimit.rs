@@ -57,8 +57,8 @@ struct Buckets {
 /// is acceptable for a single-account self-hosted service. Its purpose is to
 /// remove the zero cost of an online dictionary attack against the one static
 /// credential pair (OWASP Authentication Cheat Sheet, "Protect Against
-/// Automated Attacks"); bcrypt's ~100 ms per verification is a speed bump, not
-/// a control.
+/// Automated Attacks"); Argon2id's ~15 ms and 19 MiB per verification is a speed
+/// bump, not a control.
 ///
 /// # Why a global window as well
 ///
@@ -125,8 +125,9 @@ impl RateLimiter {
     ///
     /// Checking and counting happen under a single lock, so concurrent requests
     /// cannot all observe the pre-attack count. The reservation is taken
-    /// *before* the credential comparison — which costs ~100 ms of bcrypt — and
-    /// is handed back by [`release`](Self::release) when the credentials turn
+    /// *before* the credential comparison — which costs a full Argon2id
+    /// verification — and is handed back by [`release`](Self::release) when the
+    /// credentials turn
     /// out to be valid, so only failures ultimately consume the window.
     ///
     /// At capacity the map is first pruned of expired windows. If it is still
@@ -135,7 +136,7 @@ impl RateLimiter {
     /// alternatives are all worse: admitting the source untracked makes password
     /// guessing free and unbounded (an attacker with a `/64` has effectively
     /// unlimited source addresses, and each admitted attempt still costs a
-    /// bcrypt verify); `clear()`ing the map hands anyone already throttled a way
+    /// verification); `clear()`ing the map hands anyone already throttled a way
     /// to reset their own budget by spraying keys; and refusing outright turns
     /// the same spray into a total login lockout. Sharing one finite window
     /// degrades to a global limit under attack while keeping every source
@@ -410,8 +411,8 @@ mod tests {
 
     /// Regression: at capacity the limiter used to admit a fresh source *without*
     /// inserting it, so anyone holding more addresses than the cap — a single
-    /// IPv6 `/64` is enough — got unlimited attempts, each still costing a bcrypt
-    /// verify. The shared overflow window is what bounds that.
+    /// IPv6 `/64` is enough — got unlimited attempts, each still costing a
+    /// verification. The shared overflow window is what bounds that.
     #[test]
     fn overflow_bucket_is_shared_and_finite() {
         let mut limiter = limiter(3, 60);

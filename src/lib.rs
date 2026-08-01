@@ -30,23 +30,51 @@ pub use security_headers::{no_store_html, security_headers_layer};
 pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");
-pub const BCRYPT_COST: u32 = 11u32;
 
-/// Bytes of a password bcrypt actually hashes.
+/// Longest password accepted, in bytes.
 ///
-/// The algorithm reads no further, and the `bcrypt` crate's `hash`/`verify`
-/// *silently* drop the rest rather than erroring — so without a check of our own
-/// a 100-character passphrase would be its first 72 bytes wearing a disguise,
-/// and the operator would never be told. The OWASP Authentication Cheat Sheet
-/// asks for the opposite ("Do not silently truncate passwords") and for a
-/// maximum input length on the comparison function; this constant is both.
+/// Argon2 imposes no meaningful ceiling of its own — RFC 9106 allows 2^32-1
+/// bytes and the password only feeds a linear `BLAKE2b` pre-hash, so length costs
+/// nothing the way bcrypt's 72-byte truncation did. This limit is therefore not
+/// the algorithm's; it is the "maximum input length" the OWASP Authentication
+/// Cheat Sheet asks of a comparison function, set far enough out to be a
+/// backstop against absurd input rather than a constraint anyone meets.
 ///
-/// It bites soonest in the language this reader is written for: a Traditional
-/// Chinese passphrase is three bytes per character, so the limit lands at 24
-/// characters, well inside what someone might reasonably choose.
+/// A kilobyte is 1024 ASCII characters, or roughly 341 Traditional Chinese ones
+/// — comfortably past the 64 the cheat sheet asks be supported, which the old
+/// bcrypt ceiling could not honour for a non-ASCII passphrase.
+pub const MAX_PASSWORD_BYTES: usize = 1024;
+
+/// How many password verifications may run at once.
 ///
-/// The crate offers `non_truncating_hash`/`non_truncating_verify`, which error
-/// instead. They are not used here because they reject a *72*-byte password too
-/// (the limit is exclusive there), and because rejecting at the prompt says more
-/// than an error at verification time can.
-pub const MAX_PASSWORD_BYTES: usize = 72;
+/// Argon2id at the parameters below allocates **19 MiB per verification**, where
+/// bcrypt used about four kilobytes. That is the price of being memory-hard, and
+/// it is the point — but it means concurrency has to be bounded, or the twenty
+/// attempts a minute the rate limiter admits could arrive together and ask for
+/// 380 MiB at once. This machine may well be a NAS.
+///
+/// Four keeps the ceiling near 76 MiB while leaving room for a household's worth
+/// of simultaneous sign-ins; beyond that, requests queue for the ~15 ms a
+/// verification takes rather than being refused.
+pub const MAX_CONCURRENT_VERIFICATIONS: usize = 4;
+
+/// An Argon2 hash at parameters far below the real ones.
+///
+/// Test-only. Verification reads its parameters from the hash itself, so what
+/// the tests exercise is the same code path the server runs — they simply are
+/// not made to pay 19 MiB and ~25 ms for each fixture. One mebibyte and a single
+/// pass still leave a verification three orders of magnitude above a string
+/// comparison, which is what the timing test needs.
+#[cfg(test)]
+pub(crate) fn test_password_hash(password: &str) -> String {
+    use argon2::{
+        Algorithm, Argon2, Params, PasswordHasher as _, Version,
+        password_hash::{SaltString, rand_core::OsRng},
+    };
+    let params = Params::new(1024, 1, 1, None).expect("valid test parameters");
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    argon
+        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+        .expect("hashing a test password")
+        .to_string()
+}

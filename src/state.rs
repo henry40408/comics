@@ -22,6 +22,11 @@ pub struct AppState {
     pub cache_dir: PathBuf,
     /// Bounds concurrent thumbnail generation (CPU-bound decode + resize).
     pub thumb_sem: Arc<Semaphore>,
+    /// Bounds concurrent password verifications. Argon2id is memory-hard by
+    /// design — 19 MiB a time — so without this the login attempts the rate
+    /// limiter admits could all allocate at once. See
+    /// [`MAX_CONCURRENT_VERIFICATIONS`](crate::MAX_CONCURRENT_VERIFICATIONS).
+    pub verify_sem: Arc<Semaphore>,
     pub cookie_secure: bool,
     pub login_limiter: Arc<RateLimiter>,
     /// Reverse proxies whose `X-Forwarded-For` is believed when deriving that
