@@ -32,6 +32,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 # Used to salt-and-hash session identifiers before they reach the audit log;
 # `xxhash-rust` is not a cryptographic hash and would not do.
 sha2 = "0.11.0"
+# Already in the tree as a transitive dependency of `bcrypt`, which uses it to
+# compare hashes. Used here to compare the *username* without an early exit, so
+# that a wrong username cannot be told from a wrong password by response time.
+subtle = "2.6.1"
 tokio = { version = "1.52.3", features = [
   "fs",
   "macros",

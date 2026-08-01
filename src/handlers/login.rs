@@ -9,15 +9,16 @@ use axum::{
 use cookie::CookieJar;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use serde::Deserialize;
+use subtle::{Choice, ConstantTimeEq as _};
 use tracing::{error, info, warn};
 
-use crate::VERSION;
 use crate::assets::assets_version;
 use crate::auth::{
     AuthConfig, AuthState, authenticate, build_session_cookie, build_session_removal_cookie,
     rate_limit_key, session_id_of, user_agent,
 };
 use crate::state::AppState;
+use crate::{MAX_PASSWORD_BYTES, VERSION};
 
 #[derive(Template)]
 #[template(path = "login.html")]
@@ -48,13 +49,41 @@ pub struct LoginForm {
 
 /// Check submitted credentials against the configured ones. When no credentials
 /// are configured every request is already public, so anything is accepted.
+///
+/// **Both halves always run.** The obvious spelling — `username == expected &&
+/// bcrypt::verify(…)` — short-circuits, so a wrong username answers in
+/// microseconds while a wrong password pays for a `BCRYPT_COST` verification
+/// (~100 ms). The response is byte-identical either way, but the *timing* is not,
+/// and that discrepancy is enough to enumerate the username: exactly the "quick
+/// exit" pattern the OWASP Authentication Cheat Sheet warns against under
+/// *Authentication and Error Messages*. So the verification is computed
+/// unconditionally and combined with a bitwise `&` on [`Choice`], which — unlike
+/// `&&` — is not a control-flow branch.
+///
+/// The username comparison is [`ConstantTimeEq`] for the same reason at a
+/// smaller scale; it still reveals whether the lengths match, which is inherent
+/// to comparing at all and says nothing an attacker can act on.
 pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> bool {
     match auth {
         AuthConfig::None => true,
         AuthConfig::Some {
             username: expected_user,
             password_hash,
-        } => username == expected_user && bcrypt::verify(password, password_hash).unwrap_or(false),
+        } => {
+            // Refuse before hashing what bcrypt would only truncate. This exit
+            // *is* a branch, but it turns on the length of the attacker's own
+            // submission and so tells them nothing they did not already know —
+            // and it is what keeps an oversized body from buying a verification.
+            // See `hash_password` in `main.rs` for the other half.
+            if password.len() > MAX_PASSWORD_BYTES {
+                return false;
+            }
+            let username_ok = username.as_bytes().ct_eq(expected_user.as_bytes());
+            let password_ok = Choice::from(u8::from(
+                bcrypt::verify(password, password_hash).unwrap_or(false),
+            ));
+            (username_ok & password_ok).into()
+        }
     }
 }
 
@@ -282,7 +311,7 @@ pub async fn logout_route(
 mod tests {
     use super::*;
     use parking_lot::{Mutex, RwLock};
-    use std::path::PathBuf;
+    use std::{path::PathBuf, time::Instant};
 
     fn some_auth() -> AuthConfig {
         AuthConfig::Some {
@@ -436,6 +465,75 @@ mod tests {
     #[test]
     fn verify_credentials_public_when_unconfigured() {
         assert!(verify_credentials(&AuthConfig::None, "", ""));
+    }
+
+    /// Regression: the check was `username == expected && bcrypt::verify(…)`,
+    /// which short-circuits — so a wrong username answered in microseconds while
+    /// a wrong password paid for a whole verification. The bodies were identical,
+    /// but the response *time* enumerated the username anyway.
+    ///
+    /// Cost 8 puts a verification four orders of magnitude above the string
+    /// comparison a short circuit would leave, so the ratio has room to spare and
+    /// does not need a quiet machine. `[profile.dev.package."*"]` optimises
+    /// bcrypt even in a debug build, which keeps this under a few tens of
+    /// milliseconds.
+    #[test]
+    fn wrong_username_costs_what_a_wrong_password_costs() {
+        let auth = AuthConfig::Some {
+            username: "alice".to_string(),
+            password_hash: bcrypt::hash("s3cret", 8).unwrap(),
+        };
+
+        let started = Instant::now();
+        assert!(!verify_credentials(&auth, "alice", "nope"));
+        let wrong_password = started.elapsed();
+
+        let started = Instant::now();
+        assert!(!verify_credentials(&auth, "mallory", "nope"));
+        let wrong_username = started.elapsed();
+
+        assert!(
+            wrong_username * 4 >= wrong_password,
+            "a wrong username took {wrong_username:?} against {wrong_password:?} \
+             for a wrong password — the credential check is short-circuiting"
+        );
+    }
+
+    /// Regression: bcrypt reads only the first [`MAX_PASSWORD_BYTES`] and the
+    /// crate truncates rather than erroring, so every string sharing that prefix
+    /// verified against the same hash — the password plus any suffix at all was
+    /// accepted. Refusing over-long input is what closes that.
+    #[test]
+    fn a_password_at_the_limit_does_not_accept_its_own_suffixes() {
+        let password = "x".repeat(MAX_PASSWORD_BYTES);
+        let auth = AuthConfig::Some {
+            username: "alice".to_string(),
+            password_hash: bcrypt::hash(&password, 4).unwrap(),
+        };
+        assert!(verify_credentials(&auth, "alice", &password));
+        assert!(!verify_credentials(
+            &auth,
+            "alice",
+            &format!("{password}extra")
+        ));
+    }
+
+    /// A Traditional Chinese passphrase is three bytes per character, which is
+    /// where this limit is met soonest — 24 characters, not 72.
+    #[test]
+    fn the_password_limit_is_counted_in_bytes_not_characters() {
+        let password = "密".repeat(24);
+        assert_eq!(MAX_PASSWORD_BYTES, password.len());
+        let auth = AuthConfig::Some {
+            username: "alice".to_string(),
+            password_hash: bcrypt::hash(&password, 4).unwrap(),
+        };
+        assert!(verify_credentials(&auth, "alice", &password));
+        assert!(!verify_credentials(
+            &auth,
+            "alice",
+            &format!("{password}密")
+        ));
     }
 
     #[test]

@@ -65,6 +65,7 @@ The initial scan runs on a background thread (`spawn_initial_scan`) *after* the 
 
 Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` are set; otherwise the server is fully public (and logs a warning). Unauthenticated `GET`s redirect to `/login?next=…` (constrained by `safe_next`); other methods get `401`.
 
+- `verify_credentials` deliberately does **not** short-circuit: the bcrypt verification runs even when the username is wrong, and the username is compared with `subtle::ConstantTimeEq`, so response time cannot enumerate it. Restoring the obvious `username == expected && bcrypt::verify(…)` reintroduces a ~5-orders-of-magnitude timing oracle. Passwords over `MAX_PASSWORD_BYTES` (72, bcrypt's ceiling) are refused rather than silently truncated — in both `verify_credentials` and the `hash-password` subcommand.
 - Sessions live in the in-memory `SessionStore`; the cookie carries an opaque 128-bit identifier and nothing else. **Sessions do not survive a restart** — that is deliberate, and it is what makes logout enforceable.
 - `POST /logout` ends **every** live session, not just the caller's — comics has one set of credentials, so they are all the same person's, and this is the only way to invalidate a stolen cookie short of a restart. The route is public, so store membership is what authorises the clear (`SessionStore::destroy_all`).
 - Cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`; `Secure` + renamed `__Host-comics_session` only when `COMICS_COOKIE_SECURE` is set. Exactly one name is accepted.
@@ -72,7 +73,7 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 - `POST /login` is rate-limited to 5 attempts per client IP per 60 s (`auth/ratelimit.rs`). The key is the TCP peer unless `COMICS_TRUSTED_PROXIES` lists it — **empty by default**, so `X-Forwarded-For` is ignored out of the box.
 - Audit events (`auth/audit.rs`) are INFO/WARN, so the default `error,comics=info` filter shows them; pair with `--log-format json`. Session identifiers are never logged in cleartext.
 
-`auth_every_protected_route_rejects_anonymous` / `…reachable_when_logged_in` are the guardrails — keep them passing when touching routing. `removal_cookie_mirrors_the_session_cookie` keeps logout's removal cookie in step with the issued one.
+`auth_every_protected_route_rejects_anonymous` / `…reachable_when_logged_in` are the guardrails — keep them passing when touching routing. `removal_cookie_mirrors_the_session_cookie` keeps logout's removal cookie in step with the issued one. `wrong_username_costs_what_a_wrong_password_costs` and `a_password_at_the_limit_does_not_accept_its_own_suffixes` guard the two properties above.
 
 ### Thumbnails
 

@@ -31,3 +31,22 @@ pub use state::AppState;
 
 pub const VERSION: &str = env!("APP_VERSION");
 pub const BCRYPT_COST: u32 = 11u32;
+
+/// Bytes of a password bcrypt actually hashes.
+///
+/// The algorithm reads no further, and the `bcrypt` crate's `hash`/`verify`
+/// *silently* drop the rest rather than erroring — so without a check of our own
+/// a 100-character passphrase would be its first 72 bytes wearing a disguise,
+/// and the operator would never be told. The OWASP Authentication Cheat Sheet
+/// asks for the opposite ("Do not silently truncate passwords") and for a
+/// maximum input length on the comparison function; this constant is both.
+///
+/// It bites soonest in the language this reader is written for: a Traditional
+/// Chinese passphrase is three bytes per character, so the limit lands at 24
+/// characters, well inside what someone might reasonably choose.
+///
+/// The crate offers `non_truncating_hash`/`non_truncating_verify`, which error
+/// instead. They are not used here because they reject a *72*-byte password too
+/// (the limit is exclusive there), and because rejecting at the prompt says more
+/// than an error at verification time can.
+pub const MAX_PASSWORD_BYTES: usize = 72;

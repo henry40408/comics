@@ -24,11 +24,11 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, DEFAULT_ABSOLUTE_TTL,
-    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt,
-    SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard,
-    healthz_route, index_route, login_route, login_submit_route, logout_route, no_store_html,
-    rescan_books_route, scan_books, security_headers_layer, show_book_route, show_page_route,
-    show_thumb_route, shuffle_book_route, shuffle_route,
+    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_PASSWORD_BYTES, RateLimiter, Secret,
+    SessionAuditSalt, SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn,
+    csrf_origin_guard, healthz_route, index_route, login_route, login_submit_route, logout_route,
+    no_store_html, rescan_books_route, scan_books, security_headers_layer, show_book_route,
+    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -400,12 +400,34 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refuse a password bcrypt would only partly hash.
+///
+/// Refusing rather than truncating is the whole point: `bcrypt::hash` accepts an
+/// over-long password, prints a hash, and leaves the operator believing in a
+/// passphrase whose tail does nothing. See [`comics::MAX_PASSWORD_BYTES`].
+///
+/// Split out of [`hash_password`] so it can be tested: that one reads from a tty
+/// and no test can drive it, which would leave the check below — the part that
+/// fails *silently* if it ever regresses — covered by nothing.
+fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
+    let len = password.len();
+    if len > MAX_PASSWORD_BYTES {
+        bail!(
+            "Password is {len} bytes, but bcrypt hashes only the first \
+             {MAX_PASSWORD_BYTES} and would discard the rest silently. \
+             Shorten it — note that non-ASCII characters cost several bytes each."
+        );
+    }
+    Ok(())
+}
+
 fn hash_password() -> anyhow::Result<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
         bail!("Password mismatch");
     }
+    ensure_password_fits(&password)?;
     let hashed = bcrypt::hash(password, BCRYPT_COST)?;
     println!("{hashed}");
     Ok(())
@@ -516,10 +538,13 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LOGIN_MAX_ATTEMPTS, Opts, init_route, resolve_cookie_secure, spawn_initial_scan};
+    use crate::{
+        LOGIN_MAX_ATTEMPTS, Opts, ensure_password_fits, init_route, resolve_cookie_secure,
+        spawn_initial_scan,
+    };
     use axum_test::TestServer;
     use clap::Parser as _;
-    use comics::{BCRYPT_COST, VERSION};
+    use comics::{BCRYPT_COST, MAX_PASSWORD_BYTES, VERSION};
     use tokio::sync::oneshot;
 
     /// Fixed secret so the derived ID seed — and therefore the URLs below — are
@@ -873,6 +898,34 @@ mod tests {
     #[test]
     fn version_is_set() {
         assert!(!VERSION.is_empty());
+    }
+
+    /// The two lengths bcrypt still hashes in full. The second is the one worth
+    /// spelling out: `MAX_PASSWORD_BYTES` counts bytes, and a Traditional
+    /// Chinese passphrase costs three per character, so the ceiling is 24 of
+    /// them rather than 72.
+    #[test]
+    fn hash_password_accepts_a_password_at_the_limit() {
+        assert!(ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES)).is_ok());
+        let cjk = "密".repeat(24);
+        assert_eq!(MAX_PASSWORD_BYTES, cjk.len());
+        assert!(ensure_password_fits(&cjk).is_ok());
+    }
+
+    /// Anything longer must be rejected outright rather than hashed to its first
+    /// 72 bytes, and the message must name the size that was submitted — the
+    /// operator cannot count the bytes of a passphrase they just typed blind.
+    #[test]
+    fn hash_password_refuses_what_bcrypt_would_truncate() {
+        let err = ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES + 1))
+            .expect_err("73 bytes was accepted")
+            .to_string();
+        assert!(err.contains("73 bytes"), "{err}");
+
+        let err = ensure_password_fits(&"密".repeat(25))
+            .expect_err("75 bytes was accepted")
+            .to_string();
+        assert!(err.contains("75 bytes"), "{err}");
     }
 
     // Authentication: form login backed by a signed session cookie.

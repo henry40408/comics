@@ -461,6 +461,7 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "snapbox",
+ "subtle",
  "tempfile",
  "time",
  "tokio",
