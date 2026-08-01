@@ -6,7 +6,10 @@
 # builds at the host's native speed. The only C dependency is mimalloc, which
 # zig cc compiles from source; everything else (image codecs, bcrypt, xxhash) is
 # pure Rust, so no CMake or system libraries are required.
-FROM --platform=$BUILDPLATFORM rust:1.97-bookworm AS build
+# No Rust version here: rust-toolchain.toml is the single source of truth and
+# rustup installs it below. Do not "simplify" this to `rust:1.97` — the
+# un-suffixed tag resolves to trixie, which would be a silent Debian major bump.
+FROM --platform=$BUILDPLATFORM rust:bookworm AS build
 
 # curl + xz fetch zig; that is the only build-time system dependency.
 RUN apt-get update \
@@ -28,6 +31,13 @@ RUN set -eux; \
     ln -s "/opt/zig-${zarch}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
 
 WORKDIR /app
+
+# Install the pinned toolchain in a layer keyed on rust-toolchain.toml alone, so
+# editing source does not re-download the compiler. Any rustup proxy invocation
+# triggers the install, and the musl targets declared in the file come with it.
+COPY rust-toolchain.toml .
+RUN cargo --version
+
 COPY . .
 
 # Map Docker's TARGETARCH onto the Rust musl triple and build. `rustup target
