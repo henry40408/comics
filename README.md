@@ -35,7 +35,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | Variable | Description | Default |
 | --- | --- | --- |
 | `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
-| `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form | _(none)_ |
+| `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form (bcrypt; the server refuses to start if it is not one) | _(none)_ |
 | `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
 | `COMICS_SECRET` | The one secret: at least 64 hex characters (`openssl rand -hex 32`). Signs the session cookie and salts hashed book/page IDs | _(random per start)_ |
 | `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
@@ -88,12 +88,19 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 > the level with `RUST_LOG` (e.g. `RUST_LOG=comics=warn`).
 
 > **Login throttling:** `POST /login` allows 5 *failed* attempts per client IP
-> per 60 seconds; further attempts get `429` until the window passes. A
-> successful login costs nothing. The client IP is the TCP peer unless
-> `COMICS_TRUSTED_PROXIES` says otherwise — see below. At most 10 000 sources are
-> tracked individually; beyond that — a spray from more live addresses than the
-> cap — further sources share one global 5-per-60-seconds window until it passes,
-> so the limit degrades to a coarser one rather than switching off.
+> per 60 seconds, **and 20 across all addresses together**; further attempts get
+> `429` until the window passes. A successful login costs nothing against either.
+> The client IP is the TCP peer unless `COMICS_TRUSTED_PROXIES` says otherwise —
+> see below. At most 10 000 sources are tracked individually; beyond that — a
+> spray from more live addresses than the cap — further sources share one 5-per-60-seconds
+> window until it passes, so the limit degrades to a coarser one rather than
+> switching off.
+>
+> The global ceiling is what bounds an attacker spraying from addresses they hold
+> in bulk, for whom a per-IP limit alone means nothing. The trade is that a
+> sustained attack refuses *your* logins too, for at most the rest of the current
+> minute — a fixed window rather than an escalating lockout, precisely so an
+> attack cannot lock you out for longer than it lasts.
 
 > **`COMICS_TRUSTED_PROXIES`:** set this to the address your reverse proxy
 > *connects from*, not to the range your clients are in. Until you do,

@@ -330,7 +330,7 @@ mod tests {
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
-            login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 60)),
+            login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 20, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
             hsts_max_age: None,
             sessions: Arc::new(crate::auth::SessionStore::new(

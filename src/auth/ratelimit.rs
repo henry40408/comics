@@ -47,9 +47,11 @@ struct Buckets {
     /// Shared by every source that arrives once `per_ip` is full. See
     /// [`RateLimiter::try_acquire`].
     overflow: Window,
+    /// Every attempt, whatever its source. See [`RateLimiter`].
+    global: Window,
 }
 
-/// Per-client-IP fixed-window limiter for login attempts.
+/// Fixed-window limiter for login attempts, keyed per client IP *and* globally.
 ///
 /// In-memory only: comics has no database, and a restart resetting the counters
 /// is acceptable for a single-account self-hosted service. Its purpose is to
@@ -57,21 +59,63 @@ struct Buckets {
 /// credential pair (OWASP Authentication Cheat Sheet, "Protect Against
 /// Automated Attacks"); bcrypt's ~100 ms per verification is a speed bump, not
 /// a control.
+///
+/// # Why a global window as well
+///
+/// The cheat sheet asks, under *Account Lockout*, that the failure counter be
+/// associated with **the account** rather than the source address, "in order to
+/// prevent an attacker from making login attempts from a large number of
+/// different IP addresses". Per-IP alone did exactly that: every fresh address
+/// arrived with a full budget, so anyone holding an IPv6 `/64` had five attempts
+/// per address for tens of thousands of addresses before [`MAX_ENTRIES`] filled
+/// and the shared overflow window finally applied.
+///
+/// comics authenticates exactly one set of credentials, so *the account* and
+/// *everything* are the same set: `global` is the account-scoped counter the
+/// cheat sheet asks for, and it needs no notion of who is logging in.
+///
+/// # The lockout trade, stated plainly
+///
+/// A global counter can be exhausted deliberately, and while it is exhausted the
+/// legitimate reader is refused too — the denial of service the cheat sheet
+/// warns about in the same section. Three things keep that acceptable here:
+///
+/// - The threshold is far above one person's use. A single client is already
+///   capped at five failures a minute, so reaching a global twenty takes at least
+///   four distinct addresses failing in the same minute — which does not happen
+///   to one reader with one password manager.
+/// - The window is *fixed and short*. An attack denies login for at most the
+///   remainder of one minute after it stops, not the escalating hours an
+///   exponential lockout would impose. That is deliberately the opposite of the
+///   cheat sheet's exponential suggestion: escalation protects an account with a
+///   recovery path, and comics has none, so a long lockout would punish only the
+///   reader.
+/// - A **successful** login refunds both windows ([`release`](Self::release)),
+///   so the reader's own sign-ins never spend the budget.
+///
+/// The alternative was leaving distributed guessing entirely unbounded, which
+/// trades a minute of unavailability under attack for the password itself.
 pub struct RateLimiter {
     buckets: Mutex<Buckets>,
     max_attempts: u32,
+    global_max_attempts: u32,
     window_secs: u64,
     max_entries: usize,
 }
 
 impl RateLimiter {
-    pub fn new(max_attempts: u32, window_secs: u64) -> Self {
+    /// `global_max_attempts` bounds every source together and so must sit well
+    /// above `max_attempts`, which bounds one; see the type's documentation for
+    /// what happens when it is reached.
+    pub fn new(max_attempts: u32, global_max_attempts: u32, window_secs: u64) -> Self {
         Self {
             buckets: Mutex::new(Buckets {
                 per_ip: HashMap::new(),
                 overflow: Window::empty(),
+                global: Window::empty(),
             }),
             max_attempts,
+            global_max_attempts,
             window_secs,
             max_entries: MAX_ENTRIES,
         }
@@ -98,34 +142,70 @@ impl RateLimiter {
     /// already in the map on its own budget.
     pub fn try_acquire(&self, ip: IpAddr) -> bool {
         let mut buckets = self.buckets.lock();
-        if buckets.per_ip.len() >= self.max_entries && !buckets.per_ip.contains_key(&ip) {
+        // Split the borrow so the source's window and the global one can be held
+        // at once; they live in the same struct but are charged together.
+        let Buckets {
+            per_ip,
+            overflow,
+            global,
+        } = &mut *buckets;
+        let window = self.window_for(per_ip, overflow, ip);
+
+        // Both are consulted before either is charged. Charging first and
+        // refunding on refusal would let a source the other window rejects still
+        // spend from the budget it was never allowed to use.
+        if !self.has_room(window, self.max_attempts)
+            || !self.has_room(global, self.global_max_attempts)
+        {
+            return false;
+        }
+        self.charge(window);
+        self.charge(global);
+        true
+    }
+
+    /// The window an attempt from `ip` is counted against.
+    ///
+    /// Ordinarily its own, created on first sight. At capacity the map is first
+    /// pruned of expired windows, and if it is *still* full the attempt shares
+    /// the overflow window — see [`try_acquire`](Self::try_acquire) for why that
+    /// beats admitting, clearing, or refusing.
+    fn window_for<'a>(
+        &self,
+        per_ip: &'a mut HashMap<IpAddr, Window>,
+        overflow: &'a mut Window,
+        ip: IpAddr,
+    ) -> &'a mut Window {
+        if per_ip.len() >= self.max_entries && !per_ip.contains_key(&ip) {
             let window_secs = self.window_secs;
-            buckets
-                .per_ip
-                .retain(|_, window| !window.is_expired(window_secs));
-            if buckets.per_ip.len() >= self.max_entries {
-                return self.charge(&mut buckets.overflow);
+            per_ip.retain(|_, window| !window.is_expired(window_secs));
+            if per_ip.len() >= self.max_entries {
+                return overflow;
             }
         }
-        let window = buckets.per_ip.entry(ip).or_insert_with(Window::empty);
-        self.charge(window)
+        per_ip.entry(ip).or_insert_with(Window::empty)
+    }
+
+    /// Whether `window` would admit one more attempt. An expired window has room
+    /// by definition: [`charge`](Self::charge) is about to roll it over.
+    fn has_room(&self, window: &Window, max_attempts: u32) -> bool {
+        window.is_expired(self.window_secs) || window.count < max_attempts
     }
 
     /// An expired window is rolled over rather than topped up, which is what
     /// makes this a fixed-window rather than a sliding-window limiter.
-    fn charge(&self, window: &mut Window) -> bool {
+    ///
+    /// Only ever called once [`has_room`](Self::has_room) has said yes, so it
+    /// does not re-check the ceiling.
+    fn charge(&self, window: &mut Window) {
         if window.is_expired(self.window_secs) {
             *window = Window {
                 count: 1,
                 started: Instant::now(),
             };
-            return true;
+        } else {
+            window.count += 1;
         }
-        if window.count >= self.max_attempts {
-            return false;
-        }
-        window.count += 1;
-        true
     }
 
     /// Hand back the attempt reserved by [`try_acquire`](Self::try_acquire).
@@ -140,8 +220,14 @@ impl RateLimiter {
     /// would quietly eat the shared budget everyone else is waiting on. Only a
     /// caller who passed the credential check reaches here, so the refund cannot
     /// be used to top the shared window back up.
+    ///
+    /// The global window is refunded too, and for the sharper version of the same
+    /// reason: it is the one window the reader shares with their attacker, so
+    /// leaving successful sign-ins charged to it would let ordinary use walk into
+    /// a lockout that no failure caused.
     pub fn release(&self, ip: IpAddr) {
         let mut buckets = self.buckets.lock();
+        buckets.global.count = buckets.global.count.saturating_sub(1);
         let Some(window) = buckets.per_ip.get_mut(&ip) else {
             buckets.overflow.count = buckets.overflow.count.saturating_sub(1);
             return;
@@ -249,9 +335,16 @@ mod tests {
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, last))
     }
 
+    /// A limiter whose global window can never be the reason for a refusal, so
+    /// the tests below measure the per-IP and overflow windows alone. The ones
+    /// that are *about* the global window build their own.
+    fn limiter(max_attempts: u32, window_secs: u64) -> RateLimiter {
+        RateLimiter::new(max_attempts, u32::MAX, window_secs)
+    }
+
     #[test]
     fn allows_up_to_max_attempts() {
-        let limiter = RateLimiter::new(5, 60);
+        let limiter = limiter(5, 60);
         let addr = ip(1);
         for _ in 0..5 {
             assert!(limiter.try_acquire(addr));
@@ -262,7 +355,7 @@ mod tests {
     #[test]
     fn window_expiry_resets_the_counter() {
         // A zero-second window is elapsed the moment it is recorded.
-        let limiter = RateLimiter::new(1, 0);
+        let limiter = limiter(1, 0);
         let addr = ip(2);
         assert!(limiter.try_acquire(addr));
         assert!(limiter.try_acquire(addr));
@@ -270,7 +363,7 @@ mod tests {
 
     #[test]
     fn distinct_ips_have_independent_buckets() {
-        let limiter = RateLimiter::new(1, 60);
+        let limiter = limiter(1, 60);
         assert!(limiter.try_acquire(ip(3)));
         assert!(!limiter.try_acquire(ip(3)));
         assert!(limiter.try_acquire(ip(4)));
@@ -280,7 +373,7 @@ mod tests {
     /// never exhausts the window.
     #[test]
     fn release_returns_the_reserved_attempt() {
-        let limiter = RateLimiter::new(2, 60);
+        let limiter = limiter(2, 60);
         let addr = ip(5);
         for _ in 0..10 {
             assert!(limiter.try_acquire(addr));
@@ -291,7 +384,7 @@ mod tests {
 
     #[test]
     fn map_is_pruned_at_capacity() {
-        let mut limiter = RateLimiter::new(5, 60);
+        let mut limiter = limiter(5, 60);
         limiter.max_entries = 4;
         for last in 0..50u8 {
             limiter.try_acquire(ip(last));
@@ -303,7 +396,7 @@ mod tests {
     /// already-throttled source a way to reset its own counter.
     #[test]
     fn capacity_spray_does_not_reset_an_existing_counter() {
-        let mut limiter = RateLimiter::new(1, 60);
+        let mut limiter = limiter(1, 60);
         limiter.max_entries = 4;
         let victim = ip(200);
         assert!(limiter.try_acquire(victim));
@@ -321,7 +414,7 @@ mod tests {
     /// verify. The shared overflow window is what bounds that.
     #[test]
     fn overflow_bucket_is_shared_and_finite() {
-        let mut limiter = RateLimiter::new(3, 60);
+        let mut limiter = limiter(3, 60);
         // Nothing can be tracked individually, so every source overflows.
         limiter.max_entries = 0;
 
@@ -335,7 +428,7 @@ mod tests {
     /// already has one — otherwise a spray locks out whoever is mid-login.
     #[test]
     fn overflow_does_not_spend_a_tracked_source_budget() {
-        let mut limiter = RateLimiter::new(3, 60);
+        let mut limiter = limiter(3, 60);
         limiter.max_entries = 1;
         let tracked = ip(1);
         assert!(limiter.try_acquire(tracked));
@@ -355,7 +448,7 @@ mod tests {
     /// not lock the form out permanently once it stops.
     #[test]
     fn overflow_window_expires_like_any_other() {
-        let mut limiter = RateLimiter::new(1, 0);
+        let mut limiter = limiter(1, 0);
         limiter.max_entries = 0;
         assert!(limiter.try_acquire(ip(1)));
         assert!(limiter.try_acquire(ip(2)));
@@ -365,7 +458,7 @@ mod tests {
     /// window — otherwise signing in during a spray eats budget others wait on.
     #[test]
     fn release_refunds_the_overflow_bucket() {
-        let mut limiter = RateLimiter::new(1, 60);
+        let mut limiter = limiter(1, 60);
         limiter.max_entries = 0;
         for round in 0..10 {
             assert!(limiter.try_acquire(ip(1)), "round {round}");
@@ -373,12 +466,91 @@ mod tests {
         }
     }
 
+    /// The gap the global window exists to close: per-IP alone, an attacker who
+    /// holds addresses in bulk simply used a fresh one for each burst and was
+    /// never throttled at all — the case the cheat sheet's *Account Lockout*
+    /// section describes.
+    #[test]
+    fn global_window_bounds_a_spray_from_many_addresses() {
+        let limiter = RateLimiter::new(5, 7, 60);
+        let allowed = (0..50u8)
+            .filter(|&last| limiter.try_acquire(ip(last)))
+            .count();
+        assert_eq!(7, allowed, "50 distinct addresses got {allowed} attempts");
+    }
+
+    /// An attempt the per-IP window refuses must not spend from the global one.
+    /// Otherwise a single throttled source could exhaust the budget that every
+    /// other source — including the reader — shares.
+    #[test]
+    fn a_source_refused_per_ip_does_not_spend_the_global_window() {
+        let limiter = RateLimiter::new(2, 10, 60);
+        let noisy = ip(1);
+        assert!(limiter.try_acquire(noisy));
+        assert!(limiter.try_acquire(noisy));
+        for _ in 0..20 {
+            assert!(!limiter.try_acquire(noisy), "per-IP window let a third by");
+        }
+        // Two charged, so eight of the global ten must remain for everyone else.
+        let allowed = (10..50u8)
+            .filter(|&last| limiter.try_acquire(ip(last)))
+            .count();
+        assert_eq!(8, allowed, "the refused attempts were charged globally");
+    }
+
+    /// The mirror image: exhausting the global window must not quietly spend a
+    /// source's own budget, which it would if the two were charged in sequence
+    /// rather than checked together.
+    ///
+    /// The global ceiling is the looser of the two so that the per-IP window is
+    /// what the final count measures; were it tighter, this would only be
+    /// re-testing the global limit.
+    #[test]
+    fn global_refusal_does_not_spend_a_source_budget() {
+        let limiter = RateLimiter::new(5, 8, 60);
+        for last in 10..18u8 {
+            assert!(limiter.try_acquire(ip(last)));
+        }
+        let reader = ip(1);
+        for _ in 0..10 {
+            assert!(!limiter.try_acquire(reader), "global window let one by");
+        }
+
+        // Roll the global window over by hand — what waiting out the minute does
+        // — and the reader's own five must all still be there.
+        limiter.buckets.lock().global = Window::empty();
+        let allowed = (0..10).filter(|_| limiter.try_acquire(reader)).count();
+        assert_eq!(5, allowed, "the reader's budget was spent while locked out");
+    }
+
+    /// A successful login refunds the global window too — otherwise ordinary use
+    /// would walk into a lockout that no failed attempt caused.
+    #[test]
+    fn release_refunds_the_global_window() {
+        let limiter = RateLimiter::new(5, 3, 60);
+        for round in 0..20 {
+            assert!(limiter.try_acquire(ip(1)), "round {round}");
+            limiter.release(ip(1));
+        }
+        assert_eq!(0, limiter.buckets.lock().global.count);
+    }
+
+    /// Fixed, not escalating: once the window passes, the form works again. This
+    /// is what bounds the denial of service a global counter otherwise invites.
+    #[test]
+    fn global_window_expires_like_any_other() {
+        let limiter = RateLimiter::new(5, 1, 0);
+        assert!(limiter.try_acquire(ip(1)));
+        assert!(limiter.try_acquire(ip(2)));
+        assert!(limiter.try_acquire(ip(3)));
+    }
+
     /// Regression: checking and counting used to take the lock separately, so
     /// requests arriving together all observed the pre-attack count.
     #[test]
     fn concurrent_attempts_cannot_exceed_the_limit() {
         const THREADS: usize = 64;
-        let limiter = Arc::new(RateLimiter::new(5, 60));
+        let limiter = Arc::new(limiter(5, 60));
         let barrier = Arc::new(Barrier::new(THREADS));
         let addr = ip(7);
 
