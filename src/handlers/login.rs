@@ -497,6 +497,47 @@ mod tests {
         assert!(verify_credentials(&AuthConfig::None, "", ""));
     }
 
+    /// A stored hash the parser rejects refuses everything, rather than panicking
+    /// or — far worse — accepting. `ensure_password_hash_is_usable` stops the
+    /// server before this can happen, but the login route must not *depend* on
+    /// that having run: the two are reached by different entry points, and only
+    /// one of them is the server.
+    #[test]
+    fn an_unusable_stored_hash_refuses_every_password() {
+        for stored in ["", "not-a-hash", "$argon2id$v=19$m=19456$nope"] {
+            let auth = AuthConfig::Some {
+                username: "alice".to_string(),
+                password_hash: stored.to_string(),
+            };
+            assert!(!verify_credentials(&auth, "alice", "s3cret"), "{stored:?}");
+            assert!(!verify_credentials(&auth, "alice", ""), "{stored:?}");
+        }
+    }
+
+    /// A permit that cannot be had is a *server* fault, and must not be reported
+    /// as a rejected password: the reader would retype a correct password for as
+    /// long as their patience held. Unreachable while nothing closes the
+    /// semaphore, which is exactly why the branch needs a test of its own.
+    #[tokio::test]
+    async fn a_closed_verification_semaphore_is_not_reported_as_a_bad_password() {
+        let state = test_state();
+        state.verify_sem.close();
+
+        let response = login_submit_route(
+            State(Arc::clone(&state)),
+            None,
+            HeaderMap::new(),
+            Form(LoginForm {
+                username: "alice".to_string(),
+                password: "s3cret".to_string(),
+                next: "/".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, response.status());
+    }
+
     /// Regression: the check was `username == expected && bcrypt::verify(…)`,
     /// which short-circuits — so a wrong username answered in microseconds while
     /// a wrong password paid for a whole verification. The bodies were identical,

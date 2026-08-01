@@ -4,9 +4,12 @@ const { defineBddConfig } = require('playwright-bdd');
 const PORT = 3030;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
-// bcrypt hash of "password" (cost 11) — a throwaway credential that only
-// unlocks the committed test fixtures.
-const TEST_PASSWORD_HASH = '$2y$11$s4aVgLTIMwW5RUu.OeWsLu8UZL1fxLsB31iRsCiljfT.8V1VEp4dO';
+// Argon2id hash of "password", from `comics hash-password` — a throwaway
+// credential that only unlocks the committed test fixtures. The server refuses
+// to start on a hash it cannot use, so if this ever goes stale the e2e run says
+// so directly rather than failing at the login step.
+const TEST_PASSWORD_HASH =
+  '$argon2id$v=19$m=19456,t=2,p=1$C2qIDpzPcTL0a5wYL1152Q$2MWeEDjhoNnp8oRwz9DkFoLgYH3NTe+qArT3vPHN14g';
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
