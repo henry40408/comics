@@ -45,6 +45,22 @@ pub const VERSION: &str = env!("APP_VERSION");
 /// bcrypt ceiling could not honour for a non-ASCII passphrase.
 pub const MAX_PASSWORD_BYTES: usize = 1024;
 
+/// Shortest password `hash-password` accepts without comment, in **characters**.
+///
+/// The OWASP Authentication Cheat Sheet calls a password under 15 characters
+/// weak when no second factor is available, and comics has none. It is advice
+/// here rather than a rule: this is a single-account service whose one user is
+/// also its operator, so the length of their own password is their call, and a
+/// hard floor would only have taught them to generate the hash elsewhere.
+///
+/// Counted in characters where [`MAX_PASSWORD_BYTES`] counts bytes, and the
+/// asymmetry is deliberate. The ceiling is about *resource use*, which is
+/// measured in bytes. The floor is about how much a person had to remember,
+/// which is measured in characters — a 15-byte floor would let a Traditional
+/// Chinese passphrase through at five characters, a third of what is asked of
+/// an ASCII one.
+pub const MIN_PASSWORD_CHARS: usize = 15;
+
 /// How many password verifications may run at once.
 ///
 /// Argon2id at the parameters below allocates **19 MiB per verification**, where

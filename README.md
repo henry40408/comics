@@ -236,6 +236,14 @@ Passwords are hashed with **Argon2id**, which reads the whole password however
 long it is — up to a 1 KiB backstop. A Traditional Chinese passphrase costs
 three bytes per character, so that is roughly 341 characters.
 
+A password shorter than **15 characters** draws a warning on stderr, which is
+what OWASP advises when no second factor is available — and comics has none. It
+is advice rather than a refusal: this is a single-account service whose one user
+is also its operator. The hash is still printed, and only the hash goes to
+stdout, so `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` keeps working
+either way. An *empty* password is refused outright, that being a slip rather
+than a choice.
+
 > **Upgrading from a version that used bcrypt:** every existing
 > `COMICS_AUTH_PASSWORD_HASH` stops working, and the server will refuse to start
 > and tell you so rather than silently rejecting your password. Your password
