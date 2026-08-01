@@ -35,6 +35,61 @@ impl Window {
     fn is_expired(&self, window_secs: u64) -> bool {
         self.started.elapsed().as_secs() >= window_secs
     }
+
+    /// Seconds until this window rolls over, for `Retry-After`.
+    ///
+    /// Rounded *up*, and never zero: a client told to retry in zero seconds
+    /// retries immediately and is refused again, which is worse than useless.
+    /// An already-expired window answers one for the same reason.
+    fn seconds_until_reset(&self, window_secs: u64) -> u64 {
+        window_secs
+            .saturating_sub(self.started.elapsed().as_secs())
+            .max(1)
+    }
+}
+
+/// Which window refused an attempt.
+///
+/// The three mean very different things to whoever reads the log, which is the
+/// entire reason they are distinguished — see [`RateLimiter::try_acquire`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// This client's own window. One person mistyping a password.
+    PerIp,
+    /// The window shared by every source once the map is full — more live
+    /// addresses than comics tracks individually.
+    Shared,
+    /// The account-scoped window: every address together. Distributed guessing,
+    /// and the legitimate reader is locked out alongside the attacker.
+    Global,
+}
+
+impl Scope {
+    /// Stable identifier for the `scope` field of an audit event.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PerIp => "per_ip",
+            Self::Shared => "shared",
+            Self::Global => "global",
+        }
+    }
+}
+
+/// What [`RateLimiter::try_acquire`] decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Throttle {
+    Allowed,
+    Refused {
+        scope: Scope,
+        /// Seconds until the window that refused rolls over.
+        retry_after_secs: u64,
+    },
+}
+
+impl Throttle {
+    pub fn is_allowed(self) -> bool {
+        matches!(self, Self::Allowed)
+    }
 }
 
 /// Every window the limiter owns, behind one lock.
@@ -141,7 +196,14 @@ impl RateLimiter {
     /// the same spray into a total login lockout. Sharing one finite window
     /// degrades to a global limit under attack while keeping every source
     /// already in the map on its own budget.
-    pub fn try_acquire(&self, ip: IpAddr) -> bool {
+    /// The refusal names *which* window said no, because the three are not
+    /// remotely the same event. [`Scope::PerIp`] is one person mistyping a
+    /// password — ordinary noise. [`Scope::Global`] means at least four distinct
+    /// addresses failed within the minute: distributed guessing, and the reader
+    /// is locked out beside the attacker. Reporting both as "rate limited" buries
+    /// the one worth waking up for, and the OWASP Authentication Cheat Sheet asks
+    /// specifically that account lockouts be logged and reviewed.
+    pub fn try_acquire(&self, ip: IpAddr) -> Throttle {
         let mut buckets = self.buckets.lock();
         // Split the borrow so the source's window and the global one can be held
         // at once; they live in the same struct but are charged together.
@@ -150,19 +212,26 @@ impl RateLimiter {
             overflow,
             global,
         } = &mut *buckets;
-        let window = self.window_for(per_ip, overflow, ip);
+        let (window, scope) = self.window_for(per_ip, overflow, ip);
 
         // Both are consulted before either is charged. Charging first and
         // refunding on refusal would let a source the other window rejects still
         // spend from the budget it was never allowed to use.
-        if !self.has_room(window, self.max_attempts)
-            || !self.has_room(global, self.global_max_attempts)
-        {
-            return false;
+        if !self.has_room(window, self.max_attempts) {
+            return Throttle::Refused {
+                scope,
+                retry_after_secs: window.seconds_until_reset(self.window_secs),
+            };
+        }
+        if !self.has_room(global, self.global_max_attempts) {
+            return Throttle::Refused {
+                scope: Scope::Global,
+                retry_after_secs: global.seconds_until_reset(self.window_secs),
+            };
         }
         self.charge(window);
         self.charge(global);
-        true
+        Throttle::Allowed
     }
 
     /// The window an attempt from `ip` is counted against.
@@ -176,15 +245,15 @@ impl RateLimiter {
         per_ip: &'a mut HashMap<IpAddr, Window>,
         overflow: &'a mut Window,
         ip: IpAddr,
-    ) -> &'a mut Window {
+    ) -> (&'a mut Window, Scope) {
         if per_ip.len() >= self.max_entries && !per_ip.contains_key(&ip) {
             let window_secs = self.window_secs;
             per_ip.retain(|_, window| !window.is_expired(window_secs));
             if per_ip.len() >= self.max_entries {
-                return overflow;
+                return (overflow, Scope::Shared);
             }
         }
-        per_ip.entry(ip).or_insert_with(Window::empty)
+        (per_ip.entry(ip).or_insert_with(Window::empty), Scope::PerIp)
     }
 
     /// Whether `window` would admit one more attempt. An expired window has room
@@ -348,9 +417,9 @@ mod tests {
         let limiter = limiter(5, 60);
         let addr = ip(1);
         for _ in 0..5 {
-            assert!(limiter.try_acquire(addr));
+            assert!(limiter.try_acquire(addr).is_allowed());
         }
-        assert!(!limiter.try_acquire(addr));
+        assert!(!limiter.try_acquire(addr).is_allowed());
     }
 
     #[test]
@@ -358,16 +427,16 @@ mod tests {
         // A zero-second window is elapsed the moment it is recorded.
         let limiter = limiter(1, 0);
         let addr = ip(2);
-        assert!(limiter.try_acquire(addr));
-        assert!(limiter.try_acquire(addr));
+        assert!(limiter.try_acquire(addr).is_allowed());
+        assert!(limiter.try_acquire(addr).is_allowed());
     }
 
     #[test]
     fn distinct_ips_have_independent_buckets() {
         let limiter = limiter(1, 60);
-        assert!(limiter.try_acquire(ip(3)));
-        assert!(!limiter.try_acquire(ip(3)));
-        assert!(limiter.try_acquire(ip(4)));
+        assert!(limiter.try_acquire(ip(3)).is_allowed());
+        assert!(!limiter.try_acquire(ip(3)).is_allowed());
+        assert!(limiter.try_acquire(ip(4)).is_allowed());
     }
 
     /// A successful login hands its reservation back, so signing in repeatedly
@@ -377,7 +446,7 @@ mod tests {
         let limiter = limiter(2, 60);
         let addr = ip(5);
         for _ in 0..10 {
-            assert!(limiter.try_acquire(addr));
+            assert!(limiter.try_acquire(addr).is_allowed());
             limiter.release(addr);
         }
         assert!(limiter.buckets.lock().per_ip.is_empty());
@@ -388,7 +457,7 @@ mod tests {
         let mut limiter = limiter(5, 60);
         limiter.max_entries = 4;
         for last in 0..50u8 {
-            limiter.try_acquire(ip(last));
+            limiter.try_acquire(ip(last)).is_allowed();
         }
         assert!(limiter.buckets.lock().per_ip.len() <= 4);
     }
@@ -400,13 +469,16 @@ mod tests {
         let mut limiter = limiter(1, 60);
         limiter.max_entries = 4;
         let victim = ip(200);
-        assert!(limiter.try_acquire(victim));
-        assert!(!limiter.try_acquire(victim));
+        assert!(limiter.try_acquire(victim).is_allowed());
+        assert!(!limiter.try_acquire(victim).is_allowed());
 
         for last in 0..50u8 {
-            limiter.try_acquire(ip(last));
+            limiter.try_acquire(ip(last)).is_allowed();
         }
-        assert!(!limiter.try_acquire(victim), "spray reset the counter");
+        assert!(
+            !limiter.try_acquire(victim).is_allowed(),
+            "spray reset the counter"
+        );
     }
 
     /// Regression: at capacity the limiter used to admit a fresh source *without*
@@ -420,7 +492,7 @@ mod tests {
         limiter.max_entries = 0;
 
         let allowed = (0..50u8)
-            .filter(|&last| limiter.try_acquire(ip(last)))
+            .filter(|&last| limiter.try_acquire(ip(last)).is_allowed())
             .count();
         assert_eq!(3, allowed, "50 distinct sources got {allowed} attempts");
     }
@@ -432,17 +504,17 @@ mod tests {
         let mut limiter = limiter(3, 60);
         limiter.max_entries = 1;
         let tracked = ip(1);
-        assert!(limiter.try_acquire(tracked));
+        assert!(limiter.try_acquire(tracked).is_allowed());
 
         // The map is now full, so these all land on the shared window.
         for last in 10..40u8 {
-            limiter.try_acquire(ip(last));
+            limiter.try_acquire(ip(last)).is_allowed();
         }
 
         // Two of the tracked source's three attempts are still there.
-        assert!(limiter.try_acquire(tracked));
-        assert!(limiter.try_acquire(tracked));
-        assert!(!limiter.try_acquire(tracked));
+        assert!(limiter.try_acquire(tracked).is_allowed());
+        assert!(limiter.try_acquire(tracked).is_allowed());
+        assert!(!limiter.try_acquire(tracked).is_allowed());
     }
 
     /// The shared window rolls over on expiry like any other, so an attack does
@@ -451,8 +523,8 @@ mod tests {
     fn overflow_window_expires_like_any_other() {
         let mut limiter = limiter(1, 0);
         limiter.max_entries = 0;
-        assert!(limiter.try_acquire(ip(1)));
-        assert!(limiter.try_acquire(ip(2)));
+        assert!(limiter.try_acquire(ip(1)).is_allowed());
+        assert!(limiter.try_acquire(ip(2)).is_allowed());
     }
 
     /// A successful login costs nothing even when it was charged to the shared
@@ -462,8 +534,64 @@ mod tests {
         let mut limiter = limiter(1, 60);
         limiter.max_entries = 0;
         for round in 0..10 {
-            assert!(limiter.try_acquire(ip(1)), "round {round}");
+            assert!(limiter.try_acquire(ip(1)).is_allowed(), "round {round}");
             limiter.release(ip(1));
+        }
+    }
+
+    /// The three refusals are told apart, because the log has to tell them apart:
+    /// one is a person mistyping, one is more sources than comics can track, and
+    /// one is an account-wide lockout that catches the reader too.
+    #[test]
+    fn a_refusal_names_the_window_that_said_no() {
+        let per_ip = RateLimiter::new(1, 100, 60);
+        assert!(per_ip.try_acquire(ip(1)).is_allowed());
+        assert!(matches!(
+            per_ip.try_acquire(ip(1)),
+            Throttle::Refused {
+                scope: Scope::PerIp,
+                ..
+            }
+        ));
+
+        // Nothing can be tracked individually, so a second source shares a window.
+        let mut shared = RateLimiter::new(1, 100, 60);
+        shared.max_entries = 0;
+        assert!(shared.try_acquire(ip(1)).is_allowed());
+        assert!(matches!(
+            shared.try_acquire(ip(2)),
+            Throttle::Refused {
+                scope: Scope::Shared,
+                ..
+            }
+        ));
+
+        // A per-IP ceiling out of reach, so only the global window can refuse —
+        // and ip(2) arrives with its own budget entirely unspent.
+        let global = RateLimiter::new(100, 1, 60);
+        assert!(global.try_acquire(ip(1)).is_allowed());
+        assert!(matches!(
+            global.try_acquire(ip(2)),
+            Throttle::Refused {
+                scope: Scope::Global,
+                ..
+            }
+        ));
+    }
+
+    /// `Retry-After` has to be inside the window and never zero — zero invites an
+    /// immediate retry into the very same refusal.
+    #[test]
+    fn a_refusal_says_when_the_window_resets() {
+        for limiter in [RateLimiter::new(1, 100, 60), RateLimiter::new(100, 1, 60)] {
+            assert!(limiter.try_acquire(ip(1)).is_allowed());
+            let Throttle::Refused {
+                retry_after_secs, ..
+            } = limiter.try_acquire(ip(1))
+            else {
+                panic!("the second attempt was allowed");
+            };
+            assert!((1..=60).contains(&retry_after_secs), "{retry_after_secs}");
         }
     }
 
@@ -475,7 +603,7 @@ mod tests {
     fn global_window_bounds_a_spray_from_many_addresses() {
         let limiter = RateLimiter::new(5, 7, 60);
         let allowed = (0..50u8)
-            .filter(|&last| limiter.try_acquire(ip(last)))
+            .filter(|&last| limiter.try_acquire(ip(last)).is_allowed())
             .count();
         assert_eq!(7, allowed, "50 distinct addresses got {allowed} attempts");
     }
@@ -487,14 +615,17 @@ mod tests {
     fn a_source_refused_per_ip_does_not_spend_the_global_window() {
         let limiter = RateLimiter::new(2, 10, 60);
         let noisy = ip(1);
-        assert!(limiter.try_acquire(noisy));
-        assert!(limiter.try_acquire(noisy));
+        assert!(limiter.try_acquire(noisy).is_allowed());
+        assert!(limiter.try_acquire(noisy).is_allowed());
         for _ in 0..20 {
-            assert!(!limiter.try_acquire(noisy), "per-IP window let a third by");
+            assert!(
+                !limiter.try_acquire(noisy).is_allowed(),
+                "per-IP window let a third by"
+            );
         }
         // Two charged, so eight of the global ten must remain for everyone else.
         let allowed = (10..50u8)
-            .filter(|&last| limiter.try_acquire(ip(last)))
+            .filter(|&last| limiter.try_acquire(ip(last)).is_allowed())
             .count();
         assert_eq!(8, allowed, "the refused attempts were charged globally");
     }
@@ -510,17 +641,22 @@ mod tests {
     fn global_refusal_does_not_spend_a_source_budget() {
         let limiter = RateLimiter::new(5, 8, 60);
         for last in 10..18u8 {
-            assert!(limiter.try_acquire(ip(last)));
+            assert!(limiter.try_acquire(ip(last)).is_allowed());
         }
         let reader = ip(1);
         for _ in 0..10 {
-            assert!(!limiter.try_acquire(reader), "global window let one by");
+            assert!(
+                !limiter.try_acquire(reader).is_allowed(),
+                "global window let one by"
+            );
         }
 
         // Roll the global window over by hand — what waiting out the minute does
         // — and the reader's own five must all still be there.
         limiter.buckets.lock().global = Window::empty();
-        let allowed = (0..10).filter(|_| limiter.try_acquire(reader)).count();
+        let allowed = (0..10)
+            .filter(|_| limiter.try_acquire(reader).is_allowed())
+            .count();
         assert_eq!(5, allowed, "the reader's budget was spent while locked out");
     }
 
@@ -530,7 +666,7 @@ mod tests {
     fn release_refunds_the_global_window() {
         let limiter = RateLimiter::new(5, 3, 60);
         for round in 0..20 {
-            assert!(limiter.try_acquire(ip(1)), "round {round}");
+            assert!(limiter.try_acquire(ip(1)).is_allowed(), "round {round}");
             limiter.release(ip(1));
         }
         assert_eq!(0, limiter.buckets.lock().global.count);
@@ -541,9 +677,9 @@ mod tests {
     #[test]
     fn global_window_expires_like_any_other() {
         let limiter = RateLimiter::new(5, 1, 0);
-        assert!(limiter.try_acquire(ip(1)));
-        assert!(limiter.try_acquire(ip(2)));
-        assert!(limiter.try_acquire(ip(3)));
+        assert!(limiter.try_acquire(ip(1)).is_allowed());
+        assert!(limiter.try_acquire(ip(2)).is_allowed());
+        assert!(limiter.try_acquire(ip(3)).is_allowed());
     }
 
     /// Regression: checking and counting used to take the lock separately, so
@@ -561,7 +697,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
                     barrier.wait();
-                    limiter.try_acquire(addr)
+                    limiter.try_acquire(addr).is_allowed()
                 })
             })
             .collect();
