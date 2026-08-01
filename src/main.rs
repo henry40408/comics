@@ -1,4 +1,4 @@
-use std::{io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
+use std::{io, io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
 use anyhow::{anyhow, bail};
 use argon2::{
@@ -29,9 +29,9 @@ use tracing_subscriber::{
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, DEFAULT_ABSOLUTE_TTL,
     DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_CONCURRENT_VERIFICATIONS, MAX_PASSWORD_BYTES,
-    RateLimiter, Secret, SessionAuditSalt, SessionStore, THEME_JS, TrustedProxies, VERSION,
-    auth_middleware_fn, csrf_origin_guard, healthz_route, index_route, login_route,
-    login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
+    MIN_PASSWORD_CHARS, RateLimiter, Secret, SessionAuditSalt, SessionStore, THEME_JS,
+    TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route, index_route,
+    login_route, login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
     security_headers_layer, show_book_route, show_page_route, show_thumb_route, shuffle_book_route,
     shuffle_route,
 };
@@ -510,6 +510,13 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
 /// Split out of [`hash_password`] so it can be tested: that one reads from a tty
 /// and no test can drive it, which would leave this covered by nothing.
 fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
+    if password.is_empty() {
+        // The one length that is a mistake rather than a choice. Everything
+        // shorter than advisable is left to `password_strength_warning`; nobody
+        // sets an empty password deliberately, and a hash of one would lock the
+        // reader out of noticing.
+        bail!("Password is empty.");
+    }
     let len = password.len();
     if len > MAX_PASSWORD_BYTES {
         bail!(
@@ -518,6 +525,23 @@ fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// What to say about a password that is shorter than OWASP advises, if anything.
+///
+/// Advice, not enforcement — see [`comics::MIN_PASSWORD_CHARS`] for why a
+/// single-account self-hosted service leaves this to its operator. Returned
+/// rather than printed so it can be tested; [`hash_password`] reads from a tty
+/// and no test can drive it.
+fn password_strength_warning(password: &str) -> Option<String> {
+    let chars = password.chars().count();
+    (chars < MIN_PASSWORD_CHARS).then(|| {
+        format!(
+            "password is {chars} characters; OWASP advises at least \
+             {MIN_PASSWORD_CHARS} when no second factor is available, and comics \
+             has none. The hash below is still valid — this is advice, not a refusal."
+        )
+    })
 }
 
 /// Hash a password with Argon2id at [`Argon2::default`]'s parameters, which are
@@ -533,14 +557,35 @@ fn argon2_hash(password: &str) -> anyhow::Result<String> {
         .to_string())
 }
 
+/// Hash `password` and write the result: the hash to `out`, any advice to `err`.
+///
+/// The two sinks are parameters rather than `println!`/`eprintln!` so that the
+/// split can be *tested*. It is the load-bearing part of this command —
+/// `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures stdout, so a
+/// warning that leaked into it would be silently baked into the configured hash
+/// — and it is the sort of thing a later edit undoes without noticing. Note that
+/// the tracing subscriber also writes to stdout, which is why the warning is not
+/// a `warn!`.
+fn emit_password_hash(
+    password: &str,
+    out: &mut impl io::Write,
+    err: &mut impl io::Write,
+) -> anyhow::Result<()> {
+    let hashed = argon2_hash(password)?;
+    if let Some(warning) = password_strength_warning(password) {
+        writeln!(err, "warning: {warning}")?;
+    }
+    writeln!(out, "{hashed}")?;
+    Ok(())
+}
+
 fn hash_password() -> anyhow::Result<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
         bail!("Password mismatch");
     }
-    println!("{}", argon2_hash(&password)?);
-    Ok(())
+    emit_password_hash(&password, &mut io::stdout(), &mut io::stderr())
 }
 
 fn init_tracing(format: LogFormat) {
@@ -649,12 +694,14 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, argon2_hash, ensure_password_fits,
-        ensure_password_hash_is_usable, init_route, resolve_cookie_secure, spawn_initial_scan,
+        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, argon2_hash, emit_password_hash,
+        ensure_password_fits, ensure_password_hash_is_usable, init_route,
+        password_strength_warning, resolve_cookie_secure, spawn_initial_scan,
     };
+    use argon2::PasswordHash;
     use axum_test::TestServer;
     use clap::Parser as _;
-    use comics::{MAX_PASSWORD_BYTES, VERSION};
+    use comics::{MAX_PASSWORD_BYTES, MIN_PASSWORD_CHARS, VERSION};
     use tokio::sync::oneshot;
 
     /// Fixed secret so the derived ID seed — and therefore the URLs below — are
@@ -1109,6 +1156,109 @@ mod tests {
 
         // `argon2_hash` applies the same check, so the subcommand cannot bypass it.
         assert!(argon2_hash(&"x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
+    }
+
+    /// The one length that is a mistake rather than a choice. Hashing it would
+    /// produce a perfectly valid hash of nothing, which is the sort of thing an
+    /// operator discovers much later.
+    #[test]
+    fn hash_password_refuses_an_empty_password() {
+        assert!(ensure_password_fits("").is_err());
+        assert!(argon2_hash("").is_err());
+    }
+
+    /// Short passwords are warned about, not refused: a single-account service's
+    /// one user is also its operator, and a hard floor would only send them to
+    /// generate the hash somewhere else. The warning has to name the length —
+    /// they typed it blind — and say it is advice.
+    #[test]
+    fn a_short_password_is_warned_about_but_still_hashed() {
+        let short = "x".repeat(MIN_PASSWORD_CHARS - 1);
+        let warning = password_strength_warning(&short).expect("a warning");
+        assert!(
+            warning.contains(&format!("{} characters", MIN_PASSWORD_CHARS - 1)),
+            "{warning}"
+        );
+        assert!(
+            warning.contains(&MIN_PASSWORD_CHARS.to_string()),
+            "{warning}"
+        );
+        assert!(warning.contains("not a refusal"), "{warning}");
+        // Advice, so the hash still comes out.
+        assert!(argon2_hash(&short).unwrap().starts_with("$argon2id$"));
+    }
+
+    /// The stream split, which is the part a later edit could quietly undo.
+    /// `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures stdout, so a
+    /// warning that leaked into it would be baked into the configured hash and
+    /// break every login with no clue as to why.
+    #[test]
+    fn the_warning_never_reaches_stdout() {
+        let short = "x".repeat(MIN_PASSWORD_CHARS - 1);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        emit_password_hash(&short, &mut out, &mut err).expect("hashing a short password");
+
+        let out = String::from_utf8(out).expect("utf-8 stdout");
+        let err = String::from_utf8(err).expect("utf-8 stderr");
+
+        // stdout is the hash and nothing else — one line, parseable as it stands.
+        assert_eq!(
+            1,
+            out.lines().count(),
+            "stdout carried more than the hash: {out}"
+        );
+        assert!(out.starts_with("$argon2id$"), "{out}");
+        assert!(
+            !out.contains("warning"),
+            "the warning reached stdout: {out}"
+        );
+        assert!(PasswordHash::new(out.trim()).is_ok(), "{out}");
+
+        assert!(err.contains("warning:"), "{err}");
+    }
+
+    /// Nothing on stderr when there is nothing to say — a warning on every run
+    /// is one nobody reads.
+    #[test]
+    fn a_long_enough_password_emits_only_the_hash() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        emit_password_hash(&"x".repeat(MIN_PASSWORD_CHARS), &mut out, &mut err)
+            .expect("hashing an adequate password");
+
+        assert!(String::from_utf8(out).unwrap().starts_with("$argon2id$"));
+        assert!(err.is_empty(), "{:?}", String::from_utf8(err));
+    }
+
+    /// A refused password writes nothing at all — not a partial line, and above
+    /// all not a hash.
+    #[test]
+    fn a_refused_password_writes_nothing() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert!(emit_password_hash("", &mut out, &mut err).is_err());
+        assert!(out.is_empty());
+        assert!(err.is_empty());
+    }
+
+    /// At or above the advice, nothing is said at all.
+    #[test]
+    fn a_long_enough_password_draws_no_warning() {
+        assert!(password_strength_warning(&"x".repeat(MIN_PASSWORD_CHARS)).is_none());
+        assert!(password_strength_warning(&"x".repeat(MIN_PASSWORD_CHARS + 40)).is_none());
+    }
+
+    /// Counted in characters, not bytes — the asymmetry with the byte ceiling is
+    /// deliberate. Fifteen Chinese characters are 45 bytes; measuring the floor
+    /// in bytes would have let five of them through, a third of what an ASCII
+    /// passphrase is asked for.
+    #[test]
+    fn the_strength_floor_counts_characters_not_bytes() {
+        let fifteen = "密".repeat(MIN_PASSWORD_CHARS);
+        assert_eq!(45, fifteen.len());
+        assert!(password_strength_warning(&fifteen).is_none());
+
+        let five = "密".repeat(5);
+        assert_eq!(15, five.len(), "fifteen bytes, and far too short");
+        assert!(password_strength_warning(&five).is_some());
     }
 
     // Authentication: form login backed by a signed session cookie.

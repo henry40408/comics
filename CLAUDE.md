@@ -21,7 +21,7 @@ All commands run from the repository root.
 
 `Cargo.toml` denies `unsafe_code` / `unexpected_cfgs` and enables a large pedantic Clippy set — expect strictness.
 
-Subcommands: `cargo run -- list` (alias `ls`) prints books and page counts; `cargo run -- hash-password` emits an Argon2id PHC string for `COMICS_AUTH_PASSWORD_HASH`.
+Subcommands: `cargo run -- list` (alias `ls`) prints books and page counts; `cargo run -- hash-password` emits an Argon2id PHC string for `COMICS_AUTH_PASSWORD_HASH`. It refuses an *empty* password but only warns below `MIN_PASSWORD_CHARS` (15, counted in characters where the ceiling counts bytes) — advice, not enforcement, for a service whose one user is its operator. The warning goes to **stderr**: the hash is stdout's only content, so `$(comics hash-password)` keeps working.
 
 Integration tests (`tests/integration_test.rs`) drive the compiled binary via `snapbox`.
 
