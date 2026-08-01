@@ -24,11 +24,11 @@ use tracing_subscriber::{
 
 use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, BCRYPT_COST, DEFAULT_ABSOLUTE_TTL,
-    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, RateLimiter, Secret, SessionAuditSalt,
-    SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard,
-    healthz_route, index_route, login_route, login_submit_route, logout_route, no_store_html,
-    rescan_books_route, scan_books, security_headers_layer, show_book_route, show_page_route,
-    show_thumb_route, shuffle_book_route, shuffle_route,
+    DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_PASSWORD_BYTES, RateLimiter, Secret,
+    SessionAuditSalt, SessionStore, THEME_JS, TrustedProxies, VERSION, auth_middleware_fn,
+    csrf_origin_guard, healthz_route, index_route, login_route, login_submit_route, logout_route,
+    no_store_html, rescan_books_route, scan_books, security_headers_layer, show_book_route,
+    show_page_route, show_thumb_route, shuffle_book_route, shuffle_route,
 };
 
 // The release image links musl, whose default allocator is markedly slower than
@@ -400,11 +400,23 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refusing an over-long password here rather than truncating it is the whole
+/// point: `bcrypt::hash` would accept it, print a hash, and leave the operator
+/// believing in a passphrase whose tail does nothing. See
+/// [`comics::MAX_PASSWORD_BYTES`].
 fn hash_password() -> anyhow::Result<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
         bail!("Password mismatch");
+    }
+    let len = password.len();
+    if len > MAX_PASSWORD_BYTES {
+        bail!(
+            "Password is {len} bytes, but bcrypt hashes only the first \
+             {MAX_PASSWORD_BYTES} and would discard the rest silently. \
+             Shorten it — note that non-ASCII characters cost several bytes each."
+        );
     }
     let hashed = bcrypt::hash(password, BCRYPT_COST)?;
     println!("{hashed}");

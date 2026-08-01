@@ -218,6 +218,11 @@ Confirmation:
 $2a$10$...Ot6
 ```
 
+bcrypt hashes at most **72 bytes**, so a longer password is refused here rather
+than quietly hashed with its tail discarded. Bytes, not characters: a
+Traditional Chinese passphrase costs three bytes per character and so reaches the
+limit at 24 of them.
+
 ### `list` (alias: `ls`)
 
 List all books and their page counts:
