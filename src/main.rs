@@ -1,4 +1,4 @@
-use std::{io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
+use std::{io, io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
 use anyhow::{anyhow, bail};
 use argon2::{
@@ -557,21 +557,35 @@ fn argon2_hash(password: &str) -> anyhow::Result<String> {
         .to_string())
 }
 
+/// Hash `password` and write the result: the hash to `out`, any advice to `err`.
+///
+/// The two sinks are parameters rather than `println!`/`eprintln!` so that the
+/// split can be *tested*. It is the load-bearing part of this command —
+/// `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures stdout, so a
+/// warning that leaked into it would be silently baked into the configured hash
+/// — and it is the sort of thing a later edit undoes without noticing. Note that
+/// the tracing subscriber also writes to stdout, which is why the warning is not
+/// a `warn!`.
+fn emit_password_hash(
+    password: &str,
+    out: &mut impl io::Write,
+    err: &mut impl io::Write,
+) -> anyhow::Result<()> {
+    let hashed = argon2_hash(password)?;
+    if let Some(warning) = password_strength_warning(password) {
+        writeln!(err, "warning: {warning}")?;
+    }
+    writeln!(out, "{hashed}")?;
+    Ok(())
+}
+
 fn hash_password() -> anyhow::Result<()> {
     let password = rpassword::prompt_password("Password: ")?;
     let confirmation = rpassword::prompt_password("Confirmation: ")?;
     if password != confirmation {
         bail!("Password mismatch");
     }
-    let hashed = argon2_hash(&password)?;
-    // `eprintln!` rather than `warn!`: the subscriber writes to stdout, and so
-    // does the hash. `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` has to
-    // keep working, which means nothing but the hash may reach stdout.
-    if let Some(warning) = password_strength_warning(&password) {
-        eprintln!("warning: {warning}");
-    }
-    println!("{hashed}");
-    Ok(())
+    emit_password_hash(&password, &mut io::stdout(), &mut io::stderr())
 }
 
 fn init_tracing(format: LogFormat) {
@@ -680,10 +694,11 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, argon2_hash, ensure_password_fits,
-        ensure_password_hash_is_usable, init_route, password_strength_warning,
-        resolve_cookie_secure, spawn_initial_scan,
+        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, argon2_hash, emit_password_hash,
+        ensure_password_fits, ensure_password_hash_is_usable, init_route,
+        password_strength_warning, resolve_cookie_secure, spawn_initial_scan,
     };
+    use argon2::PasswordHash;
     use axum_test::TestServer;
     use clap::Parser as _;
     use comics::{MAX_PASSWORD_BYTES, MIN_PASSWORD_CHARS, VERSION};
@@ -1171,6 +1186,57 @@ mod tests {
         assert!(warning.contains("not a refusal"), "{warning}");
         // Advice, so the hash still comes out.
         assert!(argon2_hash(&short).unwrap().starts_with("$argon2id$"));
+    }
+
+    /// The stream split, which is the part a later edit could quietly undo.
+    /// `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures stdout, so a
+    /// warning that leaked into it would be baked into the configured hash and
+    /// break every login with no clue as to why.
+    #[test]
+    fn the_warning_never_reaches_stdout() {
+        let short = "x".repeat(MIN_PASSWORD_CHARS - 1);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        emit_password_hash(&short, &mut out, &mut err).expect("hashing a short password");
+
+        let out = String::from_utf8(out).expect("utf-8 stdout");
+        let err = String::from_utf8(err).expect("utf-8 stderr");
+
+        // stdout is the hash and nothing else — one line, parseable as it stands.
+        assert_eq!(
+            1,
+            out.lines().count(),
+            "stdout carried more than the hash: {out}"
+        );
+        assert!(out.starts_with("$argon2id$"), "{out}");
+        assert!(
+            !out.contains("warning"),
+            "the warning reached stdout: {out}"
+        );
+        assert!(PasswordHash::new(out.trim()).is_ok(), "{out}");
+
+        assert!(err.contains("warning:"), "{err}");
+    }
+
+    /// Nothing on stderr when there is nothing to say — a warning on every run
+    /// is one nobody reads.
+    #[test]
+    fn a_long_enough_password_emits_only_the_hash() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        emit_password_hash(&"x".repeat(MIN_PASSWORD_CHARS), &mut out, &mut err)
+            .expect("hashing an adequate password");
+
+        assert!(String::from_utf8(out).unwrap().starts_with("$argon2id$"));
+        assert!(err.is_empty(), "{:?}", String::from_utf8(err));
+    }
+
+    /// A refused password writes nothing at all — not a partial line, and above
+    /// all not a hash.
+    #[test]
+    fn a_refused_password_writes_nothing() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert!(emit_password_hash("", &mut out, &mut err).is_err());
+        assert!(out.is_empty());
+        assert!(err.is_empty());
     }
 
     /// At or above the advice, nothing is said at all.
