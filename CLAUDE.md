@@ -84,7 +84,7 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 
 ## Conventions
 
-- The toolchain is pinned in `rust-toolchain.toml` (currently `1.97.1`); CI reads the channel from that file. There is no separate MSRV.
+- The toolchain is pinned in `rust-toolchain.toml`, which is the single source of the Rust version: CI installs nothing itself (runners ship rustup, so the first `cargo` call materialises the channel and its components), and the Dockerfile's base image carries no version tag. There is no separate MSRV.
 - Test fixtures live in `fixtures/data/`; the two fixture books have stable IDs (derived from `TEST_SECRET` in `main.rs`) hard-coded in tests as `DATA_IDS`. Changing the secret or the derivation means recomputing them — run the binary with that secret against `fixtures/data` and read the `/book/…` hrefs off the index page.
 - User-facing strings in templates/login are Traditional Chinese (e.g. the login error `帳號或密碼錯誤`).
 - Config env vars all carry a `COMICS_` prefix (`NO_COLOR` and build-time `GIT_VERSION` excepted): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`.
