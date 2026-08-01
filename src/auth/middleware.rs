@@ -311,6 +311,7 @@ mod tests {
             seed: 0,
             cache_dir: PathBuf::from("/tmp"),
             thumb_sem: Arc::new(tokio::sync::Semaphore::new(1)),
+            verify_sem: Arc::new(tokio::sync::Semaphore::new(1)),
             cookie_secure: false,
             login_limiter: Arc::new(crate::auth::RateLimiter::new(5, 20, 60)),
             audit_salt: Arc::new(crate::auth::SessionAuditSalt::generate()),
@@ -326,7 +327,7 @@ mod tests {
     fn some_auth() -> AuthConfig {
         AuthConfig::Some {
             username: "user".to_string(),
-            password_hash: bcrypt::hash("pass", 4).unwrap(),
+            password_hash: crate::test_password_hash("pass"),
         }
     }
 

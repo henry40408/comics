@@ -35,7 +35,7 @@ While several options exist for self-hosted comic readers like [Calibre](https:/
 | Variable | Description | Default |
 | --- | --- | --- |
 | `COMICS_AUTH_USERNAME` | Username for the login form | _(none)_ |
-| `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form (bcrypt; the server refuses to start if it is not one) | _(none)_ |
+| `COMICS_AUTH_PASSWORD_HASH` | Hashed password for the login form (Argon2id; the server refuses to start if it is not one) | _(none)_ |
 | `COMICS_COOKIE_SECURE` | Send the session cookie with the `Secure` attribute (enable when served over HTTPS) | _(off)_ |
 | `COMICS_SECRET` | The one secret: at least 64 hex characters (`openssl rand -hex 32`). Signs the session cookie and salts hashed book/page IDs | _(random per start)_ |
 | `COMICS_HSTS_MAX_AGE` | Send `Strict-Transport-Security` with this `max-age` in seconds (e.g. `63072000`) | _(off)_ |
@@ -216,19 +216,24 @@ Now, open your web browser and head to http://localhost:8080/ to view your comic
 
 ### `hash-password`
 
-Generate a bcrypt-hashed password for the login form:
+Generate an Argon2id-hashed password for the login form:
 
 ```bash
 $ comics hash-password
 Password:
 Confirmation:
-$2a$10$...Ot6
+$argon2id$v=19$m=19456,t=2,p=1$...
 ```
 
-bcrypt hashes at most **72 bytes**, so a longer password is refused here rather
-than quietly hashed with its tail discarded. Bytes, not characters: a
-Traditional Chinese passphrase costs three bytes per character and so reaches the
-limit at 24 of them.
+Passwords are hashed with **Argon2id**, which reads the whole password however
+long it is — up to a 1 KiB backstop. A Traditional Chinese passphrase costs
+three bytes per character, so that is roughly 341 characters.
+
+> **Upgrading from a version that used bcrypt:** every existing
+> `COMICS_AUTH_PASSWORD_HASH` stops working, and the server will refuse to start
+> and tell you so rather than silently rejecting your password. Your password
+> itself is unaffected — run `comics hash-password`, enter the same password, and
+> replace the value with the new hash.
 
 ### `list` (alias: `ls`)
 

@@ -4,7 +4,7 @@
 # The builder is pinned to the native build platform; zig cross-compiles to the
 # target arch's musl triple, so no qemu emulation is needed — an arm64 image
 # builds at the host's native speed. The only C dependency is mimalloc, which
-# zig cc compiles from source; everything else (image codecs, bcrypt, xxhash) is
+# zig cc compiles from source; everything else (image codecs, argon2, xxhash) is
 # pure Rust, so no CMake or system libraries are required.
 # No Rust version here: rust-toolchain.toml is the single source of truth and
 # rustup installs it below. Do not "simplify" this to `rust:1.97` — the

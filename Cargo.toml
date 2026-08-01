@@ -11,9 +11,9 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.102"
+argon2 = "0.5.3"
 askama = "0.16.0"
 axum = "0.8.9"
-bcrypt = "0.19.1"
 chrono = "0.4.44"
 clap = { version = "4.6.1", features = ["derive", "env"] }
 cookie = { version = "0.18.1", default-features = false, features = ["signed", "percent-encode"] }
@@ -32,9 +32,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 # Used to salt-and-hash session identifiers before they reach the audit log;
 # `xxhash-rust` is not a cryptographic hash and would not do.
 sha2 = "0.11.0"
-# Already in the tree as a transitive dependency of `bcrypt`, which uses it to
-# compare hashes. Used here to compare the *username* without an early exit, so
-# that a wrong username cannot be told from a wrong password by response time.
+# Constant-time comparison of the *username*, so that a wrong username cannot be
+# told from a wrong password by response time. Already in the tree by way of
+# `password-hash`, which uses it to compare digests.
 subtle = "2.6.1"
 tokio = { version = "1.52.3", features = [
   "fs",
