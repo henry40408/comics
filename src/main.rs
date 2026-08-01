@@ -177,6 +177,15 @@ enum Commands {
 const LOGIN_MAX_ATTEMPTS: u32 = 5;
 const LOGIN_WINDOW_SECS: u64 = 60;
 
+/// Login attempts allowed across *every* client IP within [`LOGIN_WINDOW_SECS`].
+///
+/// The account-scoped counter the OWASP Authentication Cheat Sheet asks for, and
+/// what bounds an attacker spraying from addresses they hold in bulk. Four times
+/// the per-IP allowance, so it takes at least four distinct addresses failing
+/// within the same minute to reach — well outside one reader's use, and the
+/// [`RateLimiter`] docs explain what happens when an attack reaches it anyway.
+const LOGIN_GLOBAL_MAX_ATTEMPTS: u32 = 20;
+
 /// Whether the session cookie carries `Secure`. comics never terminates TLS, so
 /// there is no runtime signal to infer from and no declared public URL — the
 /// explicit flag is the only input.
@@ -240,7 +249,11 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
-        login_limiter: Arc::new(RateLimiter::new(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS)),
+        login_limiter: Arc::new(RateLimiter::new(
+            LOGIN_MAX_ATTEMPTS,
+            LOGIN_GLOBAL_MAX_ATTEMPTS,
+            LOGIN_WINDOW_SECS,
+        )),
         sessions: Arc::new(SessionStore::new(DEFAULT_IDLE_TTL, DEFAULT_ABSOLUTE_TTL)),
         audit_salt: Arc::new(SessionAuditSalt::generate()),
         hsts_max_age: opts.hsts_max_age,
@@ -348,7 +361,38 @@ async fn shutdown_signal() {
     }
 }
 
+/// Reject a `COMICS_AUTH_PASSWORD_HASH` that bcrypt cannot read.
+///
+/// `bcrypt::verify` returns `Err` for a malformed hash, and the login handler
+/// treats that as a wrong password — so without this the server starts, logs
+/// that authentication is enabled, and then refuses every correct password with
+/// the same generic error a typo produces. Failing closed is the right
+/// direction; failing closed *silently* is not, because the one thing the
+/// operator cannot see is that the hash, rather than their typing, is at fault.
+///
+/// Checked at startup for the same reason as [`ensure_no_legacy_env_vars`]: a
+/// configuration mistake should stop the server rather than change what it
+/// quietly does. Deliberately not checked before the `hash-password` subcommand,
+/// which is what an operator runs *to fix* a bad hash.
+///
+/// Parsing is enough — it validates the version prefix, the cost, and the
+/// base64 of both salt and digest — and it costs none of the work a verification
+/// would.
+fn ensure_password_hash_is_usable(opts: &Opts) -> anyhow::Result<()> {
+    let Some(hash) = opts.auth_password_hash.as_deref() else {
+        return Ok(());
+    };
+    if let Err(err) = hash.parse::<bcrypt::HashParts>() {
+        bail!(
+            "COMICS_AUTH_PASSWORD_HASH is not a bcrypt hash ({err}); \
+             generate one with `comics hash-password`"
+        );
+    }
+    Ok(())
+}
+
 async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
+    ensure_password_hash_is_usable(opts)?;
     let (tx, rx) = oneshot::channel::<()>();
     let (app, state) = init_route(opts);
     if opts.auth_username.is_none() || opts.auth_password_hash.is_none() {
@@ -539,8 +583,8 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        LOGIN_MAX_ATTEMPTS, Opts, ensure_password_fits, init_route, resolve_cookie_secure,
-        spawn_initial_scan,
+        LOGIN_GLOBAL_MAX_ATTEMPTS, LOGIN_MAX_ATTEMPTS, Opts, ensure_password_fits,
+        ensure_password_hash_is_usable, init_route, resolve_cookie_secure, spawn_initial_scan,
     };
     use axum_test::TestServer;
     use clap::Parser as _;
@@ -898,6 +942,42 @@ mod tests {
     #[test]
     fn version_is_set() {
         assert!(!VERSION.is_empty());
+    }
+
+    fn opts_with_hash(hash: &str) -> Opts {
+        Opts::parse_from([
+            "comics",
+            "--data-dir",
+            "./fixtures/data",
+            "--auth-username",
+            "user",
+            "--auth-password-hash",
+            hash,
+        ])
+    }
+
+    /// A real hash — and no credentials at all — must both start the server.
+    #[test]
+    fn a_usable_password_hash_starts_the_server() {
+        let hash = bcrypt::hash("password", BCRYPT_COST).unwrap();
+        assert!(ensure_password_hash_is_usable(&opts_with_hash(&hash)).is_ok());
+
+        let public = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        assert!(ensure_password_hash_is_usable(&public).is_ok());
+    }
+
+    /// Without this the server would start, report authentication as enabled,
+    /// and then reject the correct password with the same message a typo gets —
+    /// leaving the hash the one thing the operator cannot see is at fault. The
+    /// empty string is the case that arrives by way of an unset shell variable.
+    #[test]
+    fn a_malformed_password_hash_stops_startup() {
+        for hash in ["", "not-a-hash", "$2b$11$too-short", "password"] {
+            let err = ensure_password_hash_is_usable(&opts_with_hash(hash))
+                .expect_err(&format!("{hash:?} was accepted"))
+                .to_string();
+            assert!(err.contains("hash-password"), "{err}");
+        }
     }
 
     /// The two lengths bcrypt still hashes in full. The second is the one worth
@@ -1460,6 +1540,31 @@ mod tests {
             assert_eq!(401, status, "attempt {attempt}");
         }
         assert_eq!(429, failed_login_from(&server, "203.0.113.99").await);
+    }
+
+    /// The account-scoped ceiling, on the real router: four addresses spend their
+    /// five apiece, and a fifth — whose own per-IP budget is untouched — is
+    /// refused anyway. Per-IP alone waved that fifth address straight through,
+    /// which is the gap the global window closes.
+    ///
+    /// Slower than its neighbours because every one of those twenty attempts
+    /// costs a real `BCRYPT_COST` verification; the throttle is reserved before
+    /// the credential check, so they cannot be made cheap without also making
+    /// the test stop exercising the path it is about.
+    #[tokio::test]
+    async fn auth_login_is_throttled_across_all_client_addresses() {
+        let server = build_auth_server_with(false, &["--trusted-proxies", "127.0.0.1"]).await;
+        for client in 1..=(LOGIN_GLOBAL_MAX_ATTEMPTS / LOGIN_MAX_ATTEMPTS) {
+            for attempt in 1..=LOGIN_MAX_ATTEMPTS {
+                let status = failed_login_from(&server, &format!("203.0.113.{client}")).await;
+                assert_eq!(401, status, "client {client}, attempt {attempt}");
+            }
+        }
+        assert_eq!(
+            429,
+            failed_login_from(&server, "203.0.113.99").await,
+            "a fresh address got through after the global budget was spent"
+        );
     }
 
     #[tokio::test]
