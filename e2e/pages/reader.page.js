@@ -40,6 +40,16 @@ class ReaderPage {
   async followPrevious() {
     await this.page.locator('.pg:visible .nojs-prev').click();
   }
+
+  // The rail is anchors in both projects; with scripting on app.js cancels the
+  // jump, so this exercises the two paths through one control.
+  async jumpFromRail(n) {
+    await this.page.locator(`.thumbs a[href="#p${n}"]`).click();
+  }
+
+  counter() {
+    return this.page.locator('.pg:visible .nojs-counter');
+  }
 }
 
 module.exports = { ReaderPage };

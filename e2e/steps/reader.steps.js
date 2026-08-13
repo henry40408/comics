@@ -35,6 +35,14 @@ When('I follow the previous-page link', async ({ readerPage }) => {
   await readerPage.followPrevious();
 });
 
+When('I jump to page {string} from the rail', async ({ readerPage }, n) => {
+  await readerPage.jumpFromRail(n);
+});
+
+Then('the page counter should read {string}', async ({ readerPage }, text) => {
+  await expect(readerPage.counter()).toHaveText(text);
+});
+
 When('I log out', async ({ libraryPage }) => {
   await libraryPage.logout();
 });

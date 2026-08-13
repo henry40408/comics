@@ -15,6 +15,12 @@ Feature: Reader
     When I switch to scroll mode
     Then the reader should be in "scroll" mode
 
+  # The thumbnails are anchors now, so app.js has to cancel the navigation and
+  # animate instead — this covers that the scripted path still works.
+  Scenario: Jumping from the thumbnail rail
+    When I jump to page "3" from the rail
+    Then the current page should be "3"
+
   # Runs in the `e2e-nojs` project, which serves the same pages with scripting
   # off. Paging falls back to per-page anchors resolved by CSS `:target`.
   @nojs
@@ -26,6 +32,13 @@ Feature: Reader
     Then page "3" should be the only one showing
     When I follow the previous-page link
     Then page "2" should be the only one showing
+
+  @nojs
+  Scenario: The rail and the page counter work without JavaScript
+    Then the page counter should read "1 / 3"
+    When I jump to page "3" from the rail
+    Then page "3" should be the only one showing
+    And the page counter should read "3 / 3"
 
   Scenario: Logging out returns to the login page
     When I log out

@@ -61,6 +61,9 @@
           <nav class="nojs">
             {% if !loop.last %}<a class="nojs-next" href="#p{{ loop.index + 1 }}" rel="next" aria-label="Next page">‹</a>{% endif %}
             {% if !loop.first %}<a class="nojs-prev" href="#p{{ loop.index - 1 }}" rel="prev" aria-label="Previous page">›</a>{% endif %}
+            {# The rail's counter is driven by app.js and would sit at 1 forever,
+               so without a script each page states its own number instead. #}
+            <span class="nojs-counter">{{ loop.index }} / {{ book.pages.len() }}</span>
           </nav>
         </figure>
         {% endfor %}
@@ -72,9 +75,11 @@
       <div class="progress"><i id="bar"></i></div>
       <div class="thumbs" id="thumbs">
         {% for page in book.pages %}
-        <button type="button" data-p="{{ loop.index }}" title="第{{ loop.index }}頁">
+        {# A link, not a button: `#p{n}` makes the rail work without a script,
+           and app.js cancels the jump so it can animate instead. #}
+        <a href="#p{{ loop.index }}" data-p="{{ loop.index }}" title="第{{ loop.index }}頁">
           <img src="/thumb/sm/{{ page.id }}" alt="" loading="lazy" />
-        </button>
+        </a>
         {% endfor %}
       </div>
     </div>

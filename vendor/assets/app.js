@@ -48,7 +48,8 @@
   const bar = document.getElementById("bar");
   const curEls = [document.getElementById("cur"), document.getElementById("cur2")];
   const thumbsBox = document.getElementById("thumbs");
-  const thumbBtns = [...thumbsBox.querySelectorAll("button")];
+  // Anchors rather than buttons, so the rail still jumps without a script.
+  const thumbBtns = [...thumbsBox.querySelectorAll("a")];
   let current = 1;
 
   const centerThumb = () => {
@@ -100,8 +101,15 @@
     else if (k === " ") { e.preventDefault(); setCurrent(e.shiftKey ? current - 1 : current + 1); }
   });
 
-  // thumbnails jump (both modes)
-  thumbBtns.forEach((b, i) => b.addEventListener("click", () => goTo(i + 1)));
+  // thumbnails jump (both modes); cancel the href so the browser does not also
+  // scroll to the anchor — goTo animates, and in paged mode there is nowhere to
+  // scroll anyway.
+  thumbBtns.forEach((b, i) =>
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      goTo(i + 1);
+    })
+  );
 
   // scroll mode: track the most-visible page
   const ratios = new Array(TOTAL).fill(0);

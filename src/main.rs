@@ -1601,6 +1601,40 @@ mod tests {
         }
     }
 
+    /// The rail is the only one-step route to a distant page, and as `<button>`
+    /// it did nothing without a script. Each thumbnail anchors to its page, and
+    /// each page states its own number — the rail's counter is written by
+    /// app.js, so without it that counter would read 1 on every page.
+    #[tokio::test]
+    async fn the_rail_works_without_javascript() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        let html = server.get(&format!("/book/{book}")).await.text();
+        let total = html.split("<figure").skip(1).count();
+        assert!(total > 2, "the fixture book needs several pages");
+
+        let rail = html
+            .split("class=\"thumbs\"")
+            .nth(1)
+            .expect("the thumbnail rail")
+            .split("</div>")
+            .next()
+            .expect("an unclosed rail");
+
+        for n in 1..=total {
+            let href = format!("href=\"#p{n}\"");
+            assert!(rail.contains(&href), "no thumbnail for page {n}: {rail}");
+        }
+        assert!(!rail.contains("<button"), "an inert button: {rail}");
+
+        for (i, fragment) in html.split("<figure").skip(1).enumerate() {
+            let page = fragment.split("</figure>").next().expect("an unclosed one");
+            let counter = format!("{} / {total}", i + 1);
+            assert!(page.contains(&counter), "page {} lacks its number", i + 1);
+        }
+    }
+
     /// theme.js sets `data-theme`, so a viewer without JavaScript never gets the
     /// attribute the dark palette hangs off. The media-query copy covers them,
     /// and it is a copy — this fails when the two lists drift apart.

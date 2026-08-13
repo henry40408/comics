@@ -336,6 +336,28 @@ html:not(.js) .nojs a {
 html:not(.js) .nojs .nojs-next { left: 14px; }
 html:not(.js) .nojs .nojs-prev { right: 14px; }
 
+/* The rail's own counter and progress bar are written by app.js: without it
+ * they would read 1 and 0% on every page, which is worse than absent. The
+ * per-page counter above replaces the first; the bar has no script-less form,
+ * since its width is a computed percentage and the CSP forbids inline styles. */
+html:not(.js) .counter,
+html:not(.js) .progress { display: none; }
+html:not(.js) .nojs-counter {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: 4px 12px;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
 .rail { border-top: 1px solid var(--rule); background: var(--paper); padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 14px; }
 .progress { flex: 1; height: 4px; background: var(--rule); position: relative; }
 .progress i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--vermilion); width: 0; transition: width 0.1s linear; }
@@ -343,9 +365,10 @@ html[data-theme="dark"] .progress i { box-shadow: 0 0 10px rgba(232, 84, 63, 0.6
 .counter { font-family: var(--font-serif); font-size: 14px; white-space: nowrap; }
 .counter b { color: var(--vermilion); }
 .thumbs { position: relative; display: flex; gap: 6px; overflow-x: auto; max-width: 42%; padding-bottom: 2px; scroll-behavior: smooth; }
-.thumbs button { flex: 0 0 auto; width: 26px; height: 39px; padding: 0; background: var(--page); border: 2px solid transparent; box-sizing: border-box; cursor: pointer; overflow: hidden; }
-.thumbs button img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumbs button.on { border-color: var(--vermilion); }
+/* anchors, so the rail jumps without a script; app.js cancels the navigation */
+.thumbs a { flex: 0 0 auto; display: block; width: 26px; height: 39px; padding: 0; background: var(--page); border: 2px solid transparent; box-sizing: border-box; cursor: pointer; overflow: hidden; }
+.thumbs a img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumbs a.on { border-color: var(--vermilion); }
 
 @media (max-width: 640px) {
   .topbar { gap: 8px; padding: 9px 12px; }
