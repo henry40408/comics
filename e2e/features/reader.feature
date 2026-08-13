@@ -34,6 +34,12 @@ Feature: Reader
     Then page "2" should be the only one showing
 
   @nojs
+  Scenario: Controls that need a script are not offered without one
+    Then the theme toggle should not be visible
+    And the top bar should not show the current page
+    And the top bar should still read "3 ページ"
+
+  @nojs
   Scenario: Switching to scroll mode works without JavaScript
     When I switch to scroll mode
     Then the reader should be in "scroll" mode

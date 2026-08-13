@@ -25,7 +25,10 @@
       <a class="back" href="/" title="Home" aria-label="Home">←</a>
       <div class="titleblock">
         <div class="t">{{ book.title }}</div>
-        <div class="s"><b id="cur" data-testid="reader-current">1</b> / {{ book.pages.len() }} ページ</div>
+        {# The live half is written by app.js and would read 1 forever without
+           it, so it is dropped rather than left lying; the total is still true,
+           and the current page is stated per-page by `nojs-counter`. #}
+        <div class="s"><span class="js-only"><b id="cur" data-testid="reader-current">1</b> / </span>{{ book.pages.len() }} ページ</div>
       </div>
       <span class="grow"></span>
       {# Links, so the mode survives without JavaScript: each half re-renders
@@ -35,7 +38,7 @@
         <a href="?mode=paged" data-m="paged" class="{% if mode == "paged" %}on{% endif %}" data-testid="reader-mode-paged">⇄ 翻頁</a>
         <a href="?mode=scroll" data-m="scroll" class="{% if mode == "scroll" %}on{% endif %}" data-testid="reader-mode-scroll">↕ 捲動</a>
       </div>
-      <button class="iconbtn" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+      <button class="iconbtn js-only" id="theme" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
       <form method="POST" action="/shuffle/{{ book.id }}">
         <button class="tbtn" type="submit">Shuffle</button>
       </form>

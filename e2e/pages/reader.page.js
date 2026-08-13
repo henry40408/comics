@@ -50,6 +50,14 @@ class ReaderPage {
   counter() {
     return this.page.locator('.pg:visible .nojs-counter');
   }
+
+  themeToggle() {
+    return this.page.locator('#theme');
+  }
+
+  topbarTitle() {
+    return this.page.locator('.titleblock .s');
+  }
 }
 
 module.exports = { ReaderPage };

@@ -1601,6 +1601,54 @@ mod tests {
         }
     }
 
+    /// A control only a script can operate must not be on screen without one.
+    /// Checked on every page that renders a theme toggle rather than just the
+    /// reader: the toggle is in three templates, and covering one of them is
+    /// how the topbar's counter was missed the first time.
+    #[tokio::test]
+    async fn script_only_controls_are_hidden_without_javascript() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        let pages = [
+            ("/", server.get("/").await.text()),
+            ("/book", server.get(&format!("/book/{book}")).await.text()),
+            (
+                "/login",
+                build_auth_server(false).await.get("/login").await.text(),
+            ),
+        ];
+
+        for (what, html) in pages {
+            let toggle = html
+                .split("id=\"theme\"")
+                .next()
+                .and_then(|before| before.rfind('<').map(|at| &before[at..]))
+                .expect("the theme toggle");
+            assert!(toggle.contains("js-only"), "{what}: {toggle}");
+        }
+
+        // The topbar states the total, which is true without a script; only the
+        // live half — the current page — is dropped.
+        let reader = server.get(&format!("/book/{book}")).await.text();
+        let titleblock = reader
+            .split("class=\"s\"")
+            .nth(1)
+            .expect("the topbar counter")
+            .split("</div>")
+            .next()
+            .expect("an unclosed counter");
+        let live = titleblock
+            .split("<span")
+            .nth(1)
+            .expect("the script-driven half");
+        assert!(live.contains("js-only"), "{titleblock}");
+        assert!(live.contains("id=\"cur\""), "{titleblock}");
+        assert!(titleblock.contains("ページ"), "the total went missing");
+
+        assert!(comics::assets::APP_CSS.contains("html:not(.js) .js-only"));
+    }
+
     /// The segmented control is a pair of links, so the mode has to survive a
     /// round trip through the URL rather than living only in app.js. A value
     /// nobody recognises renders the default instead of failing the request —

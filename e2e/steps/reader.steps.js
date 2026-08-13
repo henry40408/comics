@@ -35,6 +35,21 @@ When('I follow the previous-page link', async ({ readerPage }) => {
   await readerPage.followPrevious();
 });
 
+Then('the theme toggle should not be visible', async ({ readerPage }) => {
+  await expect(readerPage.themeToggle()).toBeHidden();
+});
+
+Then('the top bar should not show the current page', async ({ readerPage }) => {
+  await expect(readerPage.currentPage()).toBeHidden();
+});
+
+Then('the top bar should still read {string}', async ({ readerPage }, text) => {
+  // innerText, not textContent: a `display: none` span keeps its characters in
+  // textContent, so the default comparison sees the dropped half either way and
+  // cannot tell a hidden counter from a visible one.
+  await expect(readerPage.topbarTitle()).toHaveText(text, { useInnerText: true });
+});
+
 Then('all {string} pages should be showing', async ({ readerPage }, n) => {
   await expect(readerPage.visiblePages()).toHaveCount(Number(n));
 });
