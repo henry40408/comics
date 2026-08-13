@@ -34,6 +34,12 @@ Feature: Reader
     Then page "2" should be the only one showing
 
   @nojs
+  Scenario: Switching to scroll mode works without JavaScript
+    When I switch to scroll mode
+    Then the reader should be in "scroll" mode
+    And all "3" pages should be showing
+
+  @nojs
   Scenario: The rail and the page counter work without JavaScript
     Then the page counter should read "1 / 3"
     When I jump to page "3" from the rail

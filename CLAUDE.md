@@ -47,7 +47,7 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 
 ### Routes
 
-Protected: `GET /`, `GET /book/{id}`, `GET /data/{id}` (page image), `GET /thumb/{size}/{id}`, `POST /shuffle`, `POST /shuffle/{id}`, `POST /rescan`.
+Protected: `GET /`, `GET /book/{id}` (`?mode=paged|scroll`), `GET /data/{id}` (page image), `GET /thumb/{size}/{id}`, `POST /shuffle`, `POST /shuffle/{id}`, `POST /rescan`.
 
 Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, and the static assets (`/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`).
 
@@ -65,7 +65,9 @@ The dark palette is defined twice: once for `html[data-theme="dark"]`, once unde
 
 The thumbnail rail is `<a href="#p{n}">`, not `<button>`, so it jumps on the same anchors; `app.js` calls `preventDefault` and animates instead. Each page also carries its own `nojs-counter`, because the rail's counter is script-written and would otherwise read 1 everywhere — without a script that counter and the progress bar are hidden rather than shown lying. The bar has no script-less form at all: its width is a computed percentage, and the CSP has no `'unsafe-inline'` for `style-src`.
 
-Still script-only, deliberately: mode switching, keyboard shortcuts, the theme toggle, and the progress bar.
+The segmented control is a pair of links to `?mode=paged|scroll`, which `handlers/book.rs` renders straight onto `<body data-mode>`; `app.js` cancels the navigation and switches in place, so the scripted path keeps the current page instead of reloading to the top. An unrecognised `mode` renders the default rather than returning 400 — it is a display preference off a hand-edited URL. Note the `:has(.pg:target)` rule is scoped to paged: in scroll mode every page shows on purpose, and unscoped a leftover `#p{n}` would blank the first one.
+
+Still script-only, deliberately: keyboard shortcuts, the theme toggle, and the progress bar.
 
 ### Scan lifecycle
 

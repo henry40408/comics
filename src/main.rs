@@ -1601,6 +1601,50 @@ mod tests {
         }
     }
 
+    /// The segmented control is a pair of links, so the mode has to survive a
+    /// round trip through the URL rather than living only in app.js. A value
+    /// nobody recognises renders the default instead of failing the request —
+    /// it is a display preference, and a reader beats a 400.
+    #[tokio::test]
+    async fn the_reader_mode_is_server_rendered() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        for (query, expected) in [
+            ("", "paged"),
+            ("?mode=paged", "paged"),
+            ("?mode=scroll", "scroll"),
+            ("?mode=nonsense", "paged"),
+        ] {
+            let res = server.get(&format!("/book/{book}{query}")).await;
+            assert_eq!(200, res.status_code(), "GET /book/…{query}");
+
+            let html = res.text();
+            let attribute = format!("data-mode=\"{expected}\"");
+            assert!(
+                html.contains(&attribute),
+                "{query} did not render {expected}"
+            );
+
+            let control = html
+                .split("class=\"seg\"")
+                .nth(1)
+                .expect("the segmented control")
+                .split("</div>")
+                .next()
+                .expect("an unclosed control");
+            assert!(!control.contains("<button"), "an inert button: {control}");
+
+            let selected = control
+                .split("<a ")
+                .skip(1)
+                .find(|half| half.contains("class=\"on\""))
+                .unwrap_or_else(|| panic!("nothing selected for {query}"));
+            let marker = format!("data-m=\"{expected}\"");
+            assert!(selected.contains(&marker), "{query}: {selected}");
+        }
+    }
+
     /// The rail is the only one-step route to a distant page, and as `<button>`
     /// it did nothing without a script. Each thumbnail anchors to its page, and
     /// each page states its own number — the rail's counter is written by
