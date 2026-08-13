@@ -320,7 +320,8 @@ html:not(.js) .zone { display: none; }
 .nojs { display: none; }
 /* absolute against `.viewer`; only the one visible page renders its own nav */
 html:not(.js) body[data-mode="paged"] .nojs { display: block; }
-html:not(.js) .nojs a {
+html:not(.js) .nojs .nojs-next,
+html:not(.js) .nojs .nojs-prev {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -340,6 +341,37 @@ html:not(.js) .nojs a {
 }
 html:not(.js) .nojs .nojs-next { left: 14px; }
 html:not(.js) .nojs .nojs-prev { right: 14px; }
+
+/* In scroll mode the whole book is on screen, so paging and the per-page number
+ * would just repeat down the column — only the mode link stays. It has to
+ * anchor to its own `.pg` there: `.viewer` is the nearest positioned ancestor
+ * otherwise, and every page's link would stack in the same spot. */
+html:not(.js) body[data-mode="scroll"] .nojs { display: block; }
+html:not(.js) body[data-mode="scroll"] .pg { position: relative; }
+html:not(.js) body[data-mode="scroll"] .nojs-next,
+html:not(.js) body[data-mode="scroll"] .nojs-prev,
+html:not(.js) body[data-mode="scroll"] .nojs-counter { display: none; }
+html:not(.js) .nojs-mode {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: 5px 10px;
+  opacity: 0.9;
+}
+
+/* The topbar's segmented control is shared by every page, so without a script
+ * it cannot carry your place across the switch and drops you at the start of
+ * the book. Each page now offers the same switch with its own anchor, so this
+ * one is only a worse route to the same place. */
+html:not(.js) .seg { display: none; }
 
 /* Nothing that only a script can operate should be on screen without one — a
  * dead control invites a bug report, and one that displays stale state is worse

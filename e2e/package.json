@@ -5,7 +5,7 @@
   "description": "Browser E2E tests and screenshot pipeline for Comics",
   "scripts": {
     "bddgen": "bddgen",
-    "test": "bddgen && playwright test --project=e2e --project=e2e-nojs",
+    "test": "bddgen && playwright test --project=e2e --project=e2e-nojs --project=e2e-logout",
     "screenshots": "bddgen && playwright test --project=screenshots"
   },
   "devDependencies": {
