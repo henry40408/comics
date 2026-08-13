@@ -67,7 +67,9 @@ The thumbnail rail is `<a href="#p{n}">`, not `<button>`, so it jumps on the sam
 
 The segmented control is a pair of links to `?mode=paged|scroll`, which `handlers/book.rs` renders straight onto `<body data-mode>`; `app.js` cancels the navigation and switches in place, so the scripted path keeps the current page instead of reloading to the top. An unrecognised `mode` renders the default rather than returning 400 — it is a display preference off a hand-edited URL. Note the `:has(.pg:target)` rule is scoped to paged: in scroll mode every page shows on purpose, and unscoped a leftover `#p{n}` would blank the first one.
 
-Still script-only, deliberately: keyboard shortcuts, the theme toggle, and the progress bar.
+Anything only a script can operate is hidden without one, rather than shown dead or — worse — showing stale state as if it were current. `.js-only` marks those controls (the theme toggle in all three templates, the topbar's live page number); `.counter` and `.progress` are named directly. The topbar keeps its *total*, which stays true, and the current page is stated per-page by `nojs-counter`. `script_only_controls_are_hidden_without_javascript` checks every template that renders a toggle — covering only the reader is how the topbar counter was missed initially.
+
+Still script-only, deliberately: keyboard shortcuts (no UI to hide), the theme toggle, and the progress bar.
 
 ### Scan lifecycle
 

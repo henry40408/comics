@@ -35,6 +35,18 @@ When('I follow the previous-page link', async ({ readerPage }) => {
   await readerPage.followPrevious();
 });
 
+Then('the theme toggle should not be visible', async ({ readerPage }) => {
+  await expect(readerPage.themeToggle()).toBeHidden();
+});
+
+Then('the top bar should not show the current page', async ({ readerPage }) => {
+  await expect(readerPage.currentPage()).toBeHidden();
+});
+
+Then('the top bar should still read {string}', async ({ readerPage }, text) => {
+  await expect(readerPage.topbarTitle()).toHaveText(text);
+});
+
 Then('all {string} pages should be showing', async ({ readerPage }, n) => {
   await expect(readerPage.visiblePages()).toHaveCount(Number(n));
 });

@@ -341,10 +341,14 @@ html:not(.js) .nojs a {
 html:not(.js) .nojs .nojs-next { left: 14px; }
 html:not(.js) .nojs .nojs-prev { right: 14px; }
 
-/* The rail's own counter and progress bar are written by app.js: without it
- * they would read 1 and 0% on every page, which is worse than absent. The
- * per-page counter above replaces the first; the bar has no script-less form,
- * since its width is a computed percentage and the CSP forbids inline styles. */
+/* Nothing that only a script can operate should be on screen without one — a
+ * dead control invites a bug report, and one that displays stale state is worse
+ * because it states something false. `.js-only` marks the ones that carry no
+ * meaning on their own (the theme toggle, the topbar's live page number); the
+ * rail's counter and progress bar are named directly since they are structural.
+ * The bar has no script-less form at all: its width is a computed percentage,
+ * and `style-src` carries no 'unsafe-inline'. */
+html:not(.js) .js-only,
 html:not(.js) .counter,
 html:not(.js) .progress { display: none; }
 html:not(.js) .nojs-counter {
