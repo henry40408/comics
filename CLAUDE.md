@@ -63,7 +63,9 @@ The reader degrades on its own. `templates/book.html` renders `is-current` on th
 
 The dark palette is defined twice: once for `html[data-theme="dark"]`, once under `@media (prefers-color-scheme: dark)` for `html:not([data-theme])`, since the attribute only exists when `theme.js` ran. `dark_theme_has_a_no_js_fallback` fails when the two lists drift.
 
-Still script-only, deliberately: mode switching, thumbnail jumps, keyboard shortcuts, the theme toggle, and the page counter/progress bar (they stay at page 1).
+The thumbnail rail is `<a href="#p{n}">`, not `<button>`, so it jumps on the same anchors; `app.js` calls `preventDefault` and animates instead. Each page also carries its own `nojs-counter`, because the rail's counter is script-written and would otherwise read 1 everywhere — without a script that counter and the progress bar are hidden rather than shown lying. The bar has no script-less form at all: its width is a computed percentage, and the CSP has no `'unsafe-inline'` for `style-src`.
+
+Still script-only, deliberately: mode switching, keyboard shortcuts, the theme toggle, and the progress bar.
 
 ### Scan lifecycle
 
