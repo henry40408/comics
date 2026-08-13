@@ -233,7 +233,8 @@ body.reader { display: flex; flex-direction: column; height: 100dvh; overflow: h
 .grow { flex: 1; }
 
 .seg { display: inline-flex; border: 1px solid var(--rule); flex: 0 0 auto; }
-.seg button {
+/* links, so the mode survives without a script; app.js cancels the navigation */
+.seg a {
   font-family: var(--font-sans);
   font-size: 12px;
   letter-spacing: 0.3px;
@@ -243,8 +244,10 @@ body.reader { display: flex; flex-direction: column; height: 100dvh; overflow: h
   padding: 7px 13px;
   cursor: pointer;
   transition: 0.15s;
+  text-decoration: none;
+  display: block;
 }
-.seg button.on { background: var(--vermilion); color: #fff; }
+.seg a.on { background: var(--vermilion); color: #fff; }
 .iconbtn { width: 34px; height: 34px; font-size: 15px; flex: 0 0 auto; }
 .tbtn {
   font-family: var(--font-sans);
@@ -308,7 +311,9 @@ body.hint .zone span { animation: hintflash 1.9s ease; }
 html:not(.js) body[data-mode="paged"] .pg:target { display: block; max-width: 100%; max-height: 100%; }
 html:not(.js) body[data-mode="paged"] .pg:target img { max-width: 100%; max-height: calc(100dvh - 130px); width: auto; height: auto; box-shadow: var(--shadow); }
 /* once any page is targeted, the server-rendered first page steps aside */
-html:not(.js) .pages:has(.pg:target) .pg.is-current:not(:target) { display: none; }
+/* Scoped to paged: in scroll mode every page is shown on purpose, and without
+ * this guard a `#p{n}` left in the URL would blank the first one. */
+html:not(.js) body[data-mode="paged"] .pages:has(.pg:target) .pg.is-current:not(:target) { display: none; }
 /* the tap zones are inert without a script, so don't offer them */
 html:not(.js) .zone { display: none; }
 
@@ -377,7 +382,7 @@ html[data-theme="dark"] .progress i { box-shadow: 0 0 10px rgba(232, 84, 63, 0.6
   .titleblock .t { font-size: 14.5px; }
   .titleblock .s { font-size: 11px; }
   .back { width: 32px; height: 32px; font-size: 15px; }
-  .seg button { padding: 6px 9px; font-size: 11px; letter-spacing: 0; }
+  .seg a { padding: 6px 9px; font-size: 11px; letter-spacing: 0; }
   .iconbtn { width: 32px; height: 32px; font-size: 14px; }
   /* Shuffle collapses to an icon button on mobile */
   .tbtn { font-size: 0; padding: 0; width: 32px; height: 32px; display: grid; place-items: center; border-color: var(--rule); }

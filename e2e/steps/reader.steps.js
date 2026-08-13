@@ -35,6 +35,10 @@ When('I follow the previous-page link', async ({ readerPage }) => {
   await readerPage.followPrevious();
 });
 
+Then('all {string} pages should be showing', async ({ readerPage }, n) => {
+  await expect(readerPage.visiblePages()).toHaveCount(Number(n));
+});
+
 When('I jump to page {string} from the rail', async ({ readerPage }, n) => {
   await readerPage.jumpFromRail(n);
 });

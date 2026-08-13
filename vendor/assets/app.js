@@ -125,10 +125,14 @@
   );
   pgs.forEach((p) => io.observe(p));
 
-  // mode switch (segmented control)
+  // mode switch (segmented control). The halves are links so the mode works
+  // without a script; here we cancel the navigation and switch in place, which
+  // keeps the current page instead of reloading back to the top.
   seg.addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (b) setMode(b.dataset.m);
+    const b = e.target.closest("a");
+    if (!b) return;
+    e.preventDefault();
+    setMode(b.dataset.m);
   });
 
   setCurrent(1);
