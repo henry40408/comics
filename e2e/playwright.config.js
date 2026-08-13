@@ -14,6 +14,19 @@ const TEST_PASSWORD_HASH =
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
   steps: 'steps/**/*.js',
+  tags: 'not @nojs',
+});
+
+// `javaScriptEnabled` is a browser-context option, so the scripted and the
+// script-less runs cannot share one project — hence the second generation pass
+// and the `@nojs` tag that splits the scenarios between them.
+const nojsTestDir = defineBddConfig({
+  // A sibling of the default `.features-gen`, never a child: the `e2e` project
+  // points at that directory, and would otherwise pick these specs up too.
+  outputDir: '.features-gen-nojs',
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.js',
+  tags: '@nojs',
 });
 
 module.exports = defineConfig({
@@ -42,6 +55,11 @@ module.exports = defineConfig({
       name: 'e2e',
       testDir,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'e2e-nojs',
+      testDir: nojsTestDir,
+      use: { ...devices['Desktop Chrome'], javaScriptEnabled: false },
     },
     {
       name: 'screenshots',

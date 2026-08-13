@@ -30,6 +30,26 @@ html[data-theme="dark"] {
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
 }
 
+/* The same palette for a system-dark viewer that never got `data-theme` —
+ * theme.js is what sets that attribute, so without JavaScript nothing above
+ * would ever apply. `:not([data-theme])` keeps an explicit choice winning.
+ * The two token lists must stay in step; `dark_theme_has_a_no_js_fallback`
+ * fails when they drift. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    --paper: #16140f;
+    --panel: #1d1b15;
+    --ink: #ece5d6;
+    --muted: #8b857a;
+    --vermilion: #e8543f;
+    --vermilion-press: #d2422e;
+    --rule: #2c2920;
+    --stage: #0d0c09;
+    --page: #2a2620;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+  }
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
@@ -279,6 +299,42 @@ body[data-mode="scroll"] .zone { display: none; }
 /* first-visit hint: briefly flash both arrows */
 @keyframes hintflash { 0%, 100% { opacity: 0; } 30%, 60% { opacity: 0.9; } }
 body.hint .zone span { animation: hintflash 1.9s ease; }
+
+/* --- paging without JavaScript ------------------------------------------
+ * app.js drives `is-current`; the server renders it on page 1 so something is
+ * visible, and from the first anchor click `:target` takes over. Every rule is
+ * scoped to `html:not(.js)`, so none of it can reach the scripted path — the
+ * `js` class lands in <head>, before the first paint. */
+html:not(.js) body[data-mode="paged"] .pg:target { display: block; max-width: 100%; max-height: 100%; }
+html:not(.js) body[data-mode="paged"] .pg:target img { max-width: 100%; max-height: calc(100dvh - 130px); width: auto; height: auto; box-shadow: var(--shadow); }
+/* once any page is targeted, the server-rendered first page steps aside */
+html:not(.js) .pages:has(.pg:target) .pg.is-current:not(:target) { display: none; }
+/* the tap zones are inert without a script, so don't offer them */
+html:not(.js) .zone { display: none; }
+
+.nojs { display: none; }
+/* absolute against `.viewer`; only the one visible page renders its own nav */
+html:not(.js) body[data-mode="paged"] .nojs { display: block; }
+html:not(.js) .nojs a {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  font-size: 30px;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+html:not(.js) .nojs .nojs-next { left: 14px; }
+html:not(.js) .nojs .nojs-prev { right: 14px; }
 
 .rail { border-top: 1px solid var(--rule); background: var(--paper); padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 14px; }
 .progress { flex: 1; height: 4px; background: var(--rule); position: relative; }

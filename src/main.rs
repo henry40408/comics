@@ -1563,6 +1563,92 @@ mod tests {
         }
     }
 
+    /// Without a script there is no way for a shared control to know which page
+    /// it sits on, so every page carries its own neighbours and `:target` picks
+    /// the one to show. The ends must not offer a link past the book.
+    #[tokio::test]
+    async fn anchor_paging_links_every_page_to_its_neighbours() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        let html = server.get(&format!("/book/{book}")).await.text();
+
+        let figures: Vec<&str> = html
+            .split("<figure")
+            .skip(1)
+            .map(|f| f.split("</figure>").next().expect("an unclosed <figure>"))
+            .collect();
+        let total = figures.len();
+        assert!(total > 2, "the fixture book needs several pages");
+
+        for (i, fragment) in figures.iter().enumerate() {
+            let n = i + 1;
+            assert!(fragment.contains(&format!("id=\"p{n}\"")), "{fragment}");
+
+            if n < total {
+                let next = format!("href=\"#p{}\"", n + 1);
+                assert!(fragment.contains(&next), "page {n} has no next: {fragment}");
+            } else {
+                assert!(!fragment.contains("rel=\"next\""), "last page: {fragment}");
+            }
+
+            if n > 1 {
+                let prev = format!("href=\"#p{}\"", n - 1);
+                assert!(fragment.contains(&prev), "page {n} has no prev: {fragment}");
+            } else {
+                assert!(!fragment.contains("rel=\"prev\""), "first page: {fragment}");
+            }
+        }
+    }
+
+    /// theme.js sets `data-theme`, so a viewer without JavaScript never gets the
+    /// attribute the dark palette hangs off. The media-query copy covers them,
+    /// and it is a copy — this fails when the two lists drift apart.
+    #[test]
+    fn dark_theme_has_a_no_js_fallback() {
+        /// The declarations between the braces that follow `selector`.
+        fn block<'a>(css: &'a str, selector: &str) -> &'a str {
+            let at = css
+                .find(selector)
+                .unwrap_or_else(|| panic!("no `{selector}` block"));
+            let open = at + css[at..].find('{').expect("an unopened block");
+            let close = open + css[open..].find('}').expect("an unclosed block");
+            &css[open + 1..close]
+        }
+
+        /// The `--custom-property: value` pairs, sorted so order cannot matter.
+        fn tokens(block: &str) -> Vec<(&str, &str)> {
+            let mut out: Vec<(&str, &str)> = block
+                .lines()
+                .filter_map(|line| line.trim().strip_suffix(';'))
+                .filter_map(|decl| decl.split_once(':'))
+                .map(|(name, value)| (name.trim(), value.trim()))
+                .filter(|(name, _)| name.starts_with("--"))
+                .collect();
+            out.sort_unstable();
+            out
+        }
+
+        let css = comics::assets::APP_CSS;
+        let explicit = tokens(block(css, "html[data-theme=\"dark\"] {"));
+        let system = tokens(block(css, "html:not([data-theme]) {"));
+
+        assert!(!explicit.is_empty(), "the dark palette went missing");
+        assert_eq!(explicit, system, "the dark palettes have drifted");
+    }
+
+    /// The no-JS paging keys off `html:not(.js)`, and the class has to be there
+    /// before the first paint — theme.js is the only script that early. Drop it
+    /// and `:target` would fight app.js over which page is showing.
+    #[tokio::test]
+    async fn the_scripted_path_is_marked_before_first_paint() {
+        let server = build_server().await;
+
+        let js = server.get("/assets/theme.js").await.text();
+        assert!(js.contains("classList.add(\"js\")"), "{js}");
+        assert!(comics::assets::APP_CSS.contains("html:not(.js)"));
+    }
+
     /// Loaded synchronously in `<head>`, so it must not be deferred — the point
     /// is that it runs before the first paint.
     #[tokio::test]
