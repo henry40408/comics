@@ -44,7 +44,10 @@ Then('the top bar should not show the current page', async ({ readerPage }) => {
 });
 
 Then('the top bar should still read {string}', async ({ readerPage }, text) => {
-  await expect(readerPage.topbarTitle()).toHaveText(text);
+  // innerText, not textContent: a `display: none` span keeps its characters in
+  // textContent, so the default comparison sees the dropped half either way and
+  // cannot tell a hidden counter from a visible one.
+  await expect(readerPage.topbarTitle()).toHaveText(text, { useInnerText: true });
 });
 
 Then('all {string} pages should be showing', async ({ readerPage }, n) => {
