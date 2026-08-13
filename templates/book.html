@@ -48,7 +48,10 @@
       <div class="zone prev" id="prev" title="Previous" data-testid="reader-prev"><span>›</span></div>
       <div class="pages" id="pages">
         {% for page in book.pages %}
-        <figure class="pg" data-p="{{ loop.index }}">
+        {# `is-current` is server-rendered on the first page so the reader shows
+           something without JavaScript: `.pg` is `display: none` until it lands.
+           app.js repaints from page 1 on load, so this matches what it would set. #}
+        <figure class="pg{% if loop.first %} is-current{% endif %}" data-p="{{ loop.index }}">
           <img src="/data/{{ page.id }}" alt="{{ page.filename }}" loading="lazy" />
         </figure>
         {% endfor %}
