@@ -23,7 +23,7 @@ All commands run from the repository root.
 
 Subcommands: `cargo run -- list` (alias `ls`) prints books and page counts; `cargo run -- hash-password` emits an Argon2id PHC string for `COMICS_AUTH_PASSWORD_HASH`. It refuses an *empty* password but only warns below `MIN_PASSWORD_CHARS` (15, counted in characters where the ceiling counts bytes) — advice, not enforcement, for a service whose one user is its operator. The warning goes to **stderr**: the hash is stdout's only content, so `$(comics hash-password)` keeps working.
 
-Integration tests (`tests/integration_test.rs`) drive the compiled binary via `snapbox`.
+Integration tests (`tests/integration_test.rs`) drive the compiled binary via `snapbox`. `initial_scan_finished` is the exception: the server never exits on its own, so a `snapbox` timeout would be the test's entire runtime *and* a race against the background scan. It spawns the process directly, reads stdout until the scan reports in, then kills it — `LOG_WAIT` bounds a wedged binary rather than pacing the test. Keep that shape for anything else that waits on a log line from a running server.
 
 ## Architecture
 
