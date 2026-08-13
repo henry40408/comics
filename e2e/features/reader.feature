@@ -67,6 +67,9 @@ Feature: Reader
     Then page "3" should be the only one showing
     And the page counter should read "3 / 3"
 
+  # Tagged so it runs in its own project, after every other one: logging out
+  # ends *every* session, so alongside the others it signs them out mid-test.
+  @logout
   Scenario: Logging out returns to the login page
     When I log out
     Then I should be on the login page

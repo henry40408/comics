@@ -14,7 +14,19 @@ const TEST_PASSWORD_HASH =
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
   steps: 'steps/**/*.js',
-  tags: 'not @nojs',
+  tags: 'not @nojs and not @logout',
+});
+
+// `POST /logout` ends every live session, not just the caller's — comics has
+// one set of credentials, so that is the point of it. It also means logging out
+// in one worker signs the others out mid-scenario, which surfaces as a login
+// that "worked" and then bounced off `/` to `/login?next=…`. Kept in its own
+// project so it runs after everything else rather than alongside it.
+const logoutTestDir = defineBddConfig({
+  outputDir: '.features-gen-logout',
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.js',
+  tags: '@logout',
 });
 
 // `javaScriptEnabled` is a browser-context option, so the scripted and the
@@ -60,6 +72,13 @@ module.exports = defineConfig({
       name: 'e2e-nojs',
       testDir: nojsTestDir,
       use: { ...devices['Desktop Chrome'], javaScriptEnabled: false },
+    },
+    {
+      name: 'e2e-logout',
+      testDir: logoutTestDir,
+      // Last, because it signs out every other project's sessions too.
+      dependencies: ['e2e', 'e2e-nojs'],
+      use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'screenshots',
