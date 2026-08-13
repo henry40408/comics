@@ -1601,6 +1601,32 @@ mod tests {
         }
     }
 
+    /// Switching modes from the shared control in the topbar loses your place,
+    /// because without a script it cannot know which page you are on. Each page
+    /// carries the switch with its own anchor instead, in both directions.
+    #[tokio::test]
+    async fn switching_mode_without_javascript_keeps_the_page() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        for (query, target) in [("?mode=paged", "scroll"), ("?mode=scroll", "paged")] {
+            let html = server.get(&format!("/book/{book}{query}")).await.text();
+
+            let pages: Vec<&str> = html
+                .split("<figure")
+                .skip(1)
+                .map(|f| f.split("</figure>").next().expect("an unclosed <figure>"))
+                .collect();
+            assert!(pages.len() > 2, "the fixture book needs several pages");
+
+            for (i, page) in pages.iter().enumerate() {
+                let n = i + 1;
+                let link = format!("href=\"?mode={target}#p{n}\"");
+                assert!(page.contains(&link), "page {n} in {query}: {page}");
+            }
+        }
+    }
+
     /// A control only a script can operate must not be on screen without one.
     /// Checked on every page that renders a theme toggle rather than just the
     /// reader: the toggle is in three templates, and covering one of them is

@@ -70,6 +70,16 @@
             {# The rail's counter is driven by app.js and would sit at 1 forever,
                so without a script each page states its own number instead. #}
             <span class="nojs-counter">{{ loop.index }} / {{ book.pages.len() }}</span>
+            {# Mode switching, per page and carrying this page's anchor. The
+               control in the topbar is shared and cannot know where you are
+               without a script, so switching there returns to the start of the
+               book; these keep your place. Rendered in both modes — in scroll
+               it is the only one of these links that shows. #}
+            {% if mode == "paged" %}
+            <a class="nojs-mode" href="?mode=scroll#p{{ loop.index }}">↕ 捲動</a>
+            {% else %}
+            <a class="nojs-mode" href="?mode=paged#p{{ loop.index }}">⇄ 翻頁</a>
+            {% endif %}
           </nav>
         </figure>
         {% endfor %}

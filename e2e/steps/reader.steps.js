@@ -35,6 +35,20 @@ When('I follow the previous-page link', async ({ readerPage }) => {
   await readerPage.followPrevious();
 });
 
+Then('the shared mode control should not be visible', async ({ readerPage }) => {
+  await expect(readerPage.sharedModeControl()).toBeHidden();
+});
+
+When('I switch mode from page {string}', async ({ readerPage }, n) => {
+  await readerPage.switchModeFrom(n);
+});
+
+// In scroll mode every page is displayed, so "showing" proves nothing about
+// where the browser landed — the viewport is what carries the answer.
+Then('page {string} should be in view', async ({ readerPage }, n) => {
+  await expect(readerPage.page_(n)).toBeInViewport();
+});
+
 Then('the theme toggle should not be visible', async ({ readerPage }) => {
   await expect(readerPage.themeToggle()).toBeHidden();
 });

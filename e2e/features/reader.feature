@@ -39,11 +39,26 @@ Feature: Reader
     And the top bar should not show the current page
     And the top bar should still read "3 ページ"
 
+  # Without a script the switch lives on each page, not in the topbar: the
+  # shared control cannot know where you are, so it would drop you at page 1.
   @nojs
   Scenario: Switching to scroll mode works without JavaScript
-    When I switch to scroll mode
+    Then the shared mode control should not be visible
+    When I switch mode from page "1"
     Then the reader should be in "scroll" mode
     And all "3" pages should be showing
+
+  @nojs
+  Scenario: Switching mode keeps your place without JavaScript
+    When I follow the next-page link
+    And I follow the next-page link
+    Then page "3" should be the only one showing
+    When I switch mode from page "3"
+    Then the reader should be in "scroll" mode
+    And page "3" should be in view
+    When I switch mode from page "3"
+    Then the reader should be in "paged" mode
+    And page "3" should be the only one showing
 
   @nojs
   Scenario: The rail and the page counter work without JavaScript

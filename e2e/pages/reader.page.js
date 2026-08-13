@@ -55,6 +55,15 @@ class ReaderPage {
     return this.page.locator('#theme');
   }
 
+  sharedModeControl() {
+    return this.page.locator('#seg');
+  }
+
+  // The per-page switch, which carries that page's anchor across the change.
+  async switchModeFrom(n) {
+    await this.page.locator(`#p${n} .nojs-mode`).click();
+  }
+
   topbarTitle() {
     return this.page.locator('.titleblock .s');
   }
