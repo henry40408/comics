@@ -1539,6 +1539,30 @@ mod tests {
         }
     }
 
+    /// `.pg` is `display: none` until `is-current` lands on it, and app.js is
+    /// what normally puts it there — so a reader without JavaScript would get a
+    /// blank stage. Exactly the first page carries the class server-side, which
+    /// is the same one app.js sets when it repaints from page 1 on load.
+    #[tokio::test]
+    async fn the_first_page_is_visible_without_javascript() {
+        let server = build_server().await;
+        let book = DATA_IDS[0];
+
+        let html = server.get(&format!("/book/{book}")).await.text();
+
+        let figures: Vec<&str> = html
+            .split("<figure")
+            .skip(1)
+            .map(|tag| &tag[..tag.find('>').expect("an unclosed <figure")])
+            .collect();
+
+        assert!(figures.len() > 1, "the fixture book needs several pages");
+        assert!(figures[0].contains("is-current"), "{}", figures[0]);
+        for tag in &figures[1..] {
+            assert!(!tag.contains("is-current"), "{tag}");
+        }
+    }
+
     /// Loaded synchronously in `<head>`, so it must not be deferred — the point
     /// is that it runs before the first paint.
     #[tokio::test]
