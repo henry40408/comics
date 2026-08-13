@@ -22,6 +22,19 @@ Then('the reader should be in {string} mode', async ({ readerPage }, mode) => {
   await expect(readerPage.mode()).toHaveAttribute('data-mode', mode);
 });
 
+Then('page {string} should be the only one showing', async ({ readerPage }, n) => {
+  await expect(readerPage.page_(n)).toBeVisible();
+  await expect(readerPage.visiblePages()).toHaveCount(1);
+});
+
+When('I follow the next-page link', async ({ readerPage }) => {
+  await readerPage.followNext();
+});
+
+When('I follow the previous-page link', async ({ readerPage }) => {
+  await readerPage.followPrevious();
+});
+
 When('I log out', async ({ libraryPage }) => {
   await libraryPage.logout();
 });

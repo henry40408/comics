@@ -51,8 +51,17 @@
         {# `is-current` is server-rendered on the first page so the reader shows
            something without JavaScript: `.pg` is `display: none` until it lands.
            app.js repaints from page 1 on load, so this matches what it would set. #}
-        <figure class="pg{% if loop.first %} is-current{% endif %}" data-p="{{ loop.index }}">
+        <figure class="pg{% if loop.first %} is-current{% endif %}" id="p{{ loop.index }}" data-p="{{ loop.index }}">
           <img src="/data/{{ page.id }}" alt="{{ page.filename }}" loading="lazy" />
+          {# Paging for readers without JavaScript. The links live on every page
+             because the shared tap zones above cannot know which page they are
+             on without a script; `:target` then picks the one to show. Hidden
+             the moment theme.js sets `html.js`. Right-to-left, as the zones are:
+             next sits on the left. #}
+          <nav class="nojs">
+            {% if !loop.last %}<a class="nojs-next" href="#p{{ loop.index + 1 }}" rel="next" aria-label="Next page">‹</a>{% endif %}
+            {% if !loop.first %}<a class="nojs-prev" href="#p{{ loop.index - 1 }}" rel="prev" aria-label="Previous page">›</a>{% endif %}
+          </nav>
         </figure>
         {% endfor %}
       </div>

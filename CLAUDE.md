@@ -57,6 +57,14 @@ Layers, outermost first: `security_headers_layer` → `csrf_origin_guard` → `T
 
 The policy is `default-src 'none'` with no `'unsafe-inline'`, which is what makes the `<head>` theme snippet a separate `/assets/theme.js` (loaded synchronously, *not* deferred) rather than an inline `<script>`. Adding an inline script or an `on*=` attribute to a template will be dropped by the browser — `rendered_pages_carry_no_inline_scripts` fails first. `style-src`/`font-src` name `fonts.bunny.net` because the templates load webfonts from it; drop the `<link>`s and the policy can drop the host too.
 
+### Reading without JavaScript
+
+The reader degrades on its own. `templates/book.html` renders `is-current` on the first page, and every page carries `#p{n}` anchors to its neighbours, which CSS `:target` resolves — so paging works with scripting off. All of it is scoped to `html:not(.js)`, and `theme.js` adds that `js` class in `<head>` before the first paint (its second job, next to `data-theme`), which is what keeps `:target` from fighting the `is-current` class `app.js` drives. `the_scripted_path_is_marked_before_first_paint` guards that coupling; the `e2e-nojs` Playwright project (`@nojs`-tagged scenarios, `javaScriptEnabled: false`) is what proves the CSS actually resolves a page. Its generated specs live in `.features-gen-nojs/` — a *sibling* of `.features-gen/`, since the `e2e` project's `testDir` would otherwise collect them and run them with scripting on.
+
+The dark palette is defined twice: once for `html[data-theme="dark"]`, once under `@media (prefers-color-scheme: dark)` for `html:not([data-theme])`, since the attribute only exists when `theme.js` ran. `dark_theme_has_a_no_js_fallback` fails when the two lists drift.
+
+Still script-only, deliberately: mode switching, thumbnail jumps, keyboard shortcuts, the theme toggle, and the page counter/progress bar (they stay at page 1).
+
 ### Scan lifecycle
 
 The initial scan runs on a background thread (`spawn_initial_scan`) *after* the server starts listening, so `/healthz` answers immediately; until it completes, content routes return `503`. `POST /rescan` replaces the `BookScan` in place. Always read `state.scan` through the `RwLock` and clone out what you need before releasing it — see the lock-then-drop pattern in `handlers/thumb.rs`.
