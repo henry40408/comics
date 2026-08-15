@@ -65,12 +65,33 @@ jobs:
         with:
           fetch-depth: 0 # full history so build.rs `git describe` resolves a tagged version
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo build --release
-      - run: npm ci
+        with:
+          # `e2e` is its own workspace, deliberately outside the root one, so it
+          # has to be named or none of its dependencies are cached.
+          workspaces: |
+            .
+            e2e
+          # This job builds the server with the dev profile, unlike every other
+          # job here. A cache key is only ever written once — an exact hit is
+          # restored and never re-saved — so without a key of its own this job
+          # would keep restoring whatever profile happened to populate the key
+          # first, and rebuild all its dependencies every run.
+          key: dev
+      # The suite starts this binary itself; building it here keeps the
+      # compile off the test's own timeout. Dev, not release: the release
+      # profile is tuned for image size (LTO, one codegen unit, `opt-level =
+      # "z"`) and none of that makes eight fixture pages serve faster.
+      - run: cargo build
+      # `e2e` is linted here rather than in `lint`, so it shares the build this
+      # job already pays for. It is deliberately outside `cargo deny`: the
+      # browser stack pulls in licences the server's allow-list does not carry,
+      # and none of it is distributed — the Docker image contains the server
+      # alone.
+      - run: cargo fmt --check
         working-directory: e2e
-      - run: npx playwright install --with-deps chromium
+      - run: cargo clippy --all-targets -- -D warnings
         working-directory: e2e
-      - run: npm test
+      # No browser install step: the driver manager downloads a matching
+      # chromedriver on demand, and the runner image already ships Chrome.
+      - run: cargo test --test e2e
         working-directory: e2e
-        env:
-          CI: "true"

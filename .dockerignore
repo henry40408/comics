@@ -8,3 +8,8 @@ target
 # behind it) even when no source file changed.
 .git
 .github
+
+# Browser tests, and their own `target/` — a separate workspace, so the `target`
+# rule above (root-level only) does not cover it. The image builds the server
+# alone and never runs these.
+e2e
