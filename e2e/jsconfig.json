@@ -1,8 +1,0 @@
-{
-  "compilerOptions": {
-    "checkJs": false,
-    "module": "CommonJS",
-    "target": "ES2022"
-  },
-  "exclude": ["node_modules", ".features-gen"]
-}
