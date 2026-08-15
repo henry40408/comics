@@ -63,6 +63,19 @@ impl Browser {
         caps.add_arg(&format!("--window-size={},{}", WINDOW.0, WINDOW.1))?;
         // Containers get a 64 MB /dev/shm by default, which Chrome outgrows.
         caps.add_arg("--disable-dev-shm-usage")?;
+        // Chrome backgrounds a window it believes nobody is looking at, and a
+        // backgrounded renderer throttles its timers and stops servicing input
+        // promptly — while script driven over CDP keeps answering, because that
+        // path is not throttled. That is the exact shape of the clicks CI
+        // drops: `elementFromPoint` still names the element, `readyState` is
+        // `complete`, and the click does nothing, for every session at once.
+        //
+        // Playwright passed all three of these and the suite did not flake
+        // then; the port did not carry them over. They change nothing about
+        // what is being tested — only whether the browser is listening.
+        caps.add_arg("--disable-backgrounding-occluded-windows")?;
+        caps.add_arg("--disable-renderer-backgrounding")?;
+        caps.add_arg("--disable-background-timer-throttling")?;
 
         let driver = WebDriver::managed(caps).await.context(
             "could not start a browser session — a local Chrome or Chromium is required \

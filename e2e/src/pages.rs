@@ -9,6 +9,15 @@
 //!   scenarios where the page's own JavaScript is switched off.
 //! * `toBeInViewport` — [`is_in_viewport`] compares the element's rect against
 //!   the visual viewport reported by CDP, again for the same reason.
+//!
+//! A third is [`click_until`], and it is the one that matters most. Playwright's
+//! `click` waits for the element's box to hold still across two animation frames
+//! before it dispatches anything; `WebElement::click` dispatches immediately and
+//! reports success as long as the driver accepted the command. On CI that
+//! difference shows up as a click that lands on nothing: the command succeeds,
+//! and the page never reacts. Every control here goes through `click_until`,
+//! which confirms the click did what it was for and clicks again when it did
+//! not.
 
 use anyhow::{Context, Result, bail};
 use thirtyfour::prelude::*;
@@ -18,7 +27,7 @@ use std::time::{Duration, Instant};
 use crate::browser::{WAIT_INTERVAL, WAIT_TIMEOUT};
 use crate::server::BASE_URL;
 
-/// How many times to click a book card that does not navigate.
+/// How many times to click a control that does not react.
 const CLICK_ATTEMPTS: usize = 3;
 
 /// How long to give a click before deciding it did not take.
@@ -97,78 +106,47 @@ impl LibraryPage<'_> {
 
     /// Clicks the first book card, and confirms it actually opened one.
     ///
-    /// The card is a plain `<a href>`, so a click on it should navigate and
-    /// nothing in `app.js` intercepts it. On a loaded CI runner it sometimes
-    /// does not: the click reports success and the URL never changes. The most
-    /// likely cause is the cover image — `loading="lazy"`, so it arrives after
-    /// first paint and reflows the card out from under a click whose target
-    /// point was computed a moment earlier.
-    ///
-    /// Rather than wait for every image and slow down the common path, this
-    /// checks whether the navigation happened and clicks again if it did not.
-    /// A click that silently does nothing is the one failure mode worth
-    /// retrying: it is indistinguishable from a missed tap by a real reader,
-    /// who would also just click again.
+    /// The card is a plain `<a href>`: a click on it navigates, and nothing in
+    /// `app.js` intercepts it. On CI it sometimes does not — see
+    /// [`click_until`], which is what makes this and every other click here
+    /// retry rather than assert on a page that never moved.
     ///
     /// # Errors
     ///
     /// Fails when the library is empty, nothing became clickable in time, or
     /// no attempt navigated.
     pub async fn open_first_book(&self) -> Result<()> {
-        for attempt in 1..=CLICK_ATTEMPTS {
-            let card = self
-                .0
-                .query(By::Testid("book-card"))
-                .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
-                .and_clickable()
-                .first()
-                .await?;
-            let before = card.rect().await?;
-            card.click().await?;
-
-            if self.reached_a_book().await? {
-                if attempt > 1 {
-                    eprintln!("e2e: the book card took {attempt} clicks to open");
-                }
-                return Ok(());
-            }
-
-            // Printed rather than swallowed: this path has only ever been seen
-            // on CI, so the run that hits it is the only chance to learn why.
-            // If `after` differs from `before`, the card moved out from under
-            // the click and the lazy-loaded cover is the likely cause.
-            let after = self.0.find(By::Testid("book-card")).await?.rect().await?;
-            eprintln!(
-                "e2e: click {attempt} on the book card did not navigate; \
-                 url={} rect before={before:?} after={after:?}",
-                self.0.current_url().await?
-            );
-        }
-        bail!("clicked the first book card {CLICK_ATTEMPTS} times and never left the library")
+        let driver = self.0;
+        click_until(
+            driver,
+            "the first book card",
+            async || {
+                Ok(driver
+                    .query(By::Testid("book-card"))
+                    .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
+                    .and_clickable()
+                    .first()
+                    .await?)
+            },
+            async || Ok(driver.current_url().await?.path().starts_with("/book/")),
+        )
+        .await
     }
 
-    /// Did the last click land us in a book? Polls briefly, not for the full
-    /// [`WAIT_TIMEOUT`] — a click that worked navigates promptly, and this is
-    /// on the path to trying again.
-    async fn reached_a_book(&self) -> Result<bool> {
-        let deadline = Instant::now() + CLICK_SETTLE;
-        while Instant::now() < deadline {
-            if self.0.current_url().await?.path().starts_with("/book/") {
-                return Ok(true);
-            }
-            tokio::time::sleep(WAIT_INTERVAL).await;
-        }
-        Ok(false)
-    }
-
-    /// Submits the logout form.
+    /// Submits the logout form, and confirms it reached the login page.
     ///
     /// # Errors
     ///
-    /// Fails when the button is missing.
+    /// Fails when the button is missing, or no attempt signed us out.
     pub async fn logout(&self) -> Result<()> {
-        self.0.find(By::Testid("logout")).await?.click().await?;
-        Ok(())
+        let driver = self.0;
+        click_until(
+            driver,
+            "the logout button",
+            async || Ok(driver.find(By::Testid("logout")).await?),
+            async || Ok(driver.current_url().await?.path() == "/login"),
+        )
+        .await
     }
 }
 
@@ -185,32 +163,38 @@ impl ReaderPage<'_> {
         optional(self.0, By::Testid("reader-current")).await
     }
 
-    /// Clicks the "next page" zone.
+    /// Clicks the "next page" zone, and confirms the page turned.
     ///
     /// # Errors
     ///
-    /// Fails when the zone is missing.
+    /// Fails when the zone is missing, or no attempt turned the page.
     pub async fn advance(&self) -> Result<()> {
-        self.0
-            .find(By::Testid("reader-next"))
-            .await?
-            .click()
-            .await?;
-        Ok(())
+        let driver = self.0;
+        let before = self.current_page_text().await?;
+        click_until(
+            driver,
+            "the next-page zone",
+            async || Ok(driver.find(By::Testid("reader-next")).await?),
+            async || Ok(self.current_page_text().await? != before),
+        )
+        .await
     }
 
-    /// Clicks the shared segmented control's "scroll" half.
+    /// Clicks the shared segmented control's "scroll" half, and confirms the
+    /// reader switched.
     ///
     /// # Errors
     ///
-    /// Fails when the control is missing.
+    /// Fails when the control is missing, or no attempt switched the mode.
     pub async fn set_scroll_mode(&self) -> Result<()> {
-        self.0
-            .find(By::Testid("reader-mode-scroll"))
-            .await?
-            .click()
-            .await?;
-        Ok(())
+        let driver = self.0;
+        click_until(
+            driver,
+            "the segmented control's scroll half",
+            async || Ok(driver.find(By::Testid("reader-mode-scroll")).await?),
+            async || Ok(self.mode().await? == "scroll"),
+        )
+        .await
     }
 
     /// Is this the reader's own `<body class="reader">`?
@@ -269,18 +253,22 @@ impl ReaderPage<'_> {
     ///
     /// # Errors
     ///
-    /// Fails when no page is displayed, or the displayed one has no such link.
+    /// Fails when no page is displayed, the displayed one has no such link, or
+    /// no attempt moved off it.
     pub async fn follow_next(&self) -> Result<()> {
-        self.click_on_visible_page(".nojs-next").await
+        self.click_on_visible_page("the next-page link", ".nojs-next")
+            .await
     }
 
     /// Clicks the script-less "previous page" anchor on the displayed page.
     ///
     /// # Errors
     ///
-    /// Fails when no page is displayed, or the displayed one has no such link.
+    /// Fails when no page is displayed, the displayed one has no such link, or
+    /// no attempt moved off it.
     pub async fn follow_previous(&self) -> Result<()> {
-        self.click_on_visible_page(".nojs-prev").await
+        self.click_on_visible_page("the previous-page link", ".nojs-prev")
+            .await
     }
 
     /// The rail is anchors in both projects; with scripting on `app.js` cancels
@@ -288,14 +276,34 @@ impl ReaderPage<'_> {
     ///
     /// # Errors
     ///
-    /// Fails when the rail has no anchor for that page.
+    /// Fails when the rail has no anchor for that page, or no attempt showed
+    /// it.
     pub async fn jump_from_rail(&self, n: &str) -> Result<()> {
-        self.0
-            .find(By::Css(format!(".thumbs a[href=\"#p{n}\"]")))
-            .await?
-            .click()
-            .await?;
-        Ok(())
+        let driver = self.0;
+        let wanted = format!("p{n}");
+        click_until(
+            driver,
+            &format!("the rail's anchor for page {n}"),
+            async || {
+                Ok(driver
+                    .find(By::Css(format!(".thumbs a[href=\"#p{n}\"]")))
+                    .await?)
+            },
+            // The rail is one control on two paths, so "it worked" has two
+            // shapes: `:target` leaves page n the only one displayed, while
+            // `app.js` also writes n into the topbar. Either is proof the click
+            // landed; requiring both would fail whichever path is not in play.
+            async || {
+                if self.displayed_page_ids().await? == [wanted.clone()] {
+                    return Ok(true);
+                }
+                Ok(self
+                    .current_page_text()
+                    .await?
+                    .is_some_and(|text| text.trim() == n))
+            },
+        )
+        .await
     }
 
     /// The per-page counter on the displayed page (`3 / 3`).
@@ -335,14 +343,17 @@ impl ReaderPage<'_> {
     ///
     /// # Errors
     ///
-    /// Fails when that page has no switch.
+    /// Fails when that page has no switch, or no attempt changed the mode.
     pub async fn switch_mode_from(&self, n: &str) -> Result<()> {
-        self.0
-            .find(By::Css(format!("#p{n} .nojs-mode")))
-            .await?
-            .click()
-            .await?;
-        Ok(())
+        let driver = self.0;
+        let before = self.mode().await?;
+        click_until(
+            driver,
+            &format!("page {n}'s mode switch"),
+            async || Ok(driver.find(By::Css(format!("#p{n} .nojs-mode"))).await?),
+            async || Ok(self.mode().await? != before),
+        )
+        .await
     }
 
     /// The topbar's subtitle, as *rendered* text.
@@ -358,9 +369,36 @@ impl ReaderPage<'_> {
         Ok(self.0.find(By::Css(".titleblock .s")).await?.text().await?)
     }
 
-    async fn click_on_visible_page(&self, css: &str) -> Result<()> {
-        self.element_on_visible_page(css).await?.click().await?;
-        Ok(())
+    /// The topbar's live page number, as text — `None` without a script, where
+    /// it is hidden rather than shown lying.
+    async fn current_page_text(&self) -> Result<Option<String>> {
+        match self.current_page().await? {
+            Some(element) => Ok(Some(element.text().await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The ids of the `.pg` elements the browser is displaying, in document
+    /// order — what "page 3 is the only one showing" is asking about.
+    async fn displayed_page_ids(&self) -> Result<Vec<String>> {
+        let mut ids = Vec::new();
+        for page in self.visible_pages().await? {
+            if let Some(id) = page.attr("id").await? {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn click_on_visible_page(&self, what: &str, css: &str) -> Result<()> {
+        let before = self.displayed_page_ids().await?;
+        click_until(
+            self.0,
+            what,
+            async || self.element_on_visible_page(css).await,
+            async || Ok(self.displayed_page_ids().await? != before),
+        )
+        .await
     }
 
     async fn element_on_visible_page(&self, css: &str) -> Result<WebElement> {
@@ -371,6 +409,117 @@ impl ReaderPage<'_> {
         }
         bail!("no displayed `.pg` carries `{css}`")
     }
+}
+
+/// Clicks what `locate` finds, and confirms `took_effect` before returning.
+///
+/// `WebElement::click` reports success once the driver has dispatched the
+/// event, which is not the same as the page having reacted to it. On CI the two
+/// come apart often enough to fail a run in two: the command succeeds, the
+/// element is exactly where it was, and nothing happens — every control is
+/// affected, including plain `<a href>`s that no script touches. Playwright's
+/// `click`, which this suite used to go through, waited for the element's box to
+/// hold still across two animation frames first.
+///
+/// So each attempt is checked and repeated, which is also what a reader who
+/// missed a tap would do. A click that never takes is a failure worth reporting
+/// loudly, so the last word is [`probe_click_target`]'s: it says whether the
+/// point that was clicked still belongs to the element, which separates "the
+/// event never arrived" from "it arrived somewhere else".
+async fn click_until<L, E>(driver: &WebDriver, what: &str, locate: L, took_effect: E) -> Result<()>
+where
+    L: AsyncFn() -> Result<WebElement>,
+    E: AsyncFn() -> Result<bool>,
+{
+    let mut probes = Vec::new();
+
+    for attempt in 1..=CLICK_ATTEMPTS {
+        let element = locate().await?;
+        element.click().await?;
+
+        if settled(&took_effect).await? {
+            if attempt > 1 {
+                eprintln!("e2e: {what} took {attempt} clicks");
+            }
+            return Ok(());
+        }
+
+        // Gathered on the spot: this has only ever been seen on CI, so the run
+        // that hits it is the only chance to learn why.
+        let probe = probe_click_target(driver, &element)
+            .await
+            .unwrap_or_else(|e| format!("probe failed: {e}"));
+        let url = driver.current_url().await?;
+        eprintln!("e2e: click {attempt} on {what} had no effect; url={url} {probe}");
+        probes.push(probe);
+    }
+
+    bail!(
+        "clicked {what} {CLICK_ATTEMPTS} times and it never took effect ({})",
+        probes.join(" | ")
+    )
+}
+
+/// Polls `took_effect` for [`CLICK_SETTLE`], not the full [`WAIT_TIMEOUT`] — a
+/// click that worked lands promptly, and this is on the path to trying again.
+async fn settled<E>(took_effect: &E) -> Result<bool>
+where
+    E: AsyncFn() -> Result<bool>,
+{
+    let deadline = Instant::now() + CLICK_SETTLE;
+    while Instant::now() < deadline {
+        if took_effect().await? {
+            return Ok(true);
+        }
+        tokio::time::sleep(WAIT_INTERVAL).await;
+    }
+    Ok(false)
+}
+
+/// Asks the page what is at the point a click would have landed on.
+///
+/// `document.elementFromPoint` at the element's own centre is the question the
+/// logs could not answer before: if it comes back as the element (or something
+/// inside it), the click was aimed correctly and the event was lost downstream;
+/// if it comes back as anything else — or `null` — the point belonged to
+/// something else at the moment of the click.
+///
+/// The driver can still inject script into a page whose own scripts are
+/// disabled, so this reports on the `@nojs` scenarios too.
+///
+/// `probe failed: Element is stale` is itself an answer, and a different one:
+/// the click *did* navigate, and it is the caller's idea of "took effect" that
+/// is wrong. The flake this exists for leaves the element right where it was.
+async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<String> {
+    let probe = driver
+        .execute(
+            r"
+            const el = arguments[0];
+            if (!el || !el.isConnected) { return { connected: false }; }
+            const r = el.getBoundingClientRect();
+            const x = r.left + r.width / 2, y = r.top + r.height / 2;
+            const hit = document.elementFromPoint(x, y);
+            const name = (n) => n === null ? null : n.tagName.toLowerCase()
+                + (n.id ? '#' + n.id : '')
+                + (n.getAttribute('data-testid') ? '@' + n.getAttribute('data-testid') : '');
+            const style = getComputedStyle(el);
+            return {
+                connected: true,
+                ready: document.readyState,
+                rect: [r.x, r.y, r.width, r.height],
+                point: [x, y],
+                viewport: [window.innerWidth, window.innerHeight],
+                scroll: [window.scrollX, window.scrollY],
+                hit: name(hit),
+                hitIsTarget: hit === null ? false : (hit === el || el.contains(hit)),
+                visibility: style.visibility,
+                pointerEvents: style.pointerEvents,
+            };
+            ",
+            vec![element.to_json()?],
+        )
+        .await?;
+    Ok(format!("probe={}", probe.json()))
 }
 
 /// Finds an element, mapping "not there" onto `None` rather than an error.
