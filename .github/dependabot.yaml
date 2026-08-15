@@ -22,6 +22,21 @@ updates:
         patterns:
           - "*"
 
+  # `e2e/` is deliberately its own workspace, not a member of the one at the
+  # repository root, so the entry above cannot reach it — a second entry is the
+  # only way Dependabot sees `e2e/Cargo.toml`. Grouped separately from the
+  # server's dependencies because the two are verified by different CI jobs.
+  - package-ecosystem: "cargo"
+    directory: "/e2e"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-e2e:
+        patterns:
+          - "*"
+
   - package-ecosystem: "rust-toolchain"
     directory: "/"
     schedule:
