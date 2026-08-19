@@ -23,7 +23,8 @@ use tokio::{
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
-    EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
+    Layer as _, Registry, filter::Targets, fmt::format::FmtSpan, layer::Filter,
+    layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use comics::{
@@ -588,25 +589,48 @@ fn hash_password() -> anyhow::Result<()> {
     emit_password_hash(&password, &mut io::stdout(), &mut io::stderr())
 }
 
+/// What is logged when `RUST_LOG` says nothing: comics' own events at INFO,
+/// everything else at ERROR.
+const DEFAULT_FILTER: &str = "error,comics=info";
+
 fn init_tracing(format: LogFormat) {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error,comics=info"));
-    let span_events = env_filter.max_level_hint().map_or(FmtSpan::CLOSE, |l| {
-        if l >= Level::DEBUG {
-            FmtSpan::CLOSE
-        } else {
-            FmtSpan::NONE
-        }
-    });
-    let use_ansi = std::env::var_os("NO_COLOR").is_none();
+    // `Targets` and not `EnvFilter`. Both read the same `comics=debug` out of the
+    // same `RUST_LOG`, but `EnvFilter` matches its directives with a regex engine
+    // that nothing else in this binary needs. What `Targets` gives up is filtering
+    // on spans and fields, and nothing here writes either.
+    //
+    // A `RUST_LOG` whose *level* will not parse (`comics=nonsense`) falls back to
+    // the default rather than refusing to start, which is what
+    // `EnvFilter::try_from_default_env` did too: a typo should cost a log level,
+    // not a startup. A mistyped *target* is not caught by that and never can be —
+    // a bare word is a target name at TRACE, so `RUST_LOG=nonsense` parses
+    // cleanly into a filter nothing matches and the log goes silent. Measured
+    // against `EnvFilter` on the same input: byte-identical behaviour, so this
+    // is not something the move to `Targets` introduced.
+    let filter: Targets = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|directives| directives.parse().ok())
+        .unwrap_or_else(|| DEFAULT_FILTER.parse().expect("the default filter parses"));
+    let span_events =
+        <Targets as Filter<Registry>>::max_level_hint(&filter).map_or(FmtSpan::CLOSE, |l| {
+            if l >= tracing::Level::DEBUG {
+                FmtSpan::CLOSE
+            } else {
+                FmtSpan::NONE
+            }
+        });
+    // Per no-color.org `NO_COLOR` disables colour when set *and non-empty*, so an
+    // empty value is not a setting.
+    let use_ansi = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let layer = tracing_subscriber::fmt::layer()
         .with_span_events(span_events)
-        .with_ansi(use_ansi);
+        .with_ansi(use_ansi)
+        .log_internal_errors(true);
     let layer = match format {
-        LogFormat::Full => layer.with_filter(env_filter).boxed(),
-        LogFormat::Compact => layer.compact().with_filter(env_filter).boxed(),
-        LogFormat::Pretty => layer.pretty().with_filter(env_filter).boxed(),
-        LogFormat::Json => layer.json().with_filter(env_filter).boxed(),
+        LogFormat::Full => layer.with_filter(filter).boxed(),
+        LogFormat::Compact => layer.compact().with_filter(filter).boxed(),
+        LogFormat::Pretty => layer.pretty().with_filter(filter).boxed(),
+        LogFormat::Json => layer.json().with_filter(filter).boxed(),
     };
     tracing_subscriber::registry().with(layer).init();
 }
