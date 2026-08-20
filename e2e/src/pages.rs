@@ -10,14 +10,18 @@
 //! * `toBeInViewport` — [`is_in_viewport`] compares the element's rect against
 //!   the visual viewport reported by CDP, again for the same reason.
 //!
-//! A third is [`click_until`], and it is the one that matters most. Playwright's
-//! `click` waits for the element's box to hold still across two animation frames
-//! before it dispatches anything; `WebElement::click` dispatches immediately and
-//! reports success as long as the driver accepted the command. On CI that
-//! difference shows up as a click that lands on nothing: the command succeeds,
-//! and the page never reacts. Every control here goes through `click_until`,
-//! which confirms the click did what it was for and clicks again when it did
-//! not.
+//! A third is [`click_until`], and it is the one that matters most.
+//! `WebElement::click` reports success as long as the driver accepted the
+//! command, which on CI is not the same as the page having reacted. Every
+//! control here goes through `click_until`, which confirms the click did what
+//! it was for and clicks again when it did not.
+//!
+//! Retrying is not enough, because the fault it runs into does not pass. Chrome
+//! accepts the click, tells the driver so, and never delivers a single mouse
+//! event to the page — for the rest of that session. So once the retries are
+//! spent, `click_until` asks the page what it actually received and stands in
+//! with a scripted click when the answer is "nothing", rather than failing a
+//! run over a browser that stopped listening. Everything else still fails.
 
 use anyhow::{Context, Result, bail};
 use thirtyfour::prelude::*;
@@ -422,10 +426,23 @@ impl ReaderPage<'_> {
 /// hold still across two animation frames first.
 ///
 /// So each attempt is checked and repeated, which is also what a reader who
-/// missed a tap would do. A click that never takes is a failure worth reporting
-/// loudly, so the last word is [`probe_click_target`]'s: it says whether the
-/// point that was clicked still belongs to the element, which separates "the
-/// event never arrived" from "it arrived somewhere else".
+/// missed a tap would do. A click that never takes is then handed to
+/// [`probe_click_target`], and what it reports decides between the two things
+/// that look identical from here.
+///
+/// **The browser is not delivering input.** The probe says the point belongs to
+/// the element, the recorder says not one `mousedown` ever arrived, and
+/// `HTMLElement.click()` on the same element works immediately. That is the CI
+/// fault this suite has been failing on: `Element Click` returns success and
+/// Chrome never hands the event to the page, for the rest of the session — the
+/// first click of a session lands, the second or third stops arriving, and
+/// retrying does not recover it. The scripted click stands in so the scenario
+/// goes on testing comics rather than chromedriver, and says so loudly.
+///
+/// **Anything else** is the page's fault and fails, which is the whole point of
+/// keeping the real click first: a control covered by an overlay reports
+/// `hitIsTarget: false`, and one whose handler or `href` is wrong receives the
+/// events and still does nothing. Neither is rescued.
 async fn click_until<L, E>(driver: &WebDriver, what: &str, locate: L, took_effect: E) -> Result<()>
 where
     L: AsyncFn() -> Result<WebElement>,
@@ -449,24 +466,68 @@ where
 
         // Gathered on the spot: this has only ever been seen on CI, so the run
         // that hits it is the only chance to learn why.
-        let probe = probe_click_target(driver, &element)
-            .await
-            .unwrap_or_else(|e| format!("probe failed: {e}"));
+        let probe = probe_click_target(driver, &element).await;
         let url = driver.current_url().await?;
-        eprintln!("e2e: click {attempt} on {what} had no effect; url={url} {probe}");
-        probes.push(probe);
+        let reported = match &probe {
+            Ok(probe) => format!("probe={probe}"),
+            Err(e) => format!("probe failed: {e}"),
+        };
+        eprintln!("e2e: click {attempt} on {what} had no effect; url={url} {reported}");
+        probes.push(reported.clone());
 
-        if attempt == CLICK_ATTEMPTS {
-            let scripted = scripted_click_works(driver, &element, &took_effect).await;
-            eprintln!("e2e: scripted click on {what}: {scripted}");
-            probes.push(format!("scriptedClick={scripted}"));
+        if attempt < CLICK_ATTEMPTS {
+            continue;
         }
+
+        // Every real click is spent, so ask the two questions that separate a
+        // browser that is not listening from a page that is not reacting.
+        let nothing_arrived = probe.as_ref().is_ok_and(input_never_arrived);
+        let scripted = scripted_click(driver, &element, &took_effect).await;
+        eprintln!("e2e: scripted click on {what}: {scripted}");
+
+        if nothing_arrived && scripted == ScriptedClick::TookEffect {
+            eprintln!(
+                "e2e: WARNING — stood in for {what} with a scripted click. The \
+                 browser accepted {CLICK_ATTEMPTS} real clicks and delivered none \
+                 of them to the page, so this scenario did not test that the \
+                 control is reachable by a pointer. See {reported}"
+            );
+            return Ok(());
+        }
+        probes.push(format!("scriptedClick={scripted}"));
     }
 
     bail!(
         "clicked {what} {CLICK_ATTEMPTS} times and it never took effect ({})",
         probes.join(" | ")
     )
+}
+
+/// Did the probe catch the browser dropping the input rather than the page
+/// ignoring it?
+///
+/// Two conditions, and the second one means different things in the two
+/// scripting modes:
+///
+/// * `hitIsTarget` — the point the click was aimed at belongs to the element.
+///   Without this the click was landing on something else, which is a page
+///   problem and has to fail.
+/// * nothing recorded. With the page's scripts running this is *proof*: the
+///   recorder was live (`frames` counts the animation frames it saw go by) and
+///   no `pointerdown`, `mousedown`, `mouseup` or `click` reached it. In the
+///   `@nojs` scenarios it is only *ignorance* — [`arm_recorder`] is mute there,
+///   and reports `frames: 0` alongside the empty list to say so.
+///
+/// Treating ignorance like proof is deliberate, and it is the weaker half of
+/// this. Nothing page-side can observe input when the document runs no script,
+/// so the `@nojs` scenarios are left with `hitIsTarget` plus a scripted click
+/// that works — which still fails a control that is covered, missing, or wired
+/// to the wrong `href`, and only lets through a real click that the browser
+/// alone refused to deliver.
+fn input_never_arrived(probe: &serde_json::Value) -> bool {
+    let aimed_at_the_element = probe["hitIsTarget"].as_bool().unwrap_or(false);
+    let recorded = probe["events"].as_array().map_or(0, Vec::len);
+    aimed_at_the_element && recorded == 0
 }
 
 /// Arms the in-page recorder [`probe_click_target`] reads back.
@@ -477,23 +538,34 @@ where
 ///
 /// * **Did any mouse event reach the page at all?** A capture-phase listener on
 ///   `window` records what arrived and where. Nothing recorded means the event
-///   was dropped before the renderer saw it; a `mousedown` and a `mouseup` with
-///   no `click` between them means they landed on different elements, which is
-///   the layout-shift flake Playwright's stability wait avoided.
+///   was dropped before the renderer saw it — the fault
+///   [`input_never_arrived`] is looking for; a `mousedown` and a `mouseup` with
+///   no `click` between them would mean they landed on different elements,
+///   which is the layout-shift flake Playwright's stability wait avoided.
 /// * **Is the renderer drawing?** `requestAnimationFrame` only fires while the
-///   compositor is producing frames. A page that answers `Execute Script` — as
-///   every probe so far proves it does — but never runs a frame callback is one
-///   whose input path is not being serviced either.
+///   compositor is producing frames, so `frames` is what says whether an empty
+///   `events` was proof or ignorance. On the CI failures it counts 300-plus
+///   over the five seconds the click was given, which is a renderer drawing at
+///   sixty frames a second and receiving nothing.
 /// * `document.hasFocus()` and `visibilityState`, which the probe reports, say
-///   whether the browser considers this window worth either.
+///   whether the browser considers this window worth either. Both come back
+///   affirmative on the failures, which is what rules out the occlusion and
+///   backgrounding the flags in [`crate::browser`] already address.
 ///
 /// Installed once and reset per attempt: re-registering the listeners would
 /// report every event as many times as we had clicked by then.
 ///
-/// The `@nojs` scenarios get nothing out of this. `Execute Script` still runs
-/// with `Emulation.setScriptExecutionDisabled` set, which is what keeps the
-/// probe itself working, but a listener and a frame callback are script the
+/// The `@nojs` scenarios get nothing out of this, and it is worth knowing why
+/// rather than assuming. `Execute Script` still runs with
+/// `Emulation.setScriptExecutionDisabled` set — that is what keeps the probe
+/// itself working — but a listener and a frame callback are script the
 /// *document* runs, and that is exactly what the emulation switches off.
+/// Confirmed by forcing a `@nojs` click to report failure on a machine where
+/// clicks work: the click navigated, and the recorder still came back
+/// `events: []`, `frames: 0`. So an empty `events` means "nothing arrived"
+/// only when `frames` is non-zero, and `frames: 0` is the recorder saying it
+/// never ran — see [`input_never_arrived`] for which of the two the fallback
+/// is willing to act on, and why.
 async fn arm_recorder(driver: &WebDriver) -> Result<()> {
     driver
         .execute(
@@ -525,37 +597,86 @@ async fn arm_recorder(driver: &WebDriver) -> Result<()> {
     Ok(())
 }
 
+/// What a scripted click on the same element did.
+#[derive(Debug, PartialEq, Eq)]
+enum ScriptedClick {
+    /// The page reacted, so only the native input was missing.
+    TookEffect,
+    /// The page ignored this too: the control, not the browser, is the problem.
+    NoEffect,
+    /// The question could not be put — the element or the driver was gone.
+    Unanswered(String),
+}
+
+impl std::fmt::Display for ScriptedClick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TookEffect => f.write_str("took effect"),
+            Self::NoEffect => f.write_str("no effect either"),
+            Self::Unanswered(why) => write!(f, "unanswered: {why}"),
+        }
+    }
+}
+
 /// Clicks the element from script, and reports whether *that* took effect.
 ///
-/// The last question, asked once every native click has been spent.
-/// `HTMLElement.click()` skips hit-testing and the browser's input plumbing
-/// entirely and dispatches straight at the element, so it follows a link or
-/// submits a form that a real click could not reach. `took effect` says the
-/// page and its handlers are fine and only the native input is not arriving;
-/// `no effect either` says the failure is in the page, and the retry loop was
-/// never the thing to fix.
+/// The last question, asked once every native click has been spent. It skips
+/// hit-testing and the browser's input plumbing entirely and dispatches
+/// straight at the element, so it reaches a control a real click could not.
 ///
-/// Reported, never used to rescue the click: a suite that clicks from script
-/// has stopped testing that the control is clickable, which is most of the
-/// point of clicking it.
-async fn scripted_click_works<E>(
+/// `HTMLElement.click()` alone is not enough, because it fires only `click`.
+/// The reader's tap zones are driven by `pointerup` — `app.js` binds them there
+/// so a tap does not have to survive a `click` that a drag would cancel — and a
+/// stand-in that cannot operate them would leave "Advancing turns to the next
+/// page" failing while every other scenario was carried. So the full sequence
+/// goes out, `pointerdown` through `mouseup`, and `click()` finishes it: that
+/// last step is the specified path to a link's or a form's activation
+/// behaviour, and worth not hand-rolling.
+///
+/// [`ScriptedClick::TookEffect`] is half of what lets [`click_until`] carry on
+/// past a click the browser swallowed — the other half being
+/// [`input_never_arrived`], without which this would be a blanket "click from
+/// script when the real one is inconvenient" and the suite would stop testing
+/// that its controls are reachable at all.
+async fn scripted_click<E>(
     driver: &WebDriver,
     element: &WebElement,
     took_effect: &E,
-) -> String
+) -> ScriptedClick
 where
     E: AsyncFn() -> Result<bool>,
 {
-    let Ok(json) = element.to_json() else {
-        return "unavailable".to_owned();
+    let json = match element.to_json() {
+        Ok(json) => json,
+        Err(e) => return ScriptedClick::Unanswered(e.to_string()),
     };
-    if let Err(e) = driver.execute("arguments[0].click();", vec![json]).await {
-        return format!("failed: {e}");
+    let dispatched = driver
+        .execute(
+            r"
+            const el = arguments[0];
+            const r = el.getBoundingClientRect();
+            const at = {
+                bubbles: true, cancelable: true, composed: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                button: 0, buttons: 1,
+            };
+            const released = { ...at, buttons: 0 };
+            el.dispatchEvent(new PointerEvent('pointerdown', at));
+            el.dispatchEvent(new MouseEvent('mousedown', at));
+            el.dispatchEvent(new PointerEvent('pointerup', released));
+            el.dispatchEvent(new MouseEvent('mouseup', released));
+            el.click();
+            ",
+            vec![json],
+        )
+        .await;
+    if let Err(e) = dispatched {
+        return ScriptedClick::Unanswered(e.to_string());
     }
     match settled(took_effect).await {
-        Ok(true) => "took effect".to_owned(),
-        Ok(false) => "no effect either".to_owned(),
-        Err(e) => format!("failed: {e}"),
+        Ok(true) => ScriptedClick::TookEffect,
+        Ok(false) => ScriptedClick::NoEffect,
+        Err(e) => ScriptedClick::Unanswered(e.to_string()),
     }
 }
 
@@ -585,17 +706,19 @@ where
 ///
 /// It also reports back what [`arm_recorder`] collected — the mouse events the
 /// page actually received, and how many frames it drew while we waited — which
-/// is what says whether the event arrived at all.
+/// is what says whether the event arrived at all, and what
+/// [`input_never_arrived`] reads.
 ///
 /// The driver can still inject script into a page whose own scripts are
 /// disabled, so the `elementFromPoint` half reports on the `@nojs` scenarios
-/// too. The recorder's half does not: `events` and `frames` come back `null`
-/// there, because a listener and a frame callback are script the document runs.
+/// too. The recorder's half does not: there, `frames: 0` alongside an empty
+/// `events` is the recorder saying it never ran, not the page saying nothing
+/// arrived.
 ///
 /// `probe failed: Element is stale` is itself an answer, and a different one:
 /// the click *did* navigate, and it is the caller's idea of "took effect" that
 /// is wrong. The flake this exists for leaves the element right where it was.
-async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<String> {
+async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<serde_json::Value> {
     let probe = driver
         .execute(
             r"
@@ -629,7 +752,7 @@ async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<
             vec![element.to_json()?],
         )
         .await?;
-    Ok(format!("probe={}", probe.json()))
+    Ok(probe.json().clone())
 }
 
 /// Finds an element, mapping "not there" onto `None` rather than an error.
