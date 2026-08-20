@@ -435,6 +435,9 @@ where
 
     for attempt in 1..=CLICK_ATTEMPTS {
         let element = locate().await?;
+        // Best-effort: a page that will not take the recorder is one the probe
+        // has little to say about either, and that is not worth failing on.
+        let _ = arm_recorder(driver).await;
         element.click().await?;
 
         if settled(&took_effect).await? {
@@ -452,12 +455,108 @@ where
         let url = driver.current_url().await?;
         eprintln!("e2e: click {attempt} on {what} had no effect; url={url} {probe}");
         probes.push(probe);
+
+        if attempt == CLICK_ATTEMPTS {
+            let scripted = scripted_click_works(driver, &element, &took_effect).await;
+            eprintln!("e2e: scripted click on {what}: {scripted}");
+            probes.push(format!("scriptedClick={scripted}"));
+        }
     }
 
     bail!(
         "clicked {what} {CLICK_ATTEMPTS} times and it never took effect ({})",
         probes.join(" | ")
     )
+}
+
+/// Arms the in-page recorder [`probe_click_target`] reads back.
+///
+/// Three questions `elementFromPoint` cannot answer on its own, and between
+/// them they separate every remaining explanation for a click that does
+/// nothing:
+///
+/// * **Did any mouse event reach the page at all?** A capture-phase listener on
+///   `window` records what arrived and where. Nothing recorded means the event
+///   was dropped before the renderer saw it; a `mousedown` and a `mouseup` with
+///   no `click` between them means they landed on different elements, which is
+///   the layout-shift flake Playwright's stability wait avoided.
+/// * **Is the renderer drawing?** `requestAnimationFrame` only fires while the
+///   compositor is producing frames. A page that answers `Execute Script` — as
+///   every probe so far proves it does — but never runs a frame callback is one
+///   whose input path is not being serviced either.
+/// * `document.hasFocus()` and `visibilityState`, which the probe reports, say
+///   whether the browser considers this window worth either.
+///
+/// Installed once and reset per attempt: re-registering the listeners would
+/// report every event as many times as we had clicked by then.
+///
+/// The `@nojs` scenarios get nothing out of this. `Execute Script` still runs
+/// with `Emulation.setScriptExecutionDisabled` set, which is what keeps the
+/// probe itself working, but a listener and a frame callback are script the
+/// *document* runs, and that is exactly what the emulation switches off.
+async fn arm_recorder(driver: &WebDriver) -> Result<()> {
+    driver
+        .execute(
+            r"
+            if (window.__e2e) {
+                window.__e2e.events.length = 0;
+                window.__e2e.frames = 0;
+                return;
+            }
+            const state = { events: [], frames: 0 };
+            window.__e2e = state;
+            const name = (n) => n === null ? null : n.tagName.toLowerCase()
+                + (n.id ? '#' + n.id : '')
+                + (n.getAttribute('data-testid') ? '@' + n.getAttribute('data-testid') : '');
+            for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click']) {
+                window.addEventListener(type, (e) => {
+                    if (state.events.length < 24) {
+                        state.events.push(type + ':' + name(e.target)
+                            + '@' + Math.round(e.clientX) + ',' + Math.round(e.clientY));
+                    }
+                }, true);
+            }
+            const tick = () => { state.frames++; requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+            ",
+            Vec::new(),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Clicks the element from script, and reports whether *that* took effect.
+///
+/// The last question, asked once every native click has been spent.
+/// `HTMLElement.click()` skips hit-testing and the browser's input plumbing
+/// entirely and dispatches straight at the element, so it follows a link or
+/// submits a form that a real click could not reach. `took effect` says the
+/// page and its handlers are fine and only the native input is not arriving;
+/// `no effect either` says the failure is in the page, and the retry loop was
+/// never the thing to fix.
+///
+/// Reported, never used to rescue the click: a suite that clicks from script
+/// has stopped testing that the control is clickable, which is most of the
+/// point of clicking it.
+async fn scripted_click_works<E>(
+    driver: &WebDriver,
+    element: &WebElement,
+    took_effect: &E,
+) -> String
+where
+    E: AsyncFn() -> Result<bool>,
+{
+    let Ok(json) = element.to_json() else {
+        return "unavailable".to_owned();
+    };
+    if let Err(e) = driver.execute("arguments[0].click();", vec![json]).await {
+        return format!("failed: {e}");
+    }
+    match settled(took_effect).await {
+        Ok(true) => "took effect".to_owned(),
+        Ok(false) => "no effect either".to_owned(),
+        Err(e) => format!("failed: {e}"),
+    }
 }
 
 /// Polls `took_effect` for [`CLICK_SETTLE`], not the full [`WAIT_TIMEOUT`] — a
@@ -484,8 +583,14 @@ where
 /// if it comes back as anything else — or `null` — the point belonged to
 /// something else at the moment of the click.
 ///
+/// It also reports back what [`arm_recorder`] collected — the mouse events the
+/// page actually received, and how many frames it drew while we waited — which
+/// is what says whether the event arrived at all.
+///
 /// The driver can still inject script into a page whose own scripts are
-/// disabled, so this reports on the `@nojs` scenarios too.
+/// disabled, so the `elementFromPoint` half reports on the `@nojs` scenarios
+/// too. The recorder's half does not: `events` and `frames` come back `null`
+/// there, because a listener and a frame callback are script the document runs.
 ///
 /// `probe failed: Element is stale` is itself an answer, and a different one:
 /// the click *did* navigate, and it is the caller's idea of "took effect" that
@@ -503,6 +608,7 @@ async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<
                 + (n.id ? '#' + n.id : '')
                 + (n.getAttribute('data-testid') ? '@' + n.getAttribute('data-testid') : '');
             const style = getComputedStyle(el);
+            const rec = window.__e2e;
             return {
                 connected: true,
                 ready: document.readyState,
@@ -514,6 +620,10 @@ async fn probe_click_target(driver: &WebDriver, element: &WebElement) -> Result<
                 hitIsTarget: hit === null ? false : (hit === el || el.contains(hit)),
                 visibility: style.visibility,
                 pointerEvents: style.pointerEvents,
+                hasFocus: document.hasFocus(),
+                visibilityState: document.visibilityState,
+                frames: rec ? rec.frames : null,
+                events: rec ? rec.events : null,
             };
             ",
             vec![element.to_json()?],
