@@ -18,13 +18,10 @@ use crate::state::AppState;
 /// Which layout the reader opens in.
 ///
 /// Server-rendered, so the segmented control works without JavaScript: each
-/// half is a link back to this route. `app.js` takes over from there and
-/// switches in place, never reloading — the query parameter is only ever read
-/// on a fresh navigation.
-///
-/// An unrecognised value falls back to `paged` rather than failing the request:
-/// this is a display preference arriving from a hand-edited URL, and a reader
-/// that renders is a better answer than a 400.
+/// half is a link back to this route. `app.js` takes over and switches in place,
+/// so the query parameter is only read on a fresh navigation. An unrecognised
+/// value falls back to `paged` — a display preference off a hand-edited URL, and
+/// a reader that renders beats a 400.
 #[derive(Deserialize)]
 pub struct BookQuery {
     mode: Option<String>,

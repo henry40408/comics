@@ -18,17 +18,15 @@ const SESSION_ID_BYTES: usize = 16;
 
 pub const SESSION_ID_HEX_LEN: usize = SESSION_ID_BYTES * 2;
 
-/// Bytes of the stored `User-Agent` digest. Only ever compared, never logged or
-/// reversed, so eight bytes is ample and storing the string itself would just be
-/// a larger thing to leak. Exactly a `u64`, which is what lets the digest live
-/// in an atomic and be swapped in place — see [`Record::user_agent`].
+/// Bytes of the stored `User-Agent` digest. Only ever compared, so eight is
+/// ample and the string itself would just be a larger thing to leak. Exactly a
+/// `u64`, which is what lets it live in an atomic — see [`Record::user_agent`].
 const USER_AGENT_DIGEST_BYTES: usize = 8;
 
-/// The cheat sheet's 15–30 minutes is written for applications where a session
-/// is a unit of work. A comic reader is opened, left, and come back to; an idle
-/// window that short would make it unusable and teach the one user to pick a
-/// weaker password rather than retype a strong one. Three days is short enough
-/// that an abandoned session on a borrowed device does not outlive the loan,
+/// The cheat sheet's 15–30 minutes assumes a session is a unit of work. A comic
+/// reader is opened, left, and come back to; that short a window would teach the
+/// one user to pick a weaker password rather than retype a strong one. Three
+/// days still keeps an abandoned session on a borrowed device inside the loan,
 /// which is the threat the idle window actually addresses here.
 pub const DEFAULT_IDLE_TTL: Duration = Duration::from_secs(72 * 60 * 60);
 
@@ -38,11 +36,10 @@ pub const DEFAULT_ABSOLUTE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60)
 
 /// Live sessions kept before the oldest is evicted.
 ///
-/// Unreachable in practice, and deliberately so: the store only grows on a
-/// *successful* login, which requires the credentials and is already throttled
-/// to five attempts a minute. The cap is a backstop against unbounded memory,
-/// not a control — which is why hitting it evicts rather than refuses. Refusing
-/// would turn a full store into a login lockout.
+/// Unreachable in practice: the store only grows on a *successful* login, which
+/// needs the credentials and is already throttled. A backstop against unbounded
+/// memory, not a control — hence evicting rather than refusing, which would turn
+/// a full store into a login lockout.
 const MAX_SESSIONS: usize = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,12 +64,11 @@ pub enum Validation {
     Valid {
         /// The `User-Agent` differs from the one the session was created with.
         ///
-        /// Reported, never enforced. The cheat sheet recommends binding a
-        /// session to client properties for *detection*, and is explicit that
-        /// they cannot be trusted to defend: a browser rewrites its `User-Agent`
-        /// on every major version, so terminating on a mismatch would log the
-        /// one legitimate user out every few weeks to inconvenience an attacker
-        /// who need only copy the header.
+        /// Reported, never enforced. The cheat sheet binds a session to client
+        /// properties for *detection* and is explicit they cannot defend: a
+        /// browser rewrites its `User-Agent` every major version, so terminating
+        /// would log the one legitimate user out every few weeks to inconvenience
+        /// an attacker who need only copy the header.
         user_agent_changed: bool,
     },
     /// The identifier was well-formed but names no live session — expired long
@@ -87,32 +83,26 @@ struct Record {
     /// Seconds since [`SessionStore::start`] at the most recent request.
     ///
     /// Atomic, and behind an [`Arc`], so refreshing it needs only a *read* lock
-    /// on the map. The auth middleware guards every page image and thumbnail, so
-    /// a single page turn is one HTML request plus one per image; taking a write
-    /// lock on each would serialise the read path against itself for no reason.
+    /// on the map: one page turn is an HTML request plus one per image, all
+    /// through the auth middleware, and a write lock each would serialise them.
     last_seen: AtomicU64,
     /// Digest of the `User-Agent` last seen on this session.
     ///
-    /// Swapped rather than merely compared, so a change is reported *once*
-    /// instead of on every subsequent request. Without that, one browser update
-    /// would put a warning in the log for every image of every page turn.
+    /// Swapped rather than merely compared, so a change is reported *once*:
+    /// otherwise one browser update warns for every image of every page turn.
     user_agent: AtomicU64,
 }
 
 /// The live sessions, in memory.
 ///
 /// Sessions do not survive a restart — the identifier is opaque and the state
-/// lives only here, so there is nothing to reconstruct from. That is the price
-/// of being able to *end* a session: the signed self-describing cookie this
-/// replaced survived restarts precisely because the server held no record of it,
-/// which also meant logout could do nothing but ask the browser nicely, and a
-/// leaked cookie stayed valid for its full seven days with no way to revoke it
-/// short of rotating `COMICS_SECRET` — which would also change every book and
-/// page URL, since both are derived from it.
-///
-/// For a single-account self-hosted reader that trade is worth making: the
-/// absolute ceiling already forced a fresh login every seven days, so restarts
-/// move the re-login from a fixed schedule to an event that is rarer than it.
+/// lives only here. That is the price of being able to *end* a session: the
+/// signed self-describing cookie this replaced survived restarts precisely
+/// because the server held no record of it, so logout could only ask the browser
+/// nicely and a leaked cookie stayed valid for its full seven days, revocable
+/// only by rotating `COMICS_SECRET` — which also changes every book and page
+/// URL. The absolute ceiling already forced a fresh login weekly, so restarts
+/// merely move that re-login off a fixed schedule.
 pub struct SessionStore {
     sessions: RwLock<HashMap<String, Arc<Record>>>,
     /// Monotonic base for `last_seen`; `Instant` itself cannot live in an atomic.
@@ -138,10 +128,9 @@ impl SessionStore {
         self.start.elapsed().as_secs()
     }
 
-    /// The identifier is 128 CSPRNG bits rendered as hex and carries no
-    /// structure at all: expiry, `User-Agent` and creation time are held here,
-    /// so there is nothing in the value for an attacker to decode or an operator
-    /// to accidentally trust.
+    /// The identifier is 128 CSPRNG bits as hex and carries no structure at
+    /// all: expiry, `User-Agent` and creation time are held here, so there is
+    /// nothing in the value to decode or to accidentally trust.
     pub fn create(&self, user_agent: &str) -> String {
         let id = hex_lower(&rand::random::<[u8; SESSION_ID_BYTES]>());
         let record = Arc::new(Record {
@@ -202,10 +191,7 @@ impl SessionStore {
     /// **Membership is the authorisation.** `/logout` sits outside the auth
     /// middleware and the CSRF guard passes header-less clients, so an
     /// unconditional clear would let any anonymous `POST /logout` sign everyone
-    /// out. Requiring `id` to already be in the store puts the caller through
-    /// the same gates as reading a page.
-    ///
-    /// One write lock, so the count cannot race a concurrent login.
+    /// out. One write lock, so the count cannot race a concurrent login.
     pub fn destroy_all(&self, id: &str) -> usize {
         let mut sessions = self.sessions.write();
         if !sessions.contains_key(id) {

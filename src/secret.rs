@@ -4,22 +4,19 @@ use anyhow::{Context as _, bail};
 use cookie::Key;
 use sha2::{Digest as _, Sha256, Sha512};
 
-/// Sized to the thing it actually protects: `cookie`'s signed jar is
-/// HMAC-SHA256 keyed with 32 bytes, so 256 bits of input entropy already
-/// saturates it. (`cookie::Key` holds 64 bytes, but the second half is the
-/// *encryption* key for private jars, which comics never builds.) Longer
-/// secrets are accepted and hashed just the same — they buy nothing.
+/// Sized to what it protects: `cookie`'s signed jar is HMAC-SHA256 keyed with
+/// 32 bytes, so 256 bits of input entropy saturates it. (`cookie::Key` holds 64,
+/// but the second half is the *encryption* key for private jars, which comics
+/// never builds.) Longer secrets are hashed just the same, and buy nothing.
 const SECRET_MIN_BYTES: usize = 32;
 
 const SECRET_MIN_HEX_LEN: usize = SECRET_MIN_BYTES * 2;
 
-/// Domain separators. Every value comics derives from the secret is the hash of
-/// a distinct label concatenated with the secret, so the derived values cannot
-/// be turned into one another. That matters here because the ID seed is not a
-/// secret in practice: book IDs are `xxh3(seed, title)`, they appear in URLs,
-/// and xxh3 is not a cryptographic hash — anyone who can invert enough IDs
-/// learns the seed. Passing the secret's bytes straight through would make that
-/// leak eight bytes of cookie-signing material; behind a hash it leaks nothing.
+/// Domain separators, so the values derived from the secret cannot be turned
+/// into one another. That matters because the ID seed is not secret in practice:
+/// book IDs are `xxh3(seed, title)`, they appear in URLs, and xxh3 is not
+/// cryptographic — invert enough IDs and you have the seed. Passing the secret's
+/// bytes straight through would leak eight bytes of cookie-signing material.
 const SESSION_KEY_DOMAIN: &[u8] = b"comics/session-key/v1";
 const ID_SEED_DOMAIN: &[u8] = b"comics/id-seed/v1";
 
@@ -37,11 +34,10 @@ impl Secret {
         Self(rand::random::<[u8; SECRET_MIN_BYTES]>().to_vec())
     }
 
-    /// SHA-512 is what makes this a one-liner: its output is exactly the 64
-    /// bytes `Key` wants. comics does not enable the `cookie` crate's
-    /// `key-expansion` feature (which would pull in `hkdf` for
-    /// `Key::derive_from`), and a hash with a domain separator is all the
-    /// stretching a 512-bit secret needs.
+    /// SHA-512 outputs exactly the 64 bytes `Key` wants, so comics leaves the
+    /// `cookie` crate's `key-expansion` feature off (it would pull in `hkdf` for
+    /// `Key::derive_from`): a domain-separated hash is all a 512-bit secret
+    /// needs.
     pub fn session_key(&self) -> Key {
         let mut hasher = Sha512::new();
         hasher.update(SESSION_KEY_DOMAIN);
@@ -64,12 +60,10 @@ impl Secret {
 impl FromStr for Secret {
     type Err = anyhow::Error;
 
-    /// Decode at least 64 hex characters (32 bytes). A *minimum* rather than a
-    /// fixed length: the value is hashed, so any size works cryptographically,
-    /// and the floor is only there to keep someone from configuring a
-    /// guessable string. Hex is required for the same reason — it is evidence
-    /// the value came out of a CSPRNG rather than off a keyboard. Decoding is
-    /// done by hand: no dependency is worth a five-line loop.
+    /// Decode at least 64 hex characters (32 bytes). A *minimum*, not a fixed
+    /// length: the value is hashed, so the floor only keeps someone from
+    /// configuring a guessable string, and hex is required as evidence the value
+    /// came out of a CSPRNG rather than off a keyboard.
     fn from_str(raw: &str) -> anyhow::Result<Self> {
         let raw = raw.trim();
         if raw.len() < SECRET_MIN_HEX_LEN {
@@ -107,8 +101,7 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// Here rather than from a crate: rendering bytes as hex is not worth a
-/// dependency.
+/// Here rather than from a crate: not worth a dependency.
 pub fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
