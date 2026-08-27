@@ -20,14 +20,12 @@ const SESSION_COOKIE_HOST_PREFIXED: &str = "__Host-comics_session";
 /// Cookie name with the `__Host-` prefix applied when it is legal to do so.
 ///
 /// The prefix makes the browser itself guarantee the cookie was set by this
-/// exact host, over HTTPS, with `Path=/` and no `Domain` — closing off
-/// subdomain overwrites as a session-fixation vector (RFC 6265bis, quoted by the
-/// OWASP Session Management Cheat Sheet under "Cookie Prefixes").
-///
-/// It is **conditional on `secure`**: a browser rejects a `__Host-`-prefixed
-/// cookie that arrives without `Secure`, so applying it unconditionally would
-/// silently break login on a plain-HTTP LAN deployment — the exact failure mode
-/// the configurable `Secure` exists to avoid.
+/// exact host, over HTTPS, with `Path=/` and no `Domain` — closing off subdomain
+/// overwrites as a session-fixation vector (RFC 6265bis, quoted by the OWASP
+/// Session Management Cheat Sheet under "Cookie Prefixes"). **Conditional on
+/// `secure`**: a browser rejects a `__Host-` cookie arriving without `Secure`,
+/// so applying it unconditionally would silently break login on the plain-HTTP
+/// LAN deployment the configurable `Secure` exists for.
 pub fn session_cookie_name(secure: bool) -> &'static str {
     if secure {
         SESSION_COOKIE_HOST_PREFIXED
@@ -50,10 +48,10 @@ pub enum AuthState {
 
 /// Why a request was treated as unauthenticated.
 ///
-/// Kept apart from a plain boolean because the reasons differ enormously in what
-/// they say: a bad signature cannot happen by accident, while an unknown
-/// identifier is what every legitimate cookie becomes after a restart. Logging
-/// them at one level would either bury the first or cry wolf about the second.
+/// Not a plain boolean because the reasons differ enormously: a bad signature
+/// cannot happen by accident, while an unknown identifier is what every
+/// legitimate cookie becomes after a restart. One level would either bury the
+/// first or cry wolf about the second.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
     /// No session cookie at all — an anonymous visitor.
@@ -70,35 +68,30 @@ pub enum Rejection {
     Expired(Expiry),
 }
 
-/// The value is the store's opaque identifier and nothing else — 128 CSPRNG bits
-/// as hex, with no expiry, no username and no structure of any kind, which is
-/// exactly what the OWASP Session Management Cheat Sheet asks of a session ID
-/// under "Session ID Content". Everything the server needs to judge the session
-/// lives in [`super::SessionStore`], so there is nothing here to decode.
+/// The value is the store's opaque identifier and nothing else — 128 CSPRNG
+/// bits as hex, no expiry, no username, no structure, which is what the OWASP
+/// Session Management Cheat Sheet asks under "Session ID Content". Everything
+/// needed to judge the session lives in [`super::SessionStore`].
 ///
-/// The signature stays even though the identifier is now looked up rather than
-/// parsed. It is not what makes the session valid; it is what separates a forged
-/// cookie from a stale one, which is the difference between an alert worth
-/// acting on and the noise every restart produces. It also rejects junk before
-/// the store's lock is touched.
+/// The signature stays even though the identifier is looked up rather than
+/// parsed: it is not what makes the session valid, it is what separates a forged
+/// cookie from a stale one — an alert worth acting on from the noise every
+/// restart produces — and it rejects junk before the store's lock is touched.
 ///
-/// `secure` comes from the `--cookie-secure` option rather than being hardcoded:
-/// a browser silently discards a `Secure` cookie delivered over plain HTTP, so
-/// forcing it on would lock plain-HTTP LAN deployments out of the login form
-/// with no visible error.
+/// `secure` comes from `--cookie-secure` rather than being hardcoded: a browser
+/// silently discards a `Secure` cookie sent over plain HTTP, so forcing it on
+/// would lock LAN deployments out of the login form with no visible error.
 ///
-/// `SameSite=Strict` is the cheat sheet's stated preference, and comics can
-/// afford it where a general web application often cannot: there is no OAuth
-/// callback, no payment return, no third party that ever navigates *into* an
-/// authenticated URL. The visible cost is that following an external link to a
-/// book lands on the login form even while signed in, because the browser
-/// withholds the cookie on that first cross-site navigation; the next
-/// same-site navigation carries it and the reader continues. `Lax` would avoid
-/// that at the price of sending the cookie on every top-level cross-site GET.
+/// `SameSite=Strict` is the cheat sheet's preference, and comics can afford it
+/// where a general web application cannot: no OAuth callback, no payment return,
+/// no third party navigating *into* an authenticated URL. The cost is that an
+/// external link to a book lands on the login form even while signed in, since
+/// the browser withholds the cookie on that first cross-site navigation; the
+/// next same-site one carries it. `Lax` would avoid that at the price of sending
+/// the cookie on every top-level cross-site GET.
 ///
-/// `Max-Age` mirrors the store's absolute ceiling. It is a hint to the browser
-/// only — the server enforces both deadlines itself, and a cookie kept past
-/// either is refused on arrival.
+/// `Max-Age` mirrors the store's absolute ceiling, as a browser hint only — the
+/// server enforces both deadlines itself.
 pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), id.to_owned()))
         .http_only(true)
@@ -112,9 +105,8 @@ pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
 }
 
 /// A browser matches a removal cookie on name + `Path` + `Domain`, and rejects a
-/// `__Host-`-named cookie that is missing `Secure`, so every attribute must
-/// mirror the cookie that was issued. Kept directly below `build_session_cookie`
-/// so any divergence is visible in review.
+/// `__Host-` name missing `Secure`, so every attribute must mirror the issued
+/// cookie. Kept below `build_session_cookie` so divergence shows up in review.
 pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), ""))
         .http_only(true)
@@ -158,9 +150,8 @@ fn jar_from_request(request: &Request) -> CookieJar {
 }
 
 /// Three gates, cheapest first: the signature, the identifier's shape, then the
-/// store. Only the last one takes a lock, and it is the only one that can say
-/// the session is *live* — which is what makes logout effective, since the
-/// record is gone by the time the next request arrives.
+/// store. Only the last takes a lock, and only it can say the session is *live*
+/// — which is what makes logout effective.
 pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
     if matches!(state.auth_config, AuthConfig::None) {
         return AuthState::Public;
@@ -194,13 +185,12 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
 
 /// The level is chosen to match what each rejection actually says.
 ///
-/// `Absent` is silent: an anonymous visitor hitting a protected URL is the
-/// ordinary case, not an event. `Unknown` is `DEBUG` because every valid cookie
-/// becomes unknown the moment the process restarts, so warning about it would
-/// bury the log in noise after every upgrade. The two that cannot arise by
-/// accident — a cookie this key did not sign, and one shaped like nothing this
-/// version issues — are `WARN`, which is the OWASP *Detecting Session ID
-/// Anomalies* signal actually worth alerting on.
+/// `Absent` is silent: an anonymous visitor on a protected URL is the ordinary
+/// case. `Unknown` is `DEBUG` because every valid cookie becomes unknown when
+/// the process restarts, so warning would bury the log after every upgrade. The
+/// two that cannot arise by accident — a cookie this key did not sign, and one
+/// shaped like nothing this version issues — are `WARN`, the OWASP *Detecting
+/// Session ID Anomalies* signal worth alerting on.
 fn record_rejection(state: &Arc<AppState>, request: &Request, why: Rejection) {
     let user_agent = user_agent(request.headers());
     // Only ever a salted hash: the identifier itself must never reach the log.
@@ -376,9 +366,9 @@ mod tests {
         ));
     }
 
-    /// The change this whole module exists for: once the store has forgotten the
-    /// session, the very same cookie stops working. A signed self-describing
-    /// cookie could not express this — it stayed valid until its own expiry.
+    /// The change this module exists for: once the store forgets the session,
+    /// the very same cookie stops working. A signed self-describing cookie
+    /// stayed valid until its own expiry.
     #[test]
     fn authenticate_rejects_a_destroyed_session() {
         let key = Key::generate();
@@ -436,9 +426,9 @@ mod tests {
         );
     }
 
-    /// The pre-store cookie value was `<nonce>.<expiry>`. It must be refused even
-    /// when correctly signed — upgrading logs existing sessions out once, by
-    /// design, and the value carries an expiry the server no longer honours.
+    /// The pre-store cookie value was `<nonce>.<expiry>`, refused even when
+    /// correctly signed: upgrading logs existing sessions out once, by design,
+    /// and the value carries an expiry the server no longer honours.
     #[test]
     fn authenticate_rejects_the_legacy_nonce_dot_expiry_cookie() {
         let key = Key::generate();
@@ -540,8 +530,8 @@ mod tests {
     }
 
     /// The removal cookie only deletes the real one if every matching attribute
-    /// agrees. This test fails the moment `build_session_cookie` gains or
-    /// changes an attribute without the removal path following.
+    /// agrees, so this fails the moment `build_session_cookie` changes an
+    /// attribute without the removal path following.
     #[test]
     fn removal_cookie_mirrors_the_session_cookie() {
         for secure in [false, true] {

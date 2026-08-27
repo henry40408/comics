@@ -32,11 +32,9 @@ Pepper and Carrot 02 - Rainbow Potions (5P)
 }
 
 /// The scan runs on a background thread *after* the listener is up, so the log
-/// is the only place it reports in. This reads until that line arrives and then
-/// stops the server, rather than sampling the output after a fixed timeout: the
-/// server never exits on its own, so a timeout here is the test's whole runtime
-/// and any value short enough to be tolerable is also short enough to lose on a
-/// loaded machine. Reading is both faster and not a race.
+/// is the only place it reports in. Read until that line arrives, then stop the
+/// server: the server never exits on its own, so a fixed timeout would be the
+/// test's whole runtime *and* a race against the scan on a loaded machine.
 #[test]
 fn initial_scan_finished() {
     let mut server = Process::new(cmd::cargo_bin!("comics"))
@@ -107,10 +105,10 @@ Error: these environment variables no longer exist; rename (or unset) them to co
 
 #[test]
 fn folded_env_vars_abort_startup() {
-    // COMICS_SEED and COMICS_SESSION_KEY were folded into COMICS_SECRET.
-    // Ignoring a leftover one would silently fall back to a random secret,
-    // logging everyone out and reshuffling every URL on each restart while the
-    // deployment's configuration still looked correct.
+    // COMICS_SEED and COMICS_SESSION_KEY were folded into COMICS_SECRET, and
+    // ignoring a leftover one falls back to a random secret — logging everyone
+    // out and reshuffling every URL per restart, while the configuration still
+    // looks correct.
     Command::new(cmd::cargo_bin!("comics"))
         .env_clear()
         .env("COMICS_SEED", "1")

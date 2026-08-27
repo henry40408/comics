@@ -1,14 +1,12 @@
 //! The comics server under test.
 //!
-//! Replaces `playwright.config.js`'s `webServer` block: it builds the release
-//! binary if it is missing, starts it against `fixtures/data`, waits for the
-//! port, and kills it on drop. Like the old `reuseExistingServer`, a port that
-//! is already listening is adopted rather than fought over — that is what makes
-//! a local re-run fast.
+//! Replaces `playwright.config.js`'s `webServer` block: builds the binary if
+//! missing, starts it against `fixtures/data`, waits for the port, and kills it
+//! on drop. An already-listening port is adopted rather than fought over, which
+//! is what makes a local re-run fast.
 //!
-//! The binary is spawned directly rather than through `cargo run`, so the PID
-//! held here is the server's own. Killing `cargo` would leave the server it
-//! spawned holding the port.
+//! Spawned directly rather than through `cargo run`, so the PID held here is the
+//! server's own — killing `cargo` would leave its child holding the port.
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -25,9 +23,9 @@ pub const PORT: u16 = 3030;
 pub const BASE_URL: &str = "http://127.0.0.1:3030";
 
 /// Argon2id hash of "password", from `comics hash-password` — a throwaway
-/// credential that only unlocks the committed test fixtures. The server refuses
-/// to start on a hash it cannot use, so if this ever goes stale the e2e run says
-/// so directly rather than failing at the login step.
+/// credential unlocking only the committed fixtures. The server refuses to start
+/// on a hash it cannot use, so a stale one is reported directly rather than as a
+/// failing login step.
 const TEST_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$C2qIDpzPcTL0a5wYL1152Q$2MWeEDjhoNnp8oRwz9DkFoLgYH3NTe+qArT3vPHN14g";
 
 const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -49,11 +47,6 @@ pub struct Server {
 
 impl Server {
     /// Starts the server, or adopts one already listening on [`PORT`].
-    ///
-    /// # Errors
-    ///
-    /// Fails when the release binary cannot be built or spawned, or when it
-    /// does not start listening within [`STARTUP_TIMEOUT`].
     pub fn start() -> Result<Self> {
         if port_is_open() {
             return Ok(Self { child: None });

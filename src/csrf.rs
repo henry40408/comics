@@ -1,45 +1,42 @@
 //! First-line CSRF defence: reject state-changing requests that a browser
 //! reports, or reveals, to be cross-site.
 //!
-//! This is a header-only check with no token and no state. It runs on every
-//! unsafe-method request across the whole router, but only ever *rejects* a
-//! request that is provably cross-site; anything it cannot classify is passed
-//! through, so it never breaks a legitimate caller:
+//! A header-only check, no token and no state. It runs on every unsafe-method
+//! request across the whole router, but only ever *rejects* what is provably
+//! cross-site; anything it cannot classify passes through, so it never breaks a
+//! legitimate caller:
 //!
 //! - **`Sec-Fetch-Site`** (sent by every current browser) is authoritative when
 //!   present. `same-origin`, `same-site`, and `none` (a direct navigation or a
 //!   user-typed URL) are allowed; only `cross-site` is rejected.
-//! - **`Origin`** is the fallback for the rare browser that omits
-//!   `Sec-Fetch-Site`. Its host is compared against the request's own `Host`;
-//!   a mismatch — or an opaque `Origin: null` — is rejected.
+//! - **`Origin`** is the fallback for the rare browser that omits it. Its host
+//!   is compared against the request's own `Host`; a mismatch — or an opaque
+//!   `Origin: null` — is rejected.
 //! - **Neither header** means a non-browser client (`curl`, a server-to-server
-//!   call). Those do not ride an ambient session cookie, so they are not
-//!   exposed to CSRF and are allowed through.
+//!   call), which rides no ambient session cookie and so is not exposed to CSRF.
 //!
-//! Scheme and port are deliberately ignored in the `Origin`/`Host` comparison:
-//! behind a TLS-terminating reverse proxy the browser's `Origin` is `https://`
-//! while the forwarded `Host` carries no scheme, and the proxy commonly strips
-//! the port. Matching on host alone is what keeps the check working in that
-//! standard deployment without a configured public URL.
+//! Scheme and port are ignored in that comparison: behind a TLS-terminating
+//! proxy the browser's `Origin` is `https://` while the forwarded `Host` carries
+//! no scheme and commonly no port, so host alone is what keeps the check working
+//! in that standard deployment without a configured public URL.
 //!
 //! # The plain-HTTP LAN hole, and the escape hatch
 //!
-//! Fetch metadata is only sent to *potentially trustworthy* origins — HTTPS, or
+//! Fetch metadata only reaches *potentially trustworthy* origins — HTTPS, or
 //! `localhost`. A plain-HTTP LAN host such as `http://nas.local` is neither, so
-//! **no `Sec-Fetch-Site` ever arrives** and every request falls through to the
-//! `Origin` branch. That is survivable until a browser reports an opaque
-//! `Origin: null` (a sandboxed iframe, or a privacy setting that suppresses the
-//! header): the login `POST` is then rejected, and because the operator cannot
-//! log in, there is no way back from inside the app.
+//! **no `Sec-Fetch-Site` ever arrives** and everything falls to the `Origin`
+//! branch. That survives until a browser reports an opaque `Origin: null` (a
+//! sandboxed iframe, or a privacy setting that suppresses the header): the login
+//! `POST` is rejected, and the operator who cannot log in has no way back from
+//! inside the app.
 //!
-//! `--disable-csrf-guard` / `COMICS_DISABLE_CSRF_GUARD` exists for exactly that
-//! dead end — it removes this layer from the router altogether. Reaching the
-//! server over HTTPS or through a `localhost` tunnel restores `Sec-Fetch-Site`
-//! and fixes the same lockout while giving nothing up, so it is the better
-//! answer wherever it is available. What survives the escape hatch is the
-//! session cookie's `SameSite=Strict`, which is what actually stops a
-//! cross-site `POST` from carrying credentials; this module is defence in depth
-//! layered on that, never the only lock.
+//! `--disable-csrf-guard` / `COMICS_DISABLE_CSRF_GUARD` exists for that dead
+//! end, removing this layer from the router altogether. Reaching the server over
+//! HTTPS or through a `localhost` tunnel restores `Sec-Fetch-Site` and fixes the
+//! same lockout while giving nothing up, so prefer it where available. What
+//! survives the escape hatch is the session cookie's `SameSite=Strict`, which is
+//! what actually stops a cross-site `POST` from carrying credentials; this
+//! module is defence in depth layered on that, never the only lock.
 
 use axum::{
     extract::Request,
@@ -69,7 +66,6 @@ fn is_safe(method: &Method) -> bool {
 fn is_cross_site(req: &Request) -> bool {
     let headers = req.headers();
 
-    // `Sec-Fetch-Site` is authoritative where the browser sends it.
     if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
         return site.eq_ignore_ascii_case("cross-site");
     }
@@ -78,8 +74,8 @@ fn is_cross_site(req: &Request) -> bool {
         // No Sec-Fetch-Site and no Origin → a non-browser client.
         return false;
     };
-    // `Origin: null` is opaque (a sandboxed iframe, a cross-origin redirect) and
-    // never legitimate for a state-changing request here.
+    // Opaque: a sandboxed iframe or a cross-origin redirect, never legitimate
+    // for a state-changing request here.
     if origin.eq_ignore_ascii_case("null") {
         return true;
     }
@@ -170,12 +166,10 @@ mod tests {
                 ("host", "app.example.com"),
             ]
         )));
-        // Port on the Origin, none on Host → still same host.
         assert!(!is_cross_site(&req(
             Method::POST,
             &[("origin", "http://localhost:8080"), ("host", "localhost"),]
         )));
-        // Genuine cross-origin.
         assert!(is_cross_site(&req(
             Method::POST,
             &[
@@ -183,7 +177,6 @@ mod tests {
                 ("host", "app.example.com"),
             ]
         )));
-        // Opaque origin.
         assert!(is_cross_site(&req(
             Method::POST,
             &[("origin", "null"), ("host", "app.example.com")]
@@ -200,8 +193,7 @@ mod tests {
 
     #[test]
     fn non_browser_client_without_headers_passes() {
-        // A curl / server-to-server call sends neither header and does not ride
-        // an ambient cookie, so it is not a CSRF vector.
+        // Rides no ambient cookie either, so it is not a CSRF vector.
         assert!(!is_cross_site(&req(Method::POST, &[])));
     }
 }

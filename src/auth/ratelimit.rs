@@ -11,9 +11,8 @@ use tracing::warn;
 
 use super::TrustedProxies;
 
-/// Hard cap on tracked IPs. When the cap is hit the map is pruned of expired
-/// windows first, so a spray from many source addresses cannot grow it without
-/// bound.
+/// Hard cap on tracked IPs; expired windows are pruned first, so a spray from
+/// many sources cannot grow the map without bound.
 const MAX_ENTRIES: usize = 10_000;
 
 #[derive(Clone, Copy)]
@@ -38,9 +37,8 @@ impl Window {
 
     /// Seconds until this window rolls over, for `Retry-After`.
     ///
-    /// Rounded *up*, and never zero: a client told to retry in zero seconds
-    /// retries immediately and is refused again, which is worse than useless.
-    /// An already-expired window answers one for the same reason.
+    /// Never zero — an already-expired window included: a client told to retry
+    /// in zero seconds retries immediately and is refused again.
     fn seconds_until_reset(&self, window_secs: u64) -> u64 {
         window_secs
             .saturating_sub(self.started.elapsed().as_secs())
@@ -50,8 +48,8 @@ impl Window {
 
 /// Which window refused an attempt.
 ///
-/// The three mean very different things to whoever reads the log, which is the
-/// entire reason they are distinguished — see [`RateLimiter::try_acquire`].
+/// Distinguished because the three mean very different things to whoever reads
+/// the log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     /// This client's own window. One person mistyping a password.
@@ -92,11 +90,9 @@ impl Throttle {
     }
 }
 
-/// Every window the limiter owns, behind one lock.
-///
-/// One lock rather than two so that check-and-charge stays a single critical
-/// section on both paths; concurrent requests must never all observe the same
-/// pre-attack count.
+/// Every window the limiter owns, behind one lock: check-and-charge must stay a
+/// single critical section, or concurrent requests all observe the pre-attack
+/// count.
 struct Buckets {
     per_ip: HashMap<IpAddr, Window>,
     /// Shared by every source that arrives once `per_ip` is full. See
@@ -109,47 +105,34 @@ struct Buckets {
 /// Fixed-window limiter for login attempts, keyed per client IP *and* globally.
 ///
 /// In-memory only: comics has no database, and a restart resetting the counters
-/// is acceptable for a single-account self-hosted service. Its purpose is to
-/// remove the zero cost of an online dictionary attack against the one static
-/// credential pair (OWASP Authentication Cheat Sheet, "Protect Against
-/// Automated Attacks"); Argon2id's ~15 ms and 19 MiB per verification is a speed
-/// bump, not a control.
+/// is acceptable for a single-account service. Its purpose is to remove the zero
+/// cost of an online dictionary attack against the one static credential pair
+/// (OWASP Authentication Cheat Sheet, "Protect Against Automated Attacks");
+/// Argon2id's ~15 ms and 19 MiB per verification is a speed bump, not a control.
 ///
 /// # Why a global window as well
 ///
-/// The cheat sheet asks, under *Account Lockout*, that the failure counter be
-/// associated with **the account** rather than the source address, "in order to
-/// prevent an attacker from making login attempts from a large number of
-/// different IP addresses". Per-IP alone did exactly that: every fresh address
-/// arrived with a full budget, so anyone holding an IPv6 `/64` had five attempts
-/// per address for tens of thousands of addresses before [`MAX_ENTRIES`] filled
-/// and the shared overflow window finally applied.
+/// The cheat sheet asks, under *Account Lockout*, that the failure counter track
+/// **the account** rather than the source address, "in order to prevent an
+/// attacker from making login attempts from a large number of different IP
+/// addresses". Per-IP alone was exactly that: every fresh address arrived with a
+/// full budget, so an IPv6 `/64` bought five attempts apiece across tens of
+/// thousands of addresses before [`MAX_ENTRIES`] filled and the overflow window
+/// applied. comics authenticates one credential pair, so *the account* and
+/// *everything* coincide: `global` is that account-scoped counter.
 ///
-/// comics authenticates exactly one set of credentials, so *the account* and
-/// *everything* are the same set: `global` is the account-scoped counter the
-/// cheat sheet asks for, and it needs no notion of who is logging in.
+/// # The lockout trade
 ///
-/// # The lockout trade, stated plainly
-///
-/// A global counter can be exhausted deliberately, and while it is exhausted the
-/// legitimate reader is refused too — the denial of service the cheat sheet
-/// warns about in the same section. Three things keep that acceptable here:
-///
-/// - The threshold is far above one person's use. A single client is already
-///   capped at five failures a minute, so reaching a global twenty takes at least
-///   four distinct addresses failing in the same minute — which does not happen
-///   to one reader with one password manager.
-/// - The window is *fixed and short*. An attack denies login for at most the
-///   remainder of one minute after it stops, not the escalating hours an
-///   exponential lockout would impose. That is deliberately the opposite of the
-///   cheat sheet's exponential suggestion: escalation protects an account with a
-///   recovery path, and comics has none, so a long lockout would punish only the
-///   reader.
-/// - A **successful** login refunds both windows ([`release`](Self::release)),
-///   so the reader's own sign-ins never spend the budget.
-///
-/// The alternative was leaving distributed guessing entirely unbounded, which
-/// trades a minute of unavailability under attack for the password itself.
+/// A global counter can be exhausted deliberately, refusing the legitimate
+/// reader too — the denial of service the cheat sheet warns about. Three things
+/// keep that acceptable: the threshold is far above one person's use (five
+/// failures a minute per client, so a global twenty needs four addresses failing
+/// within the minute); the window is fixed and short, costing at most the rest
+/// of one minute rather than an exponential lockout's hours — escalation
+/// protects an account with a recovery path, and comics has none; and a
+/// successful login refunds both windows ([`release`](Self::release)). The
+/// alternative was leaving distributed guessing unbounded, trading a minute of
+/// unavailability under attack for the password itself.
 pub struct RateLimiter {
     buckets: Mutex<Buckets>,
     max_attempts: u32,
@@ -159,9 +142,8 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// `global_max_attempts` bounds every source together and so must sit well
-    /// above `max_attempts`, which bounds one; see the type's documentation for
-    /// what happens when it is reached.
+    /// `global_max_attempts` bounds every source together, so it must sit well
+    /// above `max_attempts`, which bounds one; see the type docs for the trade.
     pub fn new(max_attempts: u32, global_max_attempts: u32, window_secs: u64) -> Self {
         Self {
             buckets: Mutex::new(Buckets {
@@ -178,35 +160,27 @@ impl RateLimiter {
 
     /// Reserve an attempt for `ip`, returning whether it may proceed.
     ///
-    /// Checking and counting happen under a single lock, so concurrent requests
-    /// cannot all observe the pre-attack count. The reservation is taken
-    /// *before* the credential comparison — which costs a full Argon2id
-    /// verification — and is handed back by [`release`](Self::release) when the
-    /// credentials turn
-    /// out to be valid, so only failures ultimately consume the window.
+    /// Checked and counted under a single lock, so concurrent requests cannot
+    /// all observe the pre-attack count. The reservation is taken *before* the
+    /// credential comparison — which costs a full Argon2id verification — and
+    /// handed back by [`release`](Self::release) once the credentials prove
+    /// valid, so only failures ultimately consume the window.
     ///
-    /// At capacity the map is first pruned of expired windows. If it is still
-    /// full — a spray from more live sources than the cap — the attempt is
-    /// charged to a single shared *overflow* window instead. The three
-    /// alternatives are all worse: admitting the source untracked makes password
-    /// guessing free and unbounded (an attacker with a `/64` has effectively
-    /// unlimited source addresses, and each admitted attempt still costs a
-    /// verification); `clear()`ing the map hands anyone already throttled a way
-    /// to reset their own budget by spraying keys; and refusing outright turns
-    /// the same spray into a total login lockout. Sharing one finite window
-    /// degrades to a global limit under attack while keeping every source
-    /// already in the map on its own budget.
-    /// The refusal names *which* window said no, because the three are not
-    /// remotely the same event. [`Scope::PerIp`] is one person mistyping a
-    /// password — ordinary noise. [`Scope::Global`] means at least four distinct
-    /// addresses failed within the minute: distributed guessing, and the reader
-    /// is locked out beside the attacker. Reporting both as "rate limited" buries
-    /// the one worth waking up for, and the OWASP Authentication Cheat Sheet asks
-    /// specifically that account lockouts be logged and reviewed.
+    /// At capacity the map is pruned of expired windows; if it is still full the
+    /// attempt shares a single *overflow* window. The alternatives are worse:
+    /// admitting the source untracked makes guessing free and unbounded (a `/64`
+    /// supplies effectively unlimited addresses, each still costing a
+    /// verification); `clear()`ing lets anyone throttled reset their own budget
+    /// by spraying keys; and refusing outright turns the spray into a total
+    /// lockout. Sharing degrades to a global limit under attack while leaving
+    /// every source already in the map on its own budget.
+    ///
+    /// The refusal names *which* window said no ([`Scope`]): reporting all three
+    /// as "rate limited" buries the account lockout, which the cheat sheet asks
+    /// specifically be logged and reviewed.
     pub fn try_acquire(&self, ip: IpAddr) -> Throttle {
         let mut buckets = self.buckets.lock();
-        // Split the borrow so the source's window and the global one can be held
-        // at once; they live in the same struct but are charged together.
+        // Split the borrow: both windows are charged together.
         let Buckets {
             per_ip,
             overflow,
@@ -214,9 +188,8 @@ impl RateLimiter {
         } = &mut *buckets;
         let (window, scope) = self.window_for(per_ip, overflow, ip);
 
-        // Both are consulted before either is charged. Charging first and
-        // refunding on refusal would let a source the other window rejects still
-        // spend from the budget it was never allowed to use.
+        // Both consulted before either is charged, or a source the other window
+        // rejects would still spend from a budget it was never allowed to use.
         if !self.has_room(window, self.max_attempts) {
             return Throttle::Refused {
                 scope,
@@ -234,12 +207,9 @@ impl RateLimiter {
         Throttle::Allowed
     }
 
-    /// The window an attempt from `ip` is counted against.
-    ///
-    /// Ordinarily its own, created on first sight. At capacity the map is first
-    /// pruned of expired windows, and if it is *still* full the attempt shares
-    /// the overflow window — see [`try_acquire`](Self::try_acquire) for why that
-    /// beats admitting, clearing, or refusing.
+    /// The window an attempt from `ip` is counted against: ordinarily its own,
+    /// created on first sight; the shared overflow window once the map is full
+    /// even after pruning — see [`try_acquire`](Self::try_acquire) for why.
     fn window_for<'a>(
         &self,
         per_ip: &'a mut HashMap<IpAddr, Window>,
@@ -262,11 +232,9 @@ impl RateLimiter {
         window.is_expired(self.window_secs) || window.count < max_attempts
     }
 
-    /// An expired window is rolled over rather than topped up, which is what
-    /// makes this a fixed-window rather than a sliding-window limiter.
-    ///
-    /// Only ever called once [`has_room`](Self::has_room) has said yes, so it
-    /// does not re-check the ceiling.
+    /// An expired window is rolled over rather than topped up — what makes this
+    /// fixed-window rather than sliding. Only called once
+    /// [`has_room`](Self::has_room) said yes, so the ceiling is not re-checked.
     fn charge(&self, window: &mut Window) {
         if window.is_expired(self.window_secs) {
             *window = Window {
@@ -278,23 +246,18 @@ impl RateLimiter {
         }
     }
 
-    /// Hand back the attempt reserved by [`try_acquire`](Self::try_acquire).
-    ///
-    /// Called after a *successful* login. The control exists to stop password
-    /// guessing, and a legitimate user who signs in repeatedly (new device,
-    /// cleared cookies, a test suite) should not be locked out by it; an
-    /// attacker's every attempt is a failure, so their budget is unchanged.
+    /// Hand back the attempt reserved by [`try_acquire`](Self::try_acquire),
+    /// after a *successful* login: repeated legitimate sign-ins (new device,
+    /// cleared cookies, a test suite) must not spend a budget aimed at guessing,
+    /// and an attacker's attempts are all failures, so theirs is unchanged.
     ///
     /// An address with no window of its own was charged to the overflow bucket,
-    /// so that is what gets the refund — otherwise signing in during a spray
-    /// would quietly eat the shared budget everyone else is waiting on. Only a
-    /// caller who passed the credential check reaches here, so the refund cannot
-    /// be used to top the shared window back up.
-    ///
-    /// The global window is refunded too, and for the sharper version of the same
-    /// reason: it is the one window the reader shares with their attacker, so
-    /// leaving successful sign-ins charged to it would let ordinary use walk into
-    /// a lockout that no failure caused.
+    /// so that is what gets the refund. The global window is refunded too, and
+    /// for the sharper version of the same reason: it is the one window the
+    /// reader shares with their attacker, so leaving sign-ins charged to it
+    /// would walk ordinary use into a lockout no failure caused. Only a caller
+    /// past the credential check reaches here, so neither refund is a way to top
+    /// a shared window back up.
     pub fn release(&self, ip: IpAddr) {
         let mut buckets = self.buckets.lock();
         buckets.global.count = buckets.global.count.saturating_sub(1);
@@ -314,26 +277,19 @@ impl RateLimiter {
 /// `X-Forwarded-For` is honoured **only** when the TCP peer is inside
 /// [`TrustedProxies`] — an explicit operator setting, empty by default. Header
 /// presence proves nothing: anyone who can reach the port can write one, and the
-/// minimal nginx snippet in wide circulation sets only `X-Real-IP` while
-/// forwarding a client-supplied `X-Forwarded-For` verbatim. So the header is
-/// believed on the strength of *who sent it*, never of the fact that it exists.
-/// A missing peer means no connection info at all: fail closed onto a single
-/// shared bucket, which throttles rather than exempts.
+/// nginx snippet in wide circulation sets only `X-Real-IP` while forwarding a
+/// client-supplied `X-Forwarded-For` verbatim. A missing peer means no
+/// connection info at all: fail closed onto one shared bucket, which throttles
+/// rather than exempts.
 ///
-/// Which hop is the client is decided by walking the chain from the right and
-/// skipping every address that is itself a trusted proxy. Right-to-left because
-/// nginx's stock `$proxy_add_x_forwarded_for` (and Caddy's `reverse_proxy`)
-/// *append* the peer to whatever the client sent, leaving the leftmost entry
-/// attacker-chosen; skipping trusted hops because that generalises the same rule
-/// to a proxy chain, which the old fixed "take the last one" could not express.
-/// Every hop is canonicalised, so a mapped `::ffff:` form cannot open a second
-/// bucket for one client.
-///
-/// All `X-Forwarded-For` header lines are read, not just the first. Proxies that
-/// *append a line* rather than extending the existing one (`HAProxy`'s `option
-/// forwardfor`, Caddy's `header_up +X-Forwarded-For`) put the trusted hop in the
-/// last line, so reading only `headers.get(..)` would hand back a line the client
-/// wrote.
+/// The client is the rightmost hop that is not itself a trusted proxy.
+/// Right-to-left because nginx's `$proxy_add_x_forwarded_for` (and Caddy's
+/// `reverse_proxy`) *append* the peer to whatever the client sent, leaving the
+/// leftmost entry attacker-chosen; skipping trusted hops generalises that to a
+/// chain. Hops are canonicalised, so a mapped `::ffff:` form cannot open a
+/// second bucket for one client. Every header *line* is read: proxies that
+/// append a line rather than extend one (`HAProxy`'s `option forwardfor`,
+/// Caddy's `header_up +X-Forwarded-For`) leave the trusted hop in the last.
 pub fn rate_limit_key(
     peer: Option<IpAddr>,
     headers: &HeaderMap,
@@ -355,12 +311,11 @@ static UNTRUSTED_FORWARD_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Point out a forwarding header that is being dropped.
 ///
-/// A startup warning cannot tell whether a proxy exists, so it would either cry
-/// wolf at every direct deployment or say nothing. Waiting for a header to
-/// actually show up makes the signal exact: either a proxy is in front and its
-/// address is missing from the list — the misconfiguration worth catching, since
-/// it silently collapses every client into one bucket — or somebody is trying to
-/// forge the header, which is worth seeing too. Once is enough for both.
+/// A startup warning cannot tell whether a proxy exists, so it would cry wolf at
+/// every direct deployment. Waiting for a header makes the signal exact: either
+/// a proxy is in front and missing from the list — which silently collapses
+/// every client into one bucket — or somebody is forging the header. Once is
+/// enough for both.
 fn warn_once_about_ignored_forwarding(peer: IpAddr, headers: &HeaderMap) {
     if headers.contains_key("x-forwarded-for")
         && !UNTRUSTED_FORWARD_WARNED.swap(true, Ordering::Relaxed)
@@ -377,10 +332,9 @@ fn warn_once_about_ignored_forwarding(peer: IpAddr, headers: &HeaderMap) {
 
 /// The rightmost `X-Forwarded-For` hop that is not itself a trusted proxy.
 ///
-/// `None` when the header is absent, unparseable, or names nothing but trusted
-/// infrastructure — in each case the caller falls back to the peer, so a
-/// misconfigured proxy degrades to "everything behind it shares one bucket"
-/// rather than to "no limit at all".
+/// `None` when the header is absent, unparseable, or names only trusted
+/// infrastructure; the caller then falls back to the peer, so a misconfigured
+/// proxy degrades to one shared bucket rather than to no limit at all.
 fn forwarded_client(headers: &HeaderMap, trusted: &TrustedProxies) -> Option<IpAddr> {
     headers
         .get_all("x-forwarded-for")

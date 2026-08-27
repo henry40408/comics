@@ -33,54 +33,47 @@ pub const VERSION: &str = env!("APP_VERSION");
 
 /// Longest password accepted, in bytes.
 ///
-/// Argon2 imposes no meaningful ceiling of its own — RFC 9106 allows 2^32-1
-/// bytes and the password only feeds a linear `BLAKE2b` pre-hash, so length costs
-/// nothing the way bcrypt's 72-byte truncation did. This limit is therefore not
-/// the algorithm's; it is the "maximum input length" the OWASP Authentication
-/// Cheat Sheet asks of a comparison function, set far enough out to be a
-/// backstop against absurd input rather than a constraint anyone meets.
-///
-/// A kilobyte is 1024 ASCII characters, or roughly 341 Traditional Chinese ones
-/// — comfortably past the 64 the cheat sheet asks be supported, which the old
-/// bcrypt ceiling could not honour for a non-ASCII passphrase.
+/// Not the algorithm's ceiling — RFC 9106 allows 2^32-1 bytes and the password
+/// only feeds a linear `BLAKE2b` pre-hash, so length costs nothing the way
+/// bcrypt's 72-byte truncation did. It is the "maximum input length" the OWASP
+/// Authentication Cheat Sheet asks of a comparison function, set as a backstop
+/// against absurd input. A kilobyte is 1024 ASCII characters or roughly 341
+/// Traditional Chinese ones, comfortably past the 64 the cheat sheet asks be
+/// supported — which the old bcrypt ceiling could not honour for a non-ASCII
+/// passphrase.
 pub const MAX_PASSWORD_BYTES: usize = 1024;
 
 /// Shortest password `hash-password` accepts without comment, in **characters**.
 ///
 /// The OWASP Authentication Cheat Sheet calls a password under 15 characters
-/// weak when no second factor is available, and comics has none. It is advice
-/// here rather than a rule: this is a single-account service whose one user is
-/// also its operator, so the length of their own password is their call, and a
-/// hard floor would only have taught them to generate the hash elsewhere.
+/// weak when no second factor is available, and comics has none. Advice rather
+/// than a rule: the one user is also the operator, so their own password length
+/// is their call, and a hard floor would only teach them to generate the hash
+/// elsewhere.
 ///
-/// Counted in characters where [`MAX_PASSWORD_BYTES`] counts bytes, and the
-/// asymmetry is deliberate. The ceiling is about *resource use*, which is
-/// measured in bytes. The floor is about how much a person had to remember,
-/// which is measured in characters — a 15-byte floor would let a Traditional
-/// Chinese passphrase through at five characters, a third of what is asked of
-/// an ASCII one.
+/// Counted in characters where [`MAX_PASSWORD_BYTES`] counts bytes: the ceiling
+/// is about resource use, the floor about how much a person had to remember. A
+/// 15-*byte* floor would pass a Traditional Chinese passphrase at five
+/// characters, a third of what is asked of an ASCII one.
 pub const MIN_PASSWORD_CHARS: usize = 15;
 
 /// How many password verifications may run at once.
 ///
-/// Argon2id at the parameters below allocates **19 MiB per verification**, where
-/// bcrypt used about four kilobytes. That is the price of being memory-hard, and
-/// it is the point — but it means concurrency has to be bounded, or the twenty
-/// attempts a minute the rate limiter admits could arrive together and ask for
-/// 380 MiB at once. This machine may well be a NAS.
-///
-/// Four keeps the ceiling near 76 MiB while leaving room for a household's worth
-/// of simultaneous sign-ins; beyond that, requests queue for the ~15 ms a
-/// verification takes rather than being refused.
+/// Argon2id at the parameters below allocates **19 MiB per verification**,
+/// against bcrypt's four kilobytes. Being memory-hard is the point, but it means
+/// concurrency has to be bounded, or the twenty attempts a minute the rate
+/// limiter admits could ask for 380 MiB at once — on what may well be a NAS.
+/// Four caps it near 76 MiB while leaving room for a household's simultaneous
+/// sign-ins; beyond that requests queue for the ~15 ms, rather than being
+/// refused.
 pub const MAX_CONCURRENT_VERIFICATIONS: usize = 4;
 
 /// An Argon2 hash at parameters far below the real ones.
 ///
-/// Test-only. Verification reads its parameters from the hash itself, so what
-/// the tests exercise is the same code path the server runs — they simply are
-/// not made to pay 19 MiB and ~25 ms for each fixture. One mebibyte and a single
-/// pass still leave a verification three orders of magnitude above a string
-/// comparison, which is what the timing test needs.
+/// Test-only. Verification reads its parameters from the hash itself, so the
+/// tests exercise the server's code path without paying 19 MiB and ~25 ms per
+/// fixture. One mebibyte and one pass still leave a verification three orders of
+/// magnitude above a string comparison, which is what the timing test needs.
 #[cfg(test)]
 pub(crate) fn test_password_hash(password: &str) -> String {
     use argon2::{

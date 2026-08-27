@@ -7,14 +7,13 @@
 //! [`Browser::open`] says so in as many words when it is missing, because the
 //! raw driver error does not.
 //!
-//! Both emulations go through CDP rather than `BiDi`. `Emulation.setEmulatedMedia`
-//! is the only way to reach `prefers-color-scheme` at all — `BiDi` has no
-//! equivalent. `Emulation.setScriptExecutionDisabled` is a choice: `BiDi`'s
-//! `emulation.setScriptingEnabled` would also work, but it would pull in the
+//! Both emulations go through CDP rather than `BiDi`.
+//! `Emulation.setEmulatedMedia` is the only way to reach
+//! `prefers-color-scheme` at all. `Emulation.setScriptExecutionDisabled` is a
+//! choice: `BiDi`'s `emulation.setScriptingEnabled` would work, but pulls in the
 //! non-default `bidi` feature and a WebSocket stack for something CDP already
-//! does over the connection we have. It is also what Playwright's
-//! `javaScriptEnabled: false` did underneath, so the `@nojs` scenarios are
-//! running against the same mechanism as before.
+//! does over the connection we have — and it is what Playwright's
+//! `javaScriptEnabled: false` did underneath anyway.
 
 use std::time::Duration;
 
@@ -24,9 +23,9 @@ use thirtyfour::prelude::*;
 /// How long a query waits for a condition before giving up.
 ///
 /// Only ever paid in full by a genuine failure, so it is set for the slowest
-/// machine that runs this rather than the fastest: locally every wait settles
-/// in well under a second, while a two-core CI runner driving several browsers
-/// took longer than the original 10 s to land a navigation.
+/// machine rather than the fastest: locally every wait settles well under a
+/// second, while a two-core CI runner driving several browsers took longer than
+/// the original 10 s to land a navigation.
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How often a query re-checks while waiting.
@@ -52,11 +51,6 @@ pub struct Browser {
 
 impl Browser {
     /// Starts a headless session with the page's scripts on or off.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no local browser is installed, when the driver cannot be
-    /// downloaded, or when the session cannot be created.
     pub async fn open(scripting: Scripting) -> Result<Self> {
         let mut caps = DesiredCapabilities::chrome();
         caps.set_headless()?;
@@ -64,15 +58,13 @@ impl Browser {
         // Containers get a 64 MB /dev/shm by default, which Chrome outgrows.
         caps.add_arg("--disable-dev-shm-usage")?;
         // Chrome backgrounds a window it believes nobody is looking at, and a
-        // backgrounded renderer throttles its timers and stops servicing input
-        // promptly — while script driven over CDP keeps answering, because that
-        // path is not throttled. That is the exact shape of the clicks CI
-        // drops: `elementFromPoint` still names the element, `readyState` is
-        // `complete`, and the click does nothing, for every session at once.
+        // backgrounded renderer throttles timers and stops servicing input
+        // promptly — while script driven over CDP keeps answering, that path
+        // being unthrottled. Exactly the shape of the clicks CI drops.
         //
-        // Playwright passed all three of these and the suite did not flake
-        // then; the port did not carry them over. They change nothing about
-        // what is being tested — only whether the browser is listening.
+        // Playwright passed all three of these and did not flake; the port did
+        // not carry them over. They change nothing about what is tested, only
+        // whether the browser is listening.
         caps.add_arg("--disable-backgrounding-occluded-windows")?;
         caps.add_arg("--disable-renderer-backgrounding")?;
         caps.add_arg("--disable-background-timer-throttling")?;
@@ -93,18 +85,11 @@ impl Browser {
     /// Downloads and starts the driver once, before any scenario asks for it.
     ///
     /// `WebDriver::managed` builds a *new* manager per call, so each session
-    /// prepares the driver for itself. That is harmless when it is already
-    /// cached and pathological when it is not: several sessions opening at once
-    /// on a cold cache all try to download the same driver and contend on its
-    /// lock file, which is a stall, not a slowdown. CI has a cold cache every
-    /// run, which is exactly where the scenarios run in parallel.
-    ///
-    /// One session opened and closed up front settles it — the download happens
-    /// once, and every later session finds the driver in place.
-    ///
-    /// # Errors
-    ///
-    /// Fails for the same reasons [`Browser::open`] does.
+    /// prepares the driver for itself: harmless when it is cached, and a stall
+    /// rather than a slowdown when it is not, as several sessions opening at
+    /// once contend on the same download's lock file. CI has a cold cache every
+    /// run, and is exactly where the scenarios run in parallel. One session
+    /// opened and closed up front settles it.
     pub async fn prepare() -> Result<()> {
         Self::open(Scripting::Enabled).await?.quit().await
     }
@@ -117,10 +102,6 @@ impl Browser {
 
     /// Emulates `prefers-color-scheme`, with no stored preference — the app's
     /// system-follow path, which is what the screenshots are meant to show.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn emulate_color_scheme(&self, scheme: &str) -> Result<()> {
         self.driver
             .cdp()
@@ -138,17 +119,10 @@ impl Browser {
     /// Is the element intersecting the viewport?
     ///
     /// Rebuilds Playwright's `toBeInViewport`, whose default ratio is "any
-    /// overlap at all". `WebElement::rect` reports document coordinates, so it
-    /// cannot answer this on its own once the page has scrolled.
-    ///
-    /// The driver can still inject script into a page whose *own* scripts are
-    /// disabled — `Emulation.setScriptExecutionDisabled` stops the document's
-    /// scripts, not `Execute Script` — so this works in the `@nojs` scenarios
-    /// too.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script cannot run or no element has that id.
+    /// overlap at all"; `WebElement::rect` reports document coordinates, so it
+    /// cannot answer this once the page has scrolled. Works under `@nojs` too:
+    /// `Emulation.setScriptExecutionDisabled` stops the document's scripts, not
+    /// `Execute Script`.
     pub async fn is_in_viewport(&self, id: &str) -> Result<bool> {
         let visible = self
             .driver
@@ -170,10 +144,6 @@ impl Browser {
     }
 
     /// Grows the viewport to `height`, so a screenshot catches the whole page.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn stretch_viewport_to(&self, height: u64) -> Result<()> {
         self.driver
             .cdp()
@@ -191,10 +161,6 @@ impl Browser {
     }
 
     /// Undoes [`Browser::stretch_viewport_to`].
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn reset_viewport(&self) -> Result<()> {
         self.driver
             .cdp()
@@ -207,10 +173,6 @@ impl Browser {
     }
 
     /// Ends the session.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the driver refuses to close.
     pub async fn quit(self) -> Result<()> {
         self.driver.quit().await?;
         Ok(())

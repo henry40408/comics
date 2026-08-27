@@ -23,11 +23,6 @@ use crate::browser::{WAIT_INTERVAL, WAIT_TIMEOUT};
 /// On timeout the failure names the last value seen, not merely that a wait
 /// expired — that is the difference between "the counter never reached 2" and a
 /// message you have to reproduce by hand to understand.
-///
-/// # Errors
-///
-/// Fails when `probe` errors, or when the value has still not matched by
-/// [`WAIT_TIMEOUT`].
 pub async fn eventually_eq<T, E, F, Fut>(what: &str, expected: E, mut probe: F) -> Result<()>
 where
     T: Debug,
@@ -50,11 +45,6 @@ where
 }
 
 /// Polls `probe` until it reports `true`.
-///
-/// # Errors
-///
-/// Fails when `probe` errors, or when it has still not held by
-/// [`WAIT_TIMEOUT`].
 pub async fn eventually<F, Fut>(what: &str, mut probe: F) -> Result<()>
 where
     F: FnMut() -> Fut,

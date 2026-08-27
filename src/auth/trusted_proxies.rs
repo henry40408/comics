@@ -6,18 +6,16 @@ use ipnet::IpNet;
 /// The reverse proxies whose forwarding headers comics is willing to believe.
 ///
 /// Empty by default, and empty means **trust nothing**: the rate-limit key is
-/// the TCP peer and `X-Forwarded-For` is ignored outright. That default is the
-/// whole point of the type. Anyone who can reach the port can write the header,
-/// so which peers are allowed to is a statement only the operator can make —
-/// the rule this replaced ("believe the header when the peer is loopback")
-/// guessed at it from the network topology, and guessed wrong in both
-/// directions: it trusts any process sharing the host, and it distrusts a proxy
-/// running as a sibling container, which is the common deployment.
+/// the TCP peer and `X-Forwarded-For` is ignored outright. Anyone who can reach
+/// the port can write the header, so which peers may is a statement only the
+/// operator can make — the rule this replaced ("believe it from loopback")
+/// guessed from network topology and guessed wrong both ways: it trusts any
+/// process sharing the host, and distrusts a proxy in a sibling container.
 ///
-/// Entries are CIDR prefixes or bare addresses (a bare address is its own
-/// single-host prefix). The list does double duty: it decides whether the peer
-/// may speak at all, *and* which hops inside `X-Forwarded-For` are infrastructure
-/// rather than clients — see [`rate_limit_key`](super::rate_limit_key).
+/// Entries are CIDR prefixes or bare addresses (their own single-host prefix).
+/// The list does double duty: whether the peer may speak at all, *and* which
+/// hops inside `X-Forwarded-For` are infrastructure rather than clients — see
+/// [`rate_limit_key`](super::rate_limit_key).
 #[derive(Clone, Debug, Default)]
 pub struct TrustedProxies(Vec<IpNet>);
 
@@ -27,10 +25,9 @@ impl TrustedProxies {
         self.0.is_empty()
     }
 
-    /// The address is canonicalised first, so a dual-stack listener reporting a
-    /// peer as `::ffff:10.0.0.2` still matches a `10.0.0.0/8` entry. Without
-    /// that, an operator who wrote the obvious IPv4 prefix would silently get no
-    /// match at all on a `[::]`-bound socket.
+    /// Canonicalised first, so a dual-stack listener reporting a peer as
+    /// `::ffff:10.0.0.2` still matches a `10.0.0.0/8` entry — otherwise the
+    /// obvious IPv4 prefix silently never matches on a `[::]`-bound socket.
     pub fn contains(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();
         self.0.iter().any(|net| net.contains(&ip))
@@ -40,10 +37,9 @@ impl TrustedProxies {
 impl FromStr for TrustedProxies {
     type Err = anyhow::Error;
 
-    /// Empty entries are skipped so a trailing comma — or an env var set to the
-    /// empty string, which is how a container image ends up passing "unset" —
-    /// is not an error. A bare address parses as a single-host prefix, since
-    /// `10.0.0.1` is what an operator writes when they mean `10.0.0.1/32`.
+    /// Empty entries are skipped, so a trailing comma — or the empty string a
+    /// container image passes for "unset" — is not an error. A bare address
+    /// parses as a single-host prefix: `10.0.0.1` means `10.0.0.1/32`.
     fn from_str(raw: &str) -> anyhow::Result<Self> {
         let mut nets = Vec::new();
         for entry in raw.split(',') {

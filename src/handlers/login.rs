@@ -50,14 +50,12 @@ pub struct LoginForm {
 
 /// Verify `password` against a stored Argon2 PHC string.
 ///
-/// The parameters come from the stored hash, not from [`Argon2::default`], so a
-/// hash produced by an older build — or a future one with a heavier cost — keeps
-/// verifying without a migration. `Argon2::default()` supplies only the
-/// algorithm implementation.
-///
-/// An unparseable hash is a refusal rather than a panic. It should be
-/// unreachable: `ensure_password_hash_is_usable` rejects one at startup, which
-/// is where an operator can actually act on it.
+/// The parameters come from the stored hash, not from [`Argon2::default`] —
+/// which supplies only the algorithm implementation — so a hash from an older
+/// build, or a future one with a heavier cost, keeps verifying without a
+/// migration. An unparseable hash refuses rather than panicking; it should be
+/// unreachable, since `ensure_password_hash_is_usable` rejects one at startup,
+/// where an operator can act on it.
 fn verify_password_hash(password: &str, stored: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(stored) else {
         return false;
@@ -72,17 +70,14 @@ fn verify_password_hash(password: &str, stored: &str) -> bool {
 ///
 /// **Both halves always run.** The obvious spelling — `username == expected &&
 /// verify(…)` — short-circuits, so a wrong username answers in microseconds
-/// while a wrong password pays for a full Argon2id verification (~15 ms). The
-/// response is byte-identical either way, but the *timing* is not, and that
-/// discrepancy is enough to enumerate the username: exactly the "quick exit"
-/// pattern the OWASP Authentication Cheat Sheet warns against under
-/// *Authentication and Error Messages*. So the verification is computed
-/// unconditionally and combined with a bitwise `&` on [`Choice`], which — unlike
-/// `&&` — is not a control-flow branch.
-///
-/// The username comparison is [`ConstantTimeEq`] for the same reason at a
-/// smaller scale; it still reveals whether the lengths match, which is inherent
-/// to comparing at all and says nothing an attacker can act on.
+/// while a wrong password pays a full Argon2id verification (~15 ms). The
+/// responses are byte-identical; the *timing* is not, and that is enough to
+/// enumerate the username — the "quick exit" the OWASP Authentication Cheat
+/// Sheet warns against under *Authentication and Error Messages*. So the
+/// verification runs unconditionally and is combined with a bitwise `&` on
+/// [`Choice`], which unlike `&&` is not a branch. The username comparison is
+/// [`ConstantTimeEq`] for the same reason; it still reveals whether the lengths
+/// match, which is inherent to comparing at all.
 ///
 /// Callers must hold a permit from `AppState::verify_sem` — each call allocates
 /// [`MAX_CONCURRENT_VERIFICATIONS`]-worth of memory-hard state.
@@ -110,21 +105,19 @@ pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> 
 
 /// Constrain a post-login redirect target to a local path.
 ///
-/// Two things are checked, and both are load-bearing.
-///
 /// **It must be a path, not an authority.** A leading `//` makes the rest a
 /// host, so `//evil.example` is an absolute URL wearing a path's clothes. So is
-/// `/\evil.example`: the WHATWG URL parser treats a backslash as a slash for
-/// http(s), so browsers resolve `Location: /\evil.example` to `//evil.example`
-/// and follow it off-site. Testing only for `//` therefore left the open
-/// redirect open — the second character has to be neither.
+/// `/\evil.example`: the WHATWG URL parser reads a backslash as a slash for
+/// http(s), so browsers resolve `Location: /\evil.example` off-site. Testing
+/// only for `//` left the open redirect open — the second character has to be
+/// neither.
 ///
 /// **It must survive being put in a header.** `Redirect::to` *panics* on a value
 /// `HeaderValue` will not take, and `next` arrives percent-decoded, so
-/// `?next=/%0Ax` reaches here holding a real newline. Validating here rather
-/// than trusting the caller keeps a crafted query string from taking the
-/// connection down — reachable without credentials, since `GET /login` redirects
-/// before authenticating whenever auth is disabled.
+/// `?next=/%0Ax` reaches here holding a real newline. Checking it here keeps a
+/// crafted query string from taking the connection down — reachable without
+/// credentials, since `GET /login` redirects before authenticating when auth is
+/// disabled.
 fn safe_next(next: &str) -> String {
     let mut chars = next.chars();
     let is_local_path = chars.next() == Some('/') && !matches!(chars.next(), Some('/' | '\\'));
@@ -171,13 +164,12 @@ fn render_login(error: bool, next: &str) -> Response {
 /// Stamp `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0 caches) on a
 /// response.
 ///
-/// The cheat sheet asks for `no-store` specifically on responses that carry a
-/// session ID, and the two that do are redirects: the 303 that issues the cookie
-/// and the 303 that removes it. Neither is reached by the `no_store_html`
-/// middleware — `/login` and `/logout` sit outside the auth layer, and a
-/// redirect is not `text/html` anyway — so it has to be done here. Redirects are
-/// rarely cached without explicit freshness, but "rarely" is not a property to
-/// hang a `Set-Cookie` on.
+/// The cheat sheet asks for `no-store` on responses carrying a session ID, and
+/// the two that do are redirects: the 303 issuing the cookie and the 303
+/// removing it. `no_store_html` reaches neither — `/login` and `/logout` sit
+/// outside the auth layer, and a redirect is not `text/html` — so it happens
+/// here. Redirects are rarely cached without explicit freshness, but "rarely" is
+/// not a property to hang a `Set-Cookie` on.
 fn set_no_store(response: &mut Response) {
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -203,11 +195,9 @@ fn set_session_cookie(response: &mut Response, state: &Arc<AppState>, user_agent
 static CLEAR_SITE_DATA: HeaderName = HeaderName::from_static("clear-site-data");
 
 /// The quotes are part of the grammar — each directive is a quoted string — so
-/// they must survive any future tidy-up of this literal.
-///
-/// `"executionContexts"` is deliberately omitted: it forces a reload of the
-/// browsing context, which duplicates and can interfere with the 303 to
-/// `/login` that logout already performs.
+/// they must survive any tidy-up of this literal. `"executionContexts"` is
+/// omitted: it forces a reload of the browsing context, duplicating and possibly
+/// interfering with the 303 logout already performs.
 const CLEAR_SITE_DATA_VALUE: &str = "\"cache\", \"cookies\", \"storage\"";
 
 /// `GET /login` — render the login form. Skips it (redirecting home) when auth
@@ -313,13 +303,12 @@ pub async fn login_submit_route(
 /// `POST /logout` — end every live session, clear the cookie, redirect to the
 /// login form.
 ///
-/// Sessions are destroyed **server-side** first, which is the half the OWASP
-/// Session Expiration guidance calls mandatory: the removal cookie and
-/// `Clear-Site-Data` below only ask the browser to forget, which does nothing
-/// about a copy taken earlier — and ending *every* session is what lets a reader
-/// who suspects such a copy invalidate it. See
-/// [`crate::auth::SessionStore::destroy_all`] for why store membership is what
-/// authorises that on an otherwise public route.
+/// Sessions are destroyed **server-side** first, the half OWASP's Session
+/// Expiration guidance calls mandatory: the removal cookie and `Clear-Site-Data`
+/// below only ask the browser to forget, which does nothing about a copy taken
+/// earlier — and ending *every* session is what lets a reader who suspects one
+/// invalidate it. See [`crate::auth::SessionStore::destroy_all`] for why store
+/// membership authorises that on an otherwise public route.
 pub async fn logout_route(
     State(state): State<Arc<AppState>>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -532,11 +521,10 @@ mod tests {
         assert!(verify_credentials(&AuthConfig::None, "", ""));
     }
 
-    /// A stored hash the parser rejects refuses everything, rather than panicking
-    /// or — far worse — accepting. `ensure_password_hash_is_usable` stops the
-    /// server before this can happen, but the login route must not *depend* on
-    /// that having run: the two are reached by different entry points, and only
-    /// one of them is the server.
+    /// A stored hash the parser rejects refuses everything, rather than
+    /// panicking or — far worse — accepting. `ensure_password_hash_is_usable`
+    /// stops the server first, but the route must not *depend* on it having run:
+    /// the two are reached by different entry points.
     #[test]
     fn an_unusable_stored_hash_refuses_every_password() {
         for stored in ["", "not-a-hash", "$argon2id$v=19$m=19456$nope"] {
@@ -601,10 +589,9 @@ mod tests {
         assert!(!logs.contains("login_lockout"), "{logs}");
     }
 
-    /// The account-wide lockout is a different event, and must not hide inside
-    /// the ordinary one: it says several addresses are guessing *and* that the
-    /// reader cannot sign in either. Burying it under `login_rate_limited` is
-    /// what this whole distinction exists to prevent.
+    /// The account-wide lockout is a different event: it says several addresses
+    /// are guessing *and* that the reader cannot sign in either. Burying it
+    /// under `login_rate_limited` is what the distinction exists to prevent.
     #[tokio::test]
     async fn a_global_lockout_logs_its_own_event() {
         let capture = Capture::default();
@@ -676,10 +663,10 @@ mod tests {
         assert!((1..=60).contains(&seconds), "Retry-After: {seconds}");
     }
 
-    /// A permit that cannot be had is a *server* fault, and must not be reported
-    /// as a rejected password: the reader would retype a correct password for as
-    /// long as their patience held. Unreachable while nothing closes the
-    /// semaphore, which is exactly why the branch needs a test of its own.
+    /// A permit that cannot be had is a *server* fault, not a rejected password
+    /// — the reader would retype a correct one for as long as their patience
+    /// held. Unreachable while nothing closes the semaphore, which is exactly
+    /// why the branch needs a test of its own.
     #[tokio::test]
     async fn a_closed_verification_semaphore_is_not_reported_as_a_bad_password() {
         let state = test_state();
@@ -701,15 +688,13 @@ mod tests {
     }
 
     /// Regression: the check was `username == expected && bcrypt::verify(…)`,
-    /// which short-circuits — so a wrong username answered in microseconds while
-    /// a wrong password paid for a whole verification. The bodies were identical,
-    /// but the response *time* enumerated the username anyway.
+    /// which short-circuits, so the response *time* enumerated the username even
+    /// though the bodies were identical.
     ///
     /// Cost 8 puts a verification four orders of magnitude above the string
-    /// comparison a short circuit would leave, so the ratio has room to spare and
-    /// does not need a quiet machine. `[profile.dev.package."*"]` optimises
-    /// bcrypt even in a debug build, which keeps this under a few tens of
-    /// milliseconds.
+    /// comparison a short circuit would leave, so the ratio does not need a quiet
+    /// machine. `[profile.dev.package."*"]` optimises bcrypt even in a debug
+    /// build, keeping this to tens of milliseconds.
     #[test]
     fn wrong_username_costs_what_a_wrong_password_costs() {
         let auth = AuthConfig::Some {
@@ -735,10 +720,9 @@ mod tests {
     /// Argon2 reads the whole password, so a long one is not its own prefix.
     ///
     /// Under bcrypt every string sharing the first 72 bytes verified against the
-    /// same hash, which made a 100-byte password plus *any* suffix a valid
-    /// credential. Both assertions below held only because comics refused
-    /// anything past 72 bytes outright; now the length is unremarkable and the
-    /// property comes from the algorithm.
+    /// same hash, making a 100-byte password plus *any* suffix a valid
+    /// credential; the assertions below held only because comics refused
+    /// anything past 72 bytes. Now the property comes from the algorithm.
     #[test]
     fn a_long_password_is_not_merely_its_own_prefix() {
         let password = "x".repeat(100);
@@ -756,10 +740,9 @@ mod tests {
         assert!(!verify_credentials(&auth, "alice", &"x".repeat(99)));
     }
 
-    /// A Traditional Chinese passphrase costs three bytes per character, which
-    /// under bcrypt meant a ceiling of 24 characters — inside what someone might
-    /// reasonably choose. A hundred of them is now ordinary, and every one of
-    /// them counts.
+    /// A Traditional Chinese passphrase costs three bytes per character, so
+    /// bcrypt's ceiling was 24 of them — inside what someone might reasonably
+    /// choose. A hundred is now ordinary, and every one counts.
     #[test]
     fn a_chinese_passphrase_is_not_cut_short() {
         let password = "密".repeat(100);

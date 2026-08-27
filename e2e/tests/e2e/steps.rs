@@ -12,8 +12,6 @@ use comics_e2e::wait::{eventually, eventually_eq};
 use comics_e2e::world::ComicsWorld;
 use cucumber::{given, then, when};
 
-// --- login ---------------------------------------------------------------
-
 #[given("I am on the login page")]
 async fn on_the_login_page(world: &mut ComicsWorld) -> anyhow::Result<()> {
     world.login_page()?.goto().await
@@ -55,8 +53,6 @@ async fn should_be_on_the_login_page(world: &mut ComicsWorld) -> anyhow::Result<
     .await
 }
 
-// --- library -------------------------------------------------------------
-
 #[given("I am logged in")]
 async fn logged_in(world: &mut ComicsWorld) -> anyhow::Result<()> {
     let login = world.login_page()?;
@@ -96,8 +92,6 @@ async fn should_be_in_the_reader(world: &mut ComicsWorld) -> anyhow::Result<()> 
     })
     .await
 }
-
-// --- reader --------------------------------------------------------------
 
 #[given("I am reading the first book")]
 async fn reading_the_first_book(world: &mut ComicsWorld) -> anyhow::Result<()> {
@@ -211,9 +205,8 @@ async fn topbar_page_number_hidden(world: &mut ComicsWorld) -> anyhow::Result<()
 #[then(expr = "the top bar should still read {string}")]
 async fn topbar_should_read(world: &mut ComicsWorld, text: String) -> anyhow::Result<()> {
     // Rendered text, not `textContent`: a `display: none` span keeps its
-    // characters in `textContent`, so that comparison could not tell a hidden
-    // counter from a visible one. WebDriver's "Get Element Text" is already the
-    // rendered form, which is what the old step asked for with `useInnerText`.
+    // characters in `textContent`, so that could not tell a hidden counter from
+    // a visible one. WebDriver's "Get Element Text" is already rendered.
     eventually_eq("the topbar subtitle", text.as_str(), || async {
         world.reader_page()?.topbar_subtitle().await
     })
@@ -246,8 +239,6 @@ async fn counter_should_read(world: &mut ComicsWorld, text: String) -> anyhow::R
 async fn log_out(world: &mut ComicsWorld) -> anyhow::Result<()> {
     world.library_page()?.logout().await
 }
-
-// --- helpers -------------------------------------------------------------
 
 /// Playwright's `toBeHidden`: absent counts as hidden, which is what the
 /// script-less templates rely on for controls only a script can operate.
