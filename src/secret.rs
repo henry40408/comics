@@ -82,7 +82,7 @@ impl FromStr for Secret {
             );
         }
         let mut bytes = Vec::with_capacity(raw.len() / 2);
-        for pair in raw.as_bytes().chunks_exact(2) {
+        for pair in raw.as_bytes().as_chunks::<2>().0 {
             let hex = std::str::from_utf8(pair).unwrap_or("");
             bytes.push(u8::from_str_radix(hex, 16).context(
                 "secret must be hex characters only; \
@@ -134,6 +134,16 @@ mod tests {
         assert!(parse(LONGER).is_ok());
         assert!(parse(&format!("  {VALID}\n")).is_ok());
         assert!(parse(&VALID.to_uppercase()).is_ok());
+    }
+
+    /// The acceptance test above only asserts `is_ok()`, which leaves the
+    /// decoding loop unpinned: a dropped trailing pair or a reordered byte
+    /// would still parse. Round-tripping through `hex_lower` pins it.
+    #[test]
+    fn decodes_every_hex_pair_in_order() {
+        assert_eq!(VALID, hex_lower(&parse(VALID).unwrap().0));
+        assert_eq!(LONGER, hex_lower(&parse(LONGER).unwrap().0));
+        assert_eq!(VALID, hex_lower(&parse(&VALID.to_uppercase()).unwrap().0));
     }
 
     #[test]
