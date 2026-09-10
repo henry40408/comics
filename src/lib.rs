@@ -1,6 +1,5 @@
 pub mod assets;
 pub mod auth;
-pub mod csrf;
 pub mod error;
 pub mod handlers;
 pub mod helpers;
@@ -17,7 +16,6 @@ pub use auth::{
     SessionStore, TrustedProxies, auth_middleware_fn, build_session_removal_cookie, rate_limit_key,
     session_cookie_name,
 };
-pub use csrf::csrf_origin_guard;
 pub use error::{AppError, AppResult};
 pub use handlers::{
     Healthz, healthz_route, index_route, login_route, login_submit_route, logout_route,

@@ -17,7 +17,10 @@ use tokio::{
         oneshot::{self, Sender},
     },
 };
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tower_http::{
+    csrf::CsrfLayer,
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+};
 use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     Layer as _, Registry, filter::Targets, fmt::format::FmtSpan, layer::Filter,
@@ -28,8 +31,8 @@ use comics::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, AppState, AuthConfig, DEFAULT_ABSOLUTE_TTL,
     DEFAULT_IDLE_TTL, FAVICON_PNG, FAVICON_SVG, MAX_CONCURRENT_VERIFICATIONS, MAX_PASSWORD_BYTES,
     MIN_PASSWORD_CHARS, RateLimiter, Secret, SessionAuditSalt, SessionStore, THEME_JS,
-    TrustedProxies, VERSION, auth_middleware_fn, csrf_origin_guard, healthz_route, index_route,
-    login_route, login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
+    TrustedProxies, VERSION, auth_middleware_fn, healthz_route, index_route, login_route,
+    login_submit_route, logout_route, no_store_html, rescan_books_route, scan_books,
     security_headers_layer, show_book_route, show_page_route, show_thumb_route, shuffle_book_route,
     shuffle_route,
 };
@@ -115,7 +118,8 @@ struct Opts {
     /// the operator out of the login form with no way back. Serving over HTTPS
     /// fixes it without giving anything up; prefer that. What is left when this
     /// is set is the cookie's `SameSite=Strict`, which is what actually keeps a
-    /// cross-site POST from carrying credentials — see `csrf.rs`.
+    /// cross-site POST from carrying credentials — see the comment on the layer
+    /// in `init_route`.
     #[arg(
         long,
         env = "COMICS_DISABLE_CSRF_GUARD",
@@ -302,10 +306,41 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         );
 
-    // Global outer layer so the check also covers the public `/login` and
-    // `/logout` POSTs; inert for safe methods, so every asset/image GET passes
-    // untouched. Skipped entirely rather than made permissive when disabled,
-    // leaving no classification logic to get wrong.
+    // Stateless fetch-metadata CSRF check (`Sec-Fetch-Site`, with an
+    // `Origin`/effective-host fallback and no per-request token). The
+    // classification rules are `tower_http::csrf`'s — read that module's docs
+    // before reasoning about a specific header combination.
+    //
+    // It goes on as a global outer layer so the check also covers the public
+    // `/login` and `/logout` POSTs, which sit outside the auth layer; it is
+    // inert for safe methods, so every asset/image/`/healthz` GET passes
+    // untouched.
+    //
+    // # The plain-HTTP LAN hole, and the escape hatch
+    //
+    // Fetch metadata is only sent to *potentially trustworthy* origins — HTTPS,
+    // or `localhost`. A plain-HTTP LAN host such as `http://nas.local` is
+    // neither, so no `Sec-Fetch-Site` ever arrives and every request falls
+    // through to the `Origin` branch. That is survivable until a browser
+    // reports an opaque `Origin: null` (a sandboxed iframe, or a privacy
+    // setting that suppresses the header): the login `POST` is then rejected,
+    // and because the operator cannot log in, there is no way back from inside
+    // the app.
+    //
+    // `--disable-csrf-guard` exists for exactly that dead end. It drops the
+    // layer rather than narrowing it with `CsrfLayer::with_insecure_bypass`:
+    // that predicate sees only the method and URI, never the headers, so it
+    // cannot be scoped to "an opaque origin" — the narrowest bypass expressible
+    // is the list of every unsafe route, which is what dropping the layer
+    // already means. Dropping it also leaves no classification logic behind to
+    // get wrong.
+    //
+    // Reaching the server over HTTPS or through a `localhost` tunnel restores
+    // `Sec-Fetch-Site` and fixes the same lockout while giving nothing up, so
+    // it is the better answer wherever it is available. What survives the
+    // escape hatch is the session cookie's `SameSite=Strict`, which is what
+    // actually stops a cross-site `POST` from carrying credentials; this layer
+    // is defence in depth on top of that, never the only lock.
     let router = if opts.disable_csrf_guard {
         warn!(
             "CSRF origin guard disabled by --disable-csrf-guard; every \
@@ -315,7 +350,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         );
         router
     } else {
-        router.layer(middleware::from_fn(csrf_origin_guard))
+        router.layer(CsrfLayer::new())
     };
 
     let router = router
@@ -684,6 +719,7 @@ mod tests {
     use axum_test::TestServer;
     use clap::Parser as _;
     use comics::{MAX_PASSWORD_BYTES, MIN_PASSWORD_CHARS, VERSION};
+    use http::Method;
     use tokio::sync::oneshot;
 
     /// Fixed secret so the derived ID seed — and therefore the URLs below — are
@@ -1031,6 +1067,82 @@ mod tests {
             .add_header("sec-fetch-site", "cross-site")
             .await;
         assert_eq!(200, res.status_code());
+    }
+
+    /// The standard proxied deployment: TLS terminates in front, so the
+    /// forwarded `Host` carries no scheme and no port while the browser's
+    /// `Origin` carries `https://`. Their authorities still match, so the check
+    /// passes with no public URL configured anywhere. This is what the
+    /// hand-rolled guard's host-only comparison existed to protect, and it
+    /// survives the byte-exact authority comparison unchanged.
+    #[tokio::test]
+    async fn csrf_tls_terminating_proxy_origin_matches_forwarded_host() {
+        let server = build_server().await;
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "https://app.example.com")
+            .add_header("host", "app.example.com")
+            .await;
+        assert_eq!(303, res.status_code());
+    }
+
+    /// `Sec-Fetch-Site: same-site` is rejected, not allowed. comics is a single
+    /// origin, so its own forms always report `same-origin`; a `same-site` POST
+    /// came from a sibling host and has no legitimate reason to change state
+    /// here.
+    #[tokio::test]
+    async fn csrf_same_site_post_is_forbidden() {
+        let server = build_server().await;
+        let res = server
+            .post("/shuffle")
+            .add_header("sec-fetch-site", "same-site")
+            .await;
+        assert_eq!(403, res.status_code());
+    }
+
+    /// The `Origin`/host fallback compares the full authority, port included, so
+    /// a port on one side and not the other is a mismatch. Only reachable
+    /// without `Sec-Fetch-Site`, i.e. from a plain-HTTP host, where the browser
+    /// puts the same port in both headers.
+    #[tokio::test]
+    async fn csrf_origin_fallback_compares_the_port_too() {
+        let server = build_server().await;
+
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "http://nas.local:8080")
+            .add_header("host", "nas.local:8080")
+            .await;
+        assert_eq!(303, res.status_code());
+
+        let res = server
+            .post("/shuffle")
+            .add_header("origin", "http://nas.local:8080")
+            .add_header("host", "nas.local")
+            .await;
+        assert_eq!(403, res.status_code());
+    }
+
+    /// A non-browser client sends neither header. It rides no ambient session
+    /// cookie, so it is not a CSRF vector and is let through.
+    #[tokio::test]
+    async fn csrf_client_sending_neither_header_is_allowed() {
+        let server = build_server().await;
+        let res = server.post("/shuffle").await;
+        assert_eq!(303, res.status_code());
+    }
+
+    /// `TRACE` is "safe" per RFC 7231 but is not exempt here — the exempt set is
+    /// `GET`/`HEAD`/`OPTIONS`, so a cross-site `TRACE` is refused by the guard
+    /// rather than falling through to the router's 405.
+    #[tokio::test]
+    async fn csrf_cross_site_trace_is_forbidden() {
+        let server = build_server().await;
+        let res = server
+            .method(Method::TRACE, "/shuffle")
+            .add_header("sec-fetch-site", "cross-site")
+            .await;
+        assert_eq!(403, res.status_code());
     }
 
     #[test]

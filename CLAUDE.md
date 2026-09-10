@@ -2,7 +2,7 @@
 
 Guidance for Claude Code (claude.ai/code) working in this repository.
 
-Design rationale is deliberately **not** duplicated here — it lives in the module-level doc comments (`csrf.rs`, `auth/session.rs`, `auth/ratelimit.rs`, `auth/trusted_proxies.rs`, `secret.rs`, `security_headers.rs`). Read those before changing anything security-related.
+Design rationale is deliberately **not** duplicated here — it lives in the module-level doc comments (`auth/session.rs`, `auth/ratelimit.rs`, `auth/trusted_proxies.rs`, `secret.rs`, `security_headers.rs`), and for CSRF in the comment on the layer in `init_route`. Read those before changing anything security-related.
 
 ## Overview
 
@@ -37,7 +37,6 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 | `models/` | `scan_books` (parallel via `rayon`) → `BookScan` with `books_map` / `pages_map` for O(1) lookup; IDs are `xxh3(seed, …)` (`ids.rs`) |
 | `handlers/` | One module per route: `index`, `book`, `page`, `thumb`, `shuffle`, `rescan`, `login`, `health` |
 | `auth/` | `config`, `session`, `middleware`, `ratelimit`, `trusted_proxies`, `audit` |
-| `csrf.rs` | Stateless `Sec-Fetch-Site`/`Origin` check on unsafe methods; global outer layer, omitted entirely under `COMICS_DISABLE_CSRF_GUARD` |
 | `security_headers.rs` | `security_headers_layer` (global: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-*`, `Permissions-Policy`, plus HSTS when `COMICS_HSTS_MAX_AGE` is set), `no_store_html` (inside auth) |
 | `secret.rs` | `Secret` → `session_key()` (SHA-512) and `id_seed()` (SHA-256), each domain-separated |
 | `state.rs` | `AppState`: signing `Key`, `RwLock<Option<BookScan>>`, cache dir, thumbnail `Semaphore` |
@@ -53,7 +52,19 @@ Protected: `GET /`, `GET /book/{id}` (`?mode=paged|scroll`), `GET /data/{id}` (p
 
 Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, and the static assets (`/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`).
 
-Layers, outermost first: `security_headers_layer` → `csrf_origin_guard` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`. `COMICS_DISABLE_CSRF_GUARD` drops `csrf_origin_guard` out of that chain — it is an escape hatch for plain-HTTP LAN hosts that get no `Sec-Fetch-Site` and an opaque `Origin: null`, which otherwise locks the operator out of the login form. See the `csrf.rs` module docs before touching it.
+Layers, outermost first: `security_headers_layer` → `CsrfLayer` → `TraceLayer` → *(protected only)* `auth_middleware_fn` → `no_store_html`. `COMICS_DISABLE_CSRF_GUARD` drops `CsrfLayer` out of that chain — it is an escape hatch for plain-HTTP LAN hosts that get no `Sec-Fetch-Site` and an opaque `Origin: null`, which otherwise locks the operator out of the login form. Read the comment on the layer in `init_route` before touching it.
+
+### CSRF
+
+`tower_http::csrf::CsrfLayer` (the `csrf` feature on a `tower-http` we already depend on) does the check: the fetch-metadata scheme from Go 1.25 — `Sec-Fetch-Site` first, an `Origin`/effective-host fallback behind it, no per-request token and no state. It replaced a hand-rolled `src/csrf.rs` that implemented the same scheme; three of its rules differ, and the `csrf_*` tests in `main.rs` pin each one:
+
+- **`Sec-Fetch-Site: same-site` is rejected**, where the old module allowed it. comics is a single origin, so its own forms report `same-origin`.
+- **The `Origin`/host fallback compares the whole authority byte-for-byte**, port included, where the old module compared host alone. The case that motivated host-only — a TLS-terminating proxy forwarding a schemeless, portless `Host` against a `https://` `Origin` — still matches, and the fallback is only reached when `Sec-Fetch-Site` is absent, i.e. from a plain-HTTP host, where the browser puts the same port in both headers. `add_trusted_origin` is the escape valve if a proxy ever does rewrite the port alone.
+- **`TRACE` is not exempt.** The exempt set is `GET`/`HEAD`/`OPTIONS`, matching the reference implementation rather than RFC 7231's "safe" set.
+
+The effective host is the request-target authority (HTTP/2 `:authority`) when there is one, and the `Host` header otherwise — so a proxy that rewrites `Host` to an internal name degrades the fallback, exactly as upstream's docs warn.
+
+Rejections carry a `ProtectionError` in the response extensions, distinguishing an explicit cross-origin rejection from a conservative fallback one. Nothing reads it yet; `auth/audit.rs` is where it would go.
 
 ### Content-Security-Policy
 
