@@ -11,7 +11,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.102"
-argon2 = "0.5.3"
+argon2 = "0.6.0"
 askama = "0.16.0"
 axum = "0.8.9"
 chrono = "0.4.44"
