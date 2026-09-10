@@ -76,14 +76,11 @@ pub const MAX_CONCURRENT_VERIFICATIONS: usize = 4;
 /// magnitude above a string comparison, which is what the timing test needs.
 #[cfg(test)]
 pub(crate) fn test_password_hash(password: &str) -> String {
-    use argon2::{
-        Algorithm, Argon2, Params, PasswordHasher as _, Version,
-        password_hash::{SaltString, rand_core::OsRng},
-    };
+    use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher as _, Version};
     let params = Params::new(1024, 1, 1, None).expect("valid test parameters");
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    argon
-        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
-        .expect("hashing a test password")
-        .to_string()
+    let hash: PasswordHash = argon
+        .hash_password(password.as_bytes())
+        .expect("hashing a test password");
+    hash.to_string()
 }
