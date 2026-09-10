@@ -1,10 +1,7 @@
 use std::{io, io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
 use anyhow::{anyhow, bail};
-use argon2::{
-    Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _,
-    password_hash::{SaltString, rand_core::OsRng},
-};
+use argon2::{Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
 use axum::{
     Router, middleware,
     routing::{get, post},
@@ -380,11 +377,12 @@ const BCRYPT_PREFIXES: [&str; 4] = ["$2a$", "$2b$", "$2x$", "$2y$"];
 /// looser than it looks: `PasswordHash::new` accepts
 /// `$argon2id$v=19$m=19456$nope`, a salt with no digest, because that shape is
 /// legal as *input* to a hasher — and `PasswordVerifier` then reports the
-/// missing digest as `Error::Password`, the same answer a wrong password gets.
-/// So `parsed.hash` is checked directly, and only then does `Error::Password`
-/// mean what it looks like. The verification still earns its ~15 ms and 19 MiB
-/// once at startup: it catches a well-formed hash the login route could not use
-/// anyway — another algorithm's, or one whose parameters do not reconstruct.
+/// missing digest as `Error::PasswordInvalid`, the same answer a wrong password
+/// gets. So `parsed.hash` is checked directly, and only then does
+/// `Error::PasswordInvalid` mean what it looks like. The verification still
+/// earns its ~15 ms and 19 MiB once at startup: it catches a well-formed hash
+/// the login route could not use anyway — another algorithm's, or one whose
+/// parameters do not reconstruct.
 fn ensure_password_hash_is_usable(opts: &Opts) -> anyhow::Result<()> {
     let Some(hash) = opts.auth_password_hash.as_deref() else {
         return Ok(());
@@ -414,7 +412,7 @@ fn ensure_password_hash_is_usable(opts: &Opts) -> anyhow::Result<()> {
         );
     }
     match Argon2::default().verify_password(b"", &parsed) {
-        Ok(()) | Err(argon2::password_hash::Error::Password) => Ok(()),
+        Ok(()) | Err(argon2::password_hash::Error::PasswordInvalid) => Ok(()),
         Err(err) => bail!(
             "COMICS_AUTH_PASSWORD_HASH cannot verify a password ({err}); \
              generate one with `comics hash-password`"
@@ -520,11 +518,10 @@ fn password_strength_warning(password: &str) -> Option<String> {
 /// comes out, so raising them later leaves existing hashes verifiable.
 fn argon2_hash(password: &str) -> anyhow::Result<String> {
     ensure_password_fits(password)?;
-    let salt = SaltString::generate(&mut OsRng);
-    Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|err| anyhow!("failed to hash the password: {err}"))?
-        .to_string())
+    let hash: PasswordHash = Argon2::default()
+        .hash_password(password.as_bytes())
+        .map_err(|err| anyhow!("failed to hash the password: {err}"))?;
+    Ok(hash.to_string())
 }
 
 /// Hash `password` and write the result: the hash to `out`, any advice to `err`.
@@ -1122,6 +1119,23 @@ mod tests {
         assert!(ensure_password_fits(&cjk).is_ok());
         // And it really does hash, rather than merely passing the length check.
         assert!(argon2_hash(&cjk).unwrap().starts_with("$argon2id$"));
+    }
+
+    /// The cost parameters are the security property of this command, and they
+    /// come from `Argon2::default()` — an upstream constant, not ours. A crate
+    /// upgrade can move it without breaking a single type, so pin the values
+    /// the OWASP cheat sheet is being cited for, plus the 16-byte salt.
+    #[test]
+    fn hash_password_records_the_owasp_parameters() {
+        let hash = argon2_hash("a-password-long-enough").unwrap();
+        let parsed = PasswordHash::new(&hash).unwrap();
+
+        assert_eq!("argon2id", parsed.algorithm.as_str());
+        assert_eq!(Some(argon2::Version::V0x13 as u32), parsed.version);
+        for (name, want) in [("m", 19456), ("t", 2), ("p", 1)] {
+            assert_eq!(Some(want), parsed.params.get_decimal(name), "{name} cost");
+        }
+        assert_eq!(16, parsed.salt.unwrap().len());
     }
 
     /// Past the ceiling the message must name the size that was submitted — the
