@@ -9,15 +9,12 @@ use http::{HeaderName, HeaderValue, header};
 
 use crate::state::AppState;
 
-/// Keep the rendered page out of the browser cache, so a back-button press
-/// after logout cannot show it (OWASP *Web Content Caching*). `Pragma:
-/// no-cache` goes alongside, for HTTP/1.0 caches.
+/// `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0) on HTML, so the back
+/// button after logout cannot show a rendered page.
 ///
-/// Only ever fills in an *absent* header, and only on `text/html`, so the image
-/// routes keep their deliberate long-lived values (`handlers/page.rs`,
-/// `handlers/thumb.rs`): a blanket `no-store` would re-read every page image
-/// from disk on every turn, which is the trade-off comics is built around. Those
-/// routes use `private`, so a shared cache still cannot keep them.
+/// Only fills an *absent* header, and only on `text/html`: the image routes set
+/// long-lived `private` values on purpose, since a blanket `no-store` would
+/// re-read every page from disk on every turn.
 pub async fn no_store_html(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
     let headers = res.headers_mut();
@@ -35,26 +32,16 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
     res
 }
 
-/// The policy every response carries.
+/// Deny-by-default (`default-src 'none'`); each named directive is exactly
+/// what the templates load, so a new feature must opt itself in.
 ///
-/// `default-src 'none'` makes it deny-by-default: every fetch directive not
-/// named below (`connect-src`, `media-src`, `object-src`, `worker-src`,
-/// `manifest-src`) falls back to it, so a future feature must opt itself in.
-/// What is named is exactly what the three templates load:
-///
-/// - `script-src 'self'` — `app.js` and `theme.js`. Deliberately no
-///   `'unsafe-inline'`: the pre-paint theme snippet was moved out of the
-///   templates precisely so this could stay clean, since `'unsafe-inline'`
-///   permits every *injected* script too.
-/// - `style-src` and `font-src` name `fonts.bunny.net`, the one third party the
-///   templates reference (`app.css` pulls in nothing external).
-/// - `img-src 'self'` — pages and thumbnails are same-origin routes.
-/// - `form-action 'self'` stops an injection re-pointing the login form at
-///   another host; `base-uri 'none'` stops a `<base>` tag doing the same to
-///   every relative asset URL.
-/// - `frame-ancestors 'none'` is the clickjacking control: `SameSite=Strict`
-///   blocks cross-site *requests*, but not comics being framed and click-baited
-///   by a page the reader is already visiting.
+/// - `script-src 'self'` — no `'unsafe-inline'`, which would admit *injected*
+///   scripts too; that is why the pre-paint theme snippet is `theme.js`.
+/// - `fonts.bunny.net` is the only third party (webfonts).
+/// - `form-action`/`base-uri` stop an injection re-pointing the login form or
+///   every relative URL.
+/// - `frame-ancestors 'none'` is the clickjacking control; `SameSite=Strict`
+///   does not stop framing.
 const CSP: &str = "default-src 'none'; \
                    script-src 'self'; \
                    style-src 'self' https://fonts.bunny.net; \
@@ -64,8 +51,7 @@ const CSP: &str = "default-src 'none'; \
                    base-uri 'none'; \
                    frame-ancestors 'none'";
 
-/// Features comics never uses. Denying them outright costs nothing and means a
-/// successful injection cannot reach the camera, microphone or location either.
+/// Features comics never uses, denied so an injection cannot reach them.
 const PERMISSIONS_POLICY: &str = "accelerometer=(), autoplay=(), camera=(), \
                                   display-capture=(), encrypted-media=(), fullscreen=(), \
                                   geolocation=(), gyroscope=(), magnetometer=(), \
@@ -73,18 +59,13 @@ const PERMISSIONS_POLICY: &str = "accelerometer=(), autoplay=(), camera=(), \
 
 /// Response headers that never depend on configuration.
 ///
-/// `X-Frame-Options` duplicates the CSP's `frame-ancestors` for browsers
-/// predating it; `Cross-Origin-Resource-Policy` keeps another site from
-/// embedding a page image directly, which `frame-ancestors` does not cover
-/// because an `<img>` is not a frame. `Referrer-Policy: no-referrer` is
-/// affordable because nothing outbound needs a referrer — the only cross-origin
-/// requests are the font ones — and book titles live in the path, so a leaked
-/// URL leaks what someone is reading.
+/// `X-Frame-Options` backs up `frame-ancestors` for older browsers; CORP stops
+/// hotlinking page images, which `frame-ancestors` does not cover.
+/// `no-referrer` costs nothing (only fonts are cross-origin) and book URLs
+/// reveal what someone reads.
 ///
-/// Names are spelled out rather than taken from [`header`], which has no
-/// constant for the `Cross-Origin-*` family; mixing the two styles would hide
-/// which entry is which. `HeaderName::from_static` takes lowercase only and
-/// panics on anything malformed, at the first request.
+/// Names are lowercase literals because [`header`] lacks the `Cross-Origin-*`
+/// family; `from_static` panics on malformed input at the first request.
 const CONSTANT_HEADERS: [(&str, &str); 7] = [
     ("content-security-policy", CSP),
     ("x-content-type-options", "nosniff"),
@@ -95,13 +76,10 @@ const CONSTANT_HEADERS: [(&str, &str); 7] = [
     ("permissions-policy", PERMISSIONS_POLICY),
 ];
 
-/// Applied as a global outer layer so it also covers `/login`, `/healthz`, and
-/// the assets.
+/// Global outer layer, so it also covers `/login`, `/healthz` and the assets.
 ///
-/// [`CONSTANT_HEADERS`] and the permissions policy are unconditional; HSTS is
-/// off unless configured. comics does not terminate TLS, so HSTS belongs on the
-/// proxy that does — and a browser that cached it refuses plain HTTP to this
-/// host for the whole max-age, which strands an HTTP-only LAN deployment.
+/// HSTS is off unless configured: comics does not terminate TLS, and a cached
+/// HSTS strands an HTTP-only LAN deployment for the whole max-age.
 pub async fn security_headers_layer(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -158,8 +136,6 @@ mod tests {
         assert_eq!("no-cache", res.headers()[header::PRAGMA]);
     }
 
-    /// The image and asset routes set their own values deliberately; the
-    /// middleware must never overwrite one.
     #[tokio::test]
     async fn leaves_existing_cache_control_untouched() {
         let res = run("text/html", Some("public, max-age=60")).await;
@@ -173,9 +149,7 @@ mod tests {
         assert!(!res.headers().contains_key(header::CACHE_CONTROL));
     }
 
-    /// `HeaderName::from_static` and `HeaderValue::from_static` both panic on a
-    /// malformed argument, and they run per request — so a typo would take the
-    /// whole server down at the first hit rather than failing to compile.
+    /// `from_static` panics at request time, not compile time.
     #[test]
     fn every_constant_header_is_well_formed() {
         for (name, value) in CONSTANT_HEADERS {
@@ -185,9 +159,6 @@ mod tests {
         }
     }
 
-    /// The point of moving the theme snippet into `theme.js` was to keep these
-    /// two escape hatches out of the policy. Re-adding either would silently
-    /// undo it.
     #[test]
     fn csp_permits_no_inline_or_eval() {
         assert!(!CSP.contains("unsafe-inline"), "{CSP}");

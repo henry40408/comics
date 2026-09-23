@@ -1,12 +1,8 @@
-//! Step definitions, ported from `e2e/steps/*.js`.
+//! Step definitions.
 //!
-//! They live in the test binary rather than the library because the `#[given]`
-//! / `#[when]` / `#[then]` macros register through `inventory`, and a step that
-//! is only reachable through an rlib can be dropped by the linker.
-//!
-//! Where the old steps wrote `await expect(...)`, these call [`eventually`] or
-//! [`eventually_eq`]: `WebDriver` has no retrying-assertion layer, and several of
-//! these assertions land while `app.js` is still mid-animation.
+//! They live in the test binary, not the library: the step macros register
+//! through `inventory`, and a step only reachable through an rlib can be
+//! dropped by the linker.
 
 use comics_e2e::wait::{eventually, eventually_eq};
 use comics_e2e::world::ComicsWorld;
@@ -29,8 +25,7 @@ async fn sign_in(
 #[then("I should see the library")]
 async fn should_see_the_library(world: &mut ComicsWorld) -> anyhow::Result<()> {
     eventually_eq("url after signing in", "/", || async { world.path().await }).await?;
-    // The first card, not merely the route: a 503 from a scan still in flight
-    // renders at `/` too.
+    // A card, not merely the route: a 503 during the initial scan is at `/` too.
     eventually("a book card is on the page", || async {
         Ok(!world.library_page()?.cards().await?.is_empty())
     })
@@ -176,8 +171,8 @@ async fn switch_mode_from_page(world: &mut ComicsWorld, n: String) -> anyhow::Re
 
 #[then(expr = "page {string} should be in view")]
 async fn page_should_be_in_view(world: &mut ComicsWorld, n: String) -> anyhow::Result<()> {
-    // In scroll mode every page is displayed, so "showing" proves nothing about
-    // where the browser landed — the viewport is what carries the answer.
+    // In scroll mode every page is displayed, so only the viewport says where
+    // the browser landed.
     eventually(&format!("page {n} is in the viewport"), || async {
         world.browser()?.is_in_viewport(&format!("p{n}")).await
     })
@@ -204,9 +199,7 @@ async fn topbar_page_number_hidden(world: &mut ComicsWorld) -> anyhow::Result<()
 
 #[then(expr = "the top bar should still read {string}")]
 async fn topbar_should_read(world: &mut ComicsWorld, text: String) -> anyhow::Result<()> {
-    // Rendered text, not `textContent`: a `display: none` span keeps its
-    // characters in `textContent`, so that could not tell a hidden counter from
-    // a visible one. WebDriver's "Get Element Text" is already rendered.
+    // Rendered text, not `textContent`, which keeps a hidden span's characters.
     eventually_eq("the topbar subtitle", text.as_str(), || async {
         world.reader_page()?.topbar_subtitle().await
     })
@@ -240,8 +233,7 @@ async fn log_out(world: &mut ComicsWorld) -> anyhow::Result<()> {
     world.library_page()?.logout().await
 }
 
-/// Playwright's `toBeHidden`: absent counts as hidden, which is what the
-/// script-less templates rely on for controls only a script can operate.
+/// Fails if the element is displayed; absent counts as hidden.
 async fn assert_hidden(what: &str, element: Option<thirtyfour::WebElement>) -> anyhow::Result<()> {
     if let Some(element) = element {
         anyhow::ensure!(

@@ -3,31 +3,26 @@ use std::{net::IpAddr, str::FromStr};
 use anyhow::Context as _;
 use ipnet::IpNet;
 
-/// The reverse proxies whose forwarding headers comics is willing to believe.
+/// The reverse proxies whose `X-Forwarded-For` comics believes.
 ///
-/// Empty by default, and empty means **trust nothing**: the rate-limit key is
-/// the TCP peer and `X-Forwarded-For` is ignored outright. Anyone who can reach
-/// the port can write the header, so which peers may is a statement only the
-/// operator can make — the rule this replaced ("believe it from loopback")
-/// guessed from network topology and guessed wrong both ways: it trusts any
-/// process sharing the host, and distrusts a proxy in a sibling container.
+/// Empty by default, meaning **trust nothing**: anyone can write the header, so
+/// only the operator can say which peers may. Guessing from topology (e.g.
+/// "trust loopback") is wrong both ways — it trusts any local process and
+/// distrusts a proxy in a sibling container.
 ///
-/// Entries are CIDR prefixes or bare addresses (their own single-host prefix).
-/// The list does double duty: whether the peer may speak at all, *and* which
-/// hops inside `X-Forwarded-For` are infrastructure rather than clients — see
+/// Entries are CIDR prefixes or bare addresses. The list decides both whether
+/// the peer's header is read and which hops in it are infrastructure; see
 /// [`rate_limit_key`](super::rate_limit_key).
 #[derive(Clone, Debug, Default)]
 pub struct TrustedProxies(Vec<IpNet>);
 
 impl TrustedProxies {
-    /// When true, forwarding headers are ignored entirely.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Canonicalised first, so a dual-stack listener reporting a peer as
-    /// `::ffff:10.0.0.2` still matches a `10.0.0.0/8` entry — otherwise the
-    /// obvious IPv4 prefix silently never matches on a `[::]`-bound socket.
+    /// Canonicalised first: a `[::]`-bound listener reports `::ffff:10.0.0.2`,
+    /// which would otherwise never match `10.0.0.0/8`.
     pub fn contains(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();
         self.0.iter().any(|net| net.contains(&ip))
@@ -37,9 +32,8 @@ impl TrustedProxies {
 impl FromStr for TrustedProxies {
     type Err = anyhow::Error;
 
-    /// Empty entries are skipped, so a trailing comma — or the empty string a
-    /// container image passes for "unset" — is not an error. A bare address
-    /// parses as a single-host prefix: `10.0.0.1` means `10.0.0.1/32`.
+    /// Empty entries are skipped, so a trailing comma or a container's empty
+    /// "unset" value is not an error. A bare address is a single-host prefix.
     fn from_str(raw: &str) -> anyhow::Result<Self> {
         let mut nets = Vec::new();
         for entry in raw.split(',') {
@@ -49,8 +43,6 @@ impl FromStr for TrustedProxies {
             }
             let net = match entry.parse::<IpNet>() {
                 Ok(net) => net,
-                // Not a prefix: accept a bare address as a single host. Reported
-                // against the original entry, as the operator wrote it.
                 Err(_) => IpNet::from(
                     entry
                         .parse::<IpAddr>()
@@ -100,8 +92,6 @@ mod tests {
         assert!(!trusted.contains(v4(10, 0, 0, 3)));
     }
 
-    /// An empty value is how "unset" arrives from a container image that always
-    /// passes the variable, so it must mean the empty list rather than an error.
     #[test]
     fn empty_and_blank_values_are_the_empty_list() {
         for raw in ["", "   ", ",", " , "] {
@@ -116,8 +106,6 @@ mod tests {
         }
     }
 
-    /// The error names the offending entry, not just the whole list — a typo in
-    /// one of six prefixes is otherwise a hunt.
     #[test]
     fn error_names_the_offending_entry() {
         let err = "10.0.0.0/8, wat, ::1"
@@ -126,17 +114,13 @@ mod tests {
         assert!(format!("{err}").contains("wat"), "{err}");
     }
 
-    /// Regression for the IPv4-mapped case: a `[::]`-bound listener reports an
-    /// IPv4 peer as `::ffff:a.b.c.d`, which matches no IPv4 prefix until it is
-    /// canonicalised. Left unhandled, every operator's `10.0.0.0/8` entry would
-    /// quietly match nothing.
     #[test]
     fn ipv4_mapped_addresses_match_ipv4_prefixes() {
         let trusted = parse("10.0.0.0/8");
         let mapped: IpAddr = "::ffff:10.1.2.3".parse().unwrap();
         assert!(trusted.contains(mapped));
 
-        // And the same in the entry: a mapped literal is stored canonicalised.
+        // A mapped literal in the list is stored canonicalised.
         let trusted = parse("::ffff:192.0.2.7");
         assert!(trusted.contains(v4(192, 0, 2, 7)));
     }

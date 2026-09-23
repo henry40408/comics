@@ -15,13 +15,9 @@ use crate::auth::AuthConfig;
 use crate::models::Book;
 use crate::state::AppState;
 
-/// Which layout the reader opens in.
-///
-/// Server-rendered, so the segmented control works without JavaScript: each
-/// half is a link back to this route. `app.js` takes over and switches in place,
-/// so the query parameter is only read on a fresh navigation. An unrecognised
-/// value falls back to `paged` — a display preference off a hand-edited URL, and
-/// a reader that renders beats a 400.
+/// Which layout the reader opens in (`?mode=paged|scroll`), so the mode switch
+/// works without JavaScript. Anything unrecognised renders `paged` rather than
+/// a 400.
 #[derive(Deserialize)]
 pub struct BookQuery {
     mode: Option<String>,

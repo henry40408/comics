@@ -37,14 +37,12 @@ use comics::{
     shuffle_route,
 };
 
-// The release image links musl, whose default allocator is markedly slower than
-// glibc's under the concurrent, allocation-heavy work this server does (rayon
-// scans, on-demand image decoding for thumbnails). mimalloc restores throughput.
+// The release image links musl, whose allocator is slow under concurrent,
+// allocation-heavy work (rayon scans, thumbnail decoding).
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-// Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached
-// forever; the URL changes whenever the content changes.
+// Assets are fingerprinted in the URL (`?v=<hash>`), so they can be cached forever.
 type AssetHeaders = [(header::HeaderName, &'static str); 2];
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const CSS_HEADERS: AssetHeaders = [
@@ -74,9 +72,8 @@ struct Opts {
     #[arg(long, env = "COMICS_AUTH_PASSWORD_HASH")]
     auth_password_hash: Option<String>,
     /// Send the session cookie with the `Secure` attribute (HTTPS only).
-    /// Defaults to off: comics never terminates TLS, so it cannot detect HTTPS
-    /// behind a proxy, and a browser silently discards a `Secure` cookie sent
-    /// over plain HTTP — locking LAN deployments out of the login form.
+    /// Off by default: comics cannot detect HTTPS behind a proxy, and a browser
+    /// discards a `Secure` cookie over plain HTTP, locking LAN hosts out.
     #[arg(
         long,
         env = "COMICS_COOKIE_SECURE",
@@ -84,42 +81,28 @@ struct Opts {
         default_missing_value = "true"
     )]
     cookie_secure: Option<bool>,
-    /// The one secret comics is configured with: at least 64 hex characters
-    /// (32 bytes), from `openssl rand -hex 32`. Both the cookie signing key and
-    /// the salt for hashed book/page IDs derive from it. Sessions end at every
-    /// restart regardless; what this buys is stable book and page URLs, and a
-    /// signature that stays valid so a stale cookie is distinguishable from a
-    /// forged one. Unset means a random secret per start — and reshuffled URLs.
-    /// Rotating it changes every URL.
+    /// At least 64 hex characters (`openssl rand -hex 32`); the cookie signing
+    /// key and the book/page ID salt derive from it. Sessions end at every
+    /// restart regardless; it keeps URLs stable and lets a stale cookie be told
+    /// from a forged one. Unset means a random secret, and new URLs, per start.
     #[arg(long, env = "COMICS_SECRET")]
     secret: Option<Secret>,
     /// Send `Strict-Transport-Security` with this `max-age` (seconds). Off by
-    /// default: HSTS belongs on the TLS-terminating proxy, and a browser that
-    /// cached it refuses plain HTTP to this host for the whole max-age, which
-    /// strands an HTTP-only LAN deployment. Only enable when comics is always
-    /// reached over HTTPS. Suggested value: 63072000 (2 years).
+    /// default: a cached HSTS policy strands a plain-HTTP LAN host for the whole
+    /// max-age. Enable only when always reached over HTTPS (e.g. 63072000).
     #[arg(long, env = "COMICS_HSTS_MAX_AGE")]
     hsts_max_age: Option<u64>,
     /// Reverse proxies whose `X-Forwarded-For` may set the login rate-limit key:
-    /// a comma-separated list of IP addresses and CIDR prefixes (e.g.
-    /// `172.16.0.0/12,10.0.0.2`). Empty by default, which ignores the header and
-    /// keys on the TCP peer — anyone who can reach the port can forge it, so
-    /// only an explicit list makes it meaningful. Name the address the proxy
-    /// connects *from*, not the client range. Leaving it unset behind a proxy is
-    /// safe but blunt: every client shares the proxy's single bucket.
+    /// comma-separated IPs and CIDR prefixes (e.g. `172.16.0.0/12,10.0.0.2`),
+    /// naming the address the proxy connects *from*. Empty by default, which
+    /// ignores the forgeable header; behind a proxy that is safe but makes every
+    /// client share one bucket.
     #[arg(long, env = "COMICS_TRUSTED_PROXIES")]
     trusted_proxies: Option<TrustedProxies>,
-    /// Turn off the CSRF origin guard entirely. Off by default, and there is no
-    /// good reason to set it on a deployment reachable from anywhere untrusted.
-    ///
-    /// It exists for one shape the guard cannot serve: a plain-HTTP LAN host
-    /// (`http://nas.local`) never receives `Sec-Fetch-Site`, so the guard falls
-    /// back to `Origin`, and a browser reporting an opaque `Origin: null` locks
-    /// the operator out of the login form with no way back. Serving over HTTPS
-    /// fixes it without giving anything up; prefer that. What is left when this
-    /// is set is the cookie's `SameSite=Strict`, which is what actually keeps a
-    /// cross-site POST from carrying credentials — see the comment on the layer
-    /// in `init_route`.
+    /// Turn off the CSRF origin guard entirely. Only for a plain-HTTP LAN host
+    /// whose browser sends `Origin: null`, which locks the operator out of the
+    /// login form; serving over HTTPS is the better fix. `SameSite=Strict` on the
+    /// cookie remains. See the comment on the layer in `init_route`.
     #[arg(
         long,
         env = "COMICS_DISABLE_CSRF_GUARD",
@@ -128,9 +111,8 @@ struct Opts {
         default_value = "false"
     )]
     disable_csrf_guard: bool,
-    /// Bind host & port. Defaults to loopback so a bare-metal run is not
-    /// exposed on all interfaces without opting in; the container image sets
-    /// `COMICS_BIND=0.0.0.0:8080` so a reverse proxy can reach it.
+    /// Bind host & port. Loopback by default; the container image sets
+    /// `COMICS_BIND=0.0.0.0:8080`.
     #[arg(
         long,
         short = 'b',
@@ -170,23 +152,17 @@ enum Commands {
     List {},
 }
 
-/// Login attempts allowed per client IP within [`LOGIN_WINDOW_SECS`]. Not
-/// exposed as an option: a single-account service has one legitimate user, for
-/// whom five tries a minute is ample.
+/// Login attempts allowed per client IP within [`LOGIN_WINDOW_SECS`].
 const LOGIN_MAX_ATTEMPTS: u32 = 5;
 const LOGIN_WINDOW_SECS: u64 = 60;
 
-/// Login attempts allowed across *every* client IP within [`LOGIN_WINDOW_SECS`].
-///
-/// The account-scoped counter the OWASP Authentication Cheat Sheet asks for, and
-/// what bounds a spray from addresses held in bulk. Four times the per-IP
-/// allowance, so reaching it takes four distinct addresses failing within the
-/// minute; the [`RateLimiter`] docs cover what happens when one does.
+/// Login attempts allowed across *every* client IP within [`LOGIN_WINDOW_SECS`]:
+/// the account-scoped counter OWASP asks for. See [`RateLimiter`] for the
+/// lockout trade-off.
 const LOGIN_GLOBAL_MAX_ATTEMPTS: u32 = 20;
 
 /// Whether the session cookie carries `Secure`. comics never terminates TLS, so
-/// there is no runtime signal to infer from and no declared public URL — the
-/// explicit flag is the only input.
+/// the explicit flag is the only input.
 fn resolve_cookie_secure(override_value: Option<bool>) -> bool {
     override_value.unwrap_or(false)
 }
@@ -246,8 +222,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         thumb_sem: Arc::new(Semaphore::new(
             thread::available_parallelism().map_or(4, std::num::NonZero::get),
         )),
-        // Fixed rather than scaled to core count: this bounds memory, and the
-        // core count says nothing about how much there is to spare.
+        // Fixed, not per-core: this bounds memory.
         verify_sem: Arc::new(Semaphore::new(MAX_CONCURRENT_VERIFICATIONS)),
         cookie_secure: resolve_cookie_secure(opts.cookie_secure),
         login_limiter: Arc::new(RateLimiter::new(
@@ -267,26 +242,21 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
         .route("/shuffle/{id}", post(shuffle_book_route))
         .route("/shuffle", post(shuffle_route))
         .route("/", get(index_route))
-        // Page images and thumbnails are content, so they live behind the auth
-        // layer too; cookie verification is cheap enough to run per image.
         .route("/data/{id}", get(show_page_route))
         .route("/thumb/{size}/{id}", get(show_thumb_route))
-        // Inside the auth layer, so it only sees responses for protected routes:
-        // authenticated HTML must not be left in a cache that survives logout.
+        // Authenticated HTML must not outlive logout in a cache.
         .route_layer(middleware::from_fn(no_store_html))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_fn,
         ))
-        // Login/logout sit outside the auth layer so they stay reachable while
-        // logged out.
+        // Public routes: declared after `route_layer`, so outside auth.
         .route("/login", get(login_route).post(login_submit_route))
         .route("/logout", post(logout_route))
         .route("/healthz", get(healthz_route))
         .route("/assets/app.css", get(|| async { (CSS_HEADERS, APP_CSS) }))
         .route("/assets/app.js", get(|| async { (JS_HEADERS, APP_JS) }))
-        // Separate from app.js because it is loaded synchronously in <head>;
-        // see the module comment in vendor/assets/theme.js.
+        // Separate from app.js: loaded synchronously in <head>.
         .route("/assets/theme.js", get(|| async { (JS_HEADERS, THEME_JS) }))
         .route("/favicon.svg", get(|| async { (SVG_HEADERS, FAVICON_SVG) }))
         .route(
@@ -298,49 +268,25 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
             get(|| async { (PNG_HEADERS, APPLE_TOUCH_ICON_PNG) }),
         )
         .layer(
-            // Per-request logs are noisy for an image-heavy app, so DEBUG;
-            // enable with `RUST_LOG=comics=info,tower_http=debug`. Failures
-            // still surface via the default on_failure (ERROR).
+            // DEBUG: per-request logs are noisy for an image-heavy app. Failures
+            // still log at ERROR.
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         );
 
-    // Stateless fetch-metadata CSRF check (`Sec-Fetch-Site`, with an
-    // `Origin`/effective-host fallback and no per-request token). The
-    // classification rules are `tower_http::csrf`'s — read that module's docs
-    // before reasoning about a specific header combination.
+    // Stateless fetch-metadata CSRF check; the rules are `tower_http::csrf`'s.
+    // Global so it also covers the public `/login` and `/logout` POSTs; inert
+    // for GET/HEAD/OPTIONS.
     //
-    // It goes on as a global outer layer so the check also covers the public
-    // `/login` and `/logout` POSTs, which sit outside the auth layer; it is
-    // inert for safe methods, so every asset/image/`/healthz` GET passes
-    // untouched.
-    //
-    // # The plain-HTTP LAN hole, and the escape hatch
-    //
-    // Fetch metadata is only sent to *potentially trustworthy* origins — HTTPS,
-    // or `localhost`. A plain-HTTP LAN host such as `http://nas.local` is
-    // neither, so no `Sec-Fetch-Site` ever arrives and every request falls
-    // through to the `Origin` branch. That is survivable until a browser
-    // reports an opaque `Origin: null` (a sandboxed iframe, or a privacy
-    // setting that suppresses the header): the login `POST` is then rejected,
-    // and because the operator cannot log in, there is no way back from inside
-    // the app.
-    //
-    // `--disable-csrf-guard` exists for exactly that dead end. It drops the
-    // layer rather than narrowing it with `CsrfLayer::with_insecure_bypass`:
-    // that predicate sees only the method and URI, never the headers, so it
-    // cannot be scoped to "an opaque origin" — the narrowest bypass expressible
-    // is the list of every unsafe route, which is what dropping the layer
-    // already means. Dropping it also leaves no classification logic behind to
-    // get wrong.
-    //
-    // Reaching the server over HTTPS or through a `localhost` tunnel restores
-    // `Sec-Fetch-Site` and fixes the same lockout while giving nothing up, so
-    // it is the better answer wherever it is available. What survives the
-    // escape hatch is the session cookie's `SameSite=Strict`, which is what
-    // actually stops a cross-site `POST` from carrying credentials; this layer
-    // is defence in depth on top of that, never the only lock.
+    // Escape hatch: browsers send `Sec-Fetch-Site` only to HTTPS or
+    // `localhost`, so a plain-HTTP LAN host falls back to `Origin`, and an
+    // opaque `Origin: null` rejects the login POST with no way back in.
+    // `--disable-csrf-guard` drops the layer rather than using
+    // `CsrfLayer::with_insecure_bypass`, whose predicate sees only method and
+    // URI, so it could not be narrower than "every unsafe route" anyway. HTTPS
+    // or a `localhost` tunnel is the better fix. The cookie's `SameSite=Strict`
+    // is the real cross-site defence; this layer is defence in depth.
     let router = if opts.disable_csrf_guard {
         warn!(
             "CSRF origin guard disabled by --disable-csrf-guard; every \
@@ -354,9 +300,7 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
     };
 
     let router = router
-        // Global outer layer so the policy also covers `/login`, `/healthz` and
-        // the assets. Everything but HSTS is unconditional; HSTS stays inert
-        // unless a max-age is configured.
+        // Outermost, so public routes and assets get the headers too.
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security_headers_layer,
@@ -390,34 +334,21 @@ async fn shutdown_signal() {
     }
 }
 
-/// Prefixes of the bcrypt hashes comics issued before it moved to Argon2.
-///
-/// Matched only to say so plainly: every such hash stopped working at the
-/// switch, and the parse error alone is `salt invalid: too short` — true,
-/// unactionable, and apt to send an operator hunting through their proxy for a
-/// fault that is one command away.
+/// bcrypt hash prefixes, matched only to name the migration: the bare parse
+/// error (`salt invalid: too short`) is unactionable.
 const BCRYPT_PREFIXES: [&str; 4] = ["$2a$", "$2b$", "$2x$", "$2y$"];
 
-/// Reject a `COMICS_AUTH_PASSWORD_HASH` that is not an Argon2 hash.
+/// Reject a `COMICS_AUTH_PASSWORD_HASH` the login route could not use.
 ///
-/// The login handler treats an unparseable hash as a wrong password, so without
-/// this the server starts, reports authentication as enabled, and refuses every
-/// correct password with the message a typo gets — leaving the hash the one
-/// thing the operator cannot see is at fault. Every pre-Argon2 configuration
-/// lands in exactly that case. Checked at startup for the same reason as
-/// [`ensure_no_legacy_env_vars`], and deliberately *not* before the
-/// `hash-password` subcommand, which is what an operator runs to fix a bad hash.
+/// Otherwise the server starts with auth enabled and refuses the correct
+/// password exactly as it refuses a typo. Deliberately *not* run before the
+/// `hash-password` subcommand, which is how the operator fixes a bad hash.
 ///
-/// Neither a parse nor a trial verification suffices alone. The PHC grammar is
-/// looser than it looks: `PasswordHash::new` accepts
-/// `$argon2id$v=19$m=19456$nope`, a salt with no digest, because that shape is
-/// legal as *input* to a hasher — and `PasswordVerifier` then reports the
-/// missing digest as `Error::PasswordInvalid`, the same answer a wrong password
-/// gets. So `parsed.hash` is checked directly, and only then does
-/// `Error::PasswordInvalid` mean what it looks like. The verification still
-/// earns its ~15 ms and 19 MiB once at startup: it catches a well-formed hash
-/// the login route could not use anyway — another algorithm's, or one whose
-/// parameters do not reconstruct.
+/// A parse is not enough: `PasswordHash::new` accepts a salt with no digest
+/// (`$argon2id$v=19$m=19456$nope`), and `PasswordVerifier` then reports it as
+/// `Error::PasswordInvalid`, same as a wrong password — hence the `parsed.hash`
+/// check. The trial verification catches the rest: another algorithm's hash,
+/// or parameters that do not reconstruct.
 fn ensure_password_hash_is_usable(opts: &Opts) -> anyhow::Result<()> {
     let Some(hash) = opts.auth_password_hash.as_deref() else {
         return Ok(());
@@ -468,8 +399,6 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
         );
     }
     if opts.hsts_max_age.is_some() && !resolve_cookie_secure(opts.cookie_secure) {
-        // The two settings contradict each other: HSTS declares the site
-        // HTTPS-only while the cookie is still sent without `Secure`.
         warn!(
             "HSTS is enabled but the session cookie is not marked Secure; \
              set --cookie-secure (COMICS_COOKIE_SECURE=true) too"
@@ -480,9 +409,7 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     let local_addr: SocketAddr = listener.local_addr()?;
     info!(addr = %local_addr, %version, "server started");
     spawn_initial_scan(state, tx);
-    // `into_make_service_with_connect_info` is what puts the TCP peer address in
-    // the request extensions; without it the login rate limiter would degrade to
-    // a single global bucket.
+    // Connect info supplies the TCP peer the login rate limiter keys on.
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -493,7 +420,7 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
                 if result.is_ok() {
                     warn!("fatal error occurred, shutdown the server");
                 } else {
-                    // Sender dropped after successful scan; wait for real shutdown signal
+                    // Sender dropped after a successful scan; wait for a real signal.
                     shutdown_signal().await;
                     info!("received shutdown signal");
                 }
@@ -508,17 +435,13 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Refuse a password past [`comics::MAX_PASSWORD_BYTES`].
+/// Refuse an empty password, or one past [`comics::MAX_PASSWORD_BYTES`].
 ///
-/// A backstop, not a real constraint — Argon2 truncates nothing, so unlike
-/// bcrypt's 72 bytes this only keeps the verifier from being handed something
-/// absurd. Kept in step with the identical check in `verify_credentials`, so a
-/// password that hashes here always verifies there. Split out of
-/// [`hash_password`] so it can be tested: that one reads from a tty.
+/// Mirrors the ceiling in `verify_credentials`, so a password that hashes here
+/// always verifies there. Split out of [`hash_password`], which reads a tty.
 fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
     if password.is_empty() {
-        // The one length that is a mistake rather than a choice; everything
-        // merely short is left to `password_strength_warning`.
+        // Merely short passwords get `password_strength_warning` instead.
         bail!("Password is empty.");
     }
     let len = password.len();
@@ -531,11 +454,8 @@ fn ensure_password_fits(password: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// What to say about a password that is shorter than OWASP advises, if anything.
-///
-/// Advice, not enforcement — see [`comics::MIN_PASSWORD_CHARS`] for why a
-/// single-account service leaves this to its operator. Returned rather than
-/// printed so it can be tested; [`hash_password`] reads from a tty.
+/// A warning for a password shorter than [`comics::MIN_PASSWORD_CHARS`]:
+/// advice, not enforcement. Returned rather than printed so it can be tested.
 fn password_strength_warning(password: &str) -> Option<String> {
     let chars = password.chars().count();
     (chars < MIN_PASSWORD_CHARS).then(|| {
@@ -547,10 +467,9 @@ fn password_strength_warning(password: &str) -> Option<String> {
     })
 }
 
-/// Hash a password with Argon2id at [`Argon2::default`]'s parameters, which are
-/// `m=19456, t=2, p=1` — one of the configurations the OWASP Password Storage
-/// Cheat Sheet lists as sufficient. They are recorded in the PHC string that
-/// comes out, so raising them later leaves existing hashes verifiable.
+/// Hash with Argon2id at [`Argon2::default`]'s parameters (`m=19456, t=2,
+/// p=1`, an OWASP-listed configuration). They are recorded in the PHC string,
+/// so raising them later leaves existing hashes verifiable.
 fn argon2_hash(password: &str) -> anyhow::Result<String> {
     ensure_password_fits(password)?;
     let hash: PasswordHash = Argon2::default()
@@ -559,13 +478,10 @@ fn argon2_hash(password: &str) -> anyhow::Result<String> {
     Ok(hash.to_string())
 }
 
-/// Hash `password` and write the result: the hash to `out`, any advice to `err`.
+/// Write the hash to `out` and any advice to `err`.
 ///
-/// The two sinks are parameters rather than `println!`/`eprintln!` so the split
-/// can be *tested*: `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures
-/// stdout, so a warning leaking into it would be baked into the configured hash
-/// — and that is the sort of thing a later edit undoes without noticing. The
-/// tracing subscriber also writes to stdout, which is why this is not a `warn!`.
+/// `$(comics hash-password)` captures stdout, so a warning there would be baked
+/// into the configured hash. Not a `warn!`: tracing also writes to stdout.
 fn emit_password_hash(
     password: &str,
     out: &mut impl io::Write,
@@ -588,21 +504,13 @@ fn hash_password() -> anyhow::Result<()> {
     emit_password_hash(&password, &mut io::stdout(), &mut io::stderr())
 }
 
-/// What is logged when `RUST_LOG` says nothing: comics' own events at INFO,
-/// everything else at ERROR.
+/// Used when `RUST_LOG` is unset or unparseable.
 const DEFAULT_FILTER: &str = "error,comics=info";
 
 fn init_tracing(format: LogFormat) {
-    // `Targets` and not `EnvFilter`: both read the same `comics=debug` out of
-    // `RUST_LOG`, but `EnvFilter` matches directives with a regex engine nothing
-    // else here needs, and gives up only span/field filtering, which nothing
-    // here writes.
-    //
-    // An unparseable *level* (`comics=nonsense`) falls back to the default
-    // rather than refusing to start, as `EnvFilter::try_from_default_env` did.
-    // A mistyped *target* cannot be caught at all — a bare word is a target name
-    // at TRACE, so `RUST_LOG=nonsense` parses into a filter nothing matches and
-    // the log goes silent. `EnvFilter` behaved identically; not a regression.
+    // `Targets`, not `EnvFilter`: same directive syntax without the regex
+    // engine; span/field filtering is unused. Note a bare word is a target, so
+    // a mistyped `RUST_LOG=nonsense` parses and silences the log.
     let filter: Targets = std::env::var("RUST_LOG")
         .ok()
         .and_then(|directives| directives.parse().ok())
@@ -615,8 +523,7 @@ fn init_tracing(format: LogFormat) {
                 FmtSpan::NONE
             }
         });
-    // Per no-color.org `NO_COLOR` disables colour when set *and non-empty*, so an
-    // empty value is not a setting.
+    // Per no-color.org, only a non-empty `NO_COLOR` disables colour.
     let use_ansi = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let layer = tracing_subscriber::fmt::layer()
         .with_span_events(span_events)
@@ -631,11 +538,7 @@ fn init_tracing(format: LogFormat) {
     tracing_subscriber::registry().with(layer).init();
 }
 
-/// Configuration environment variables that no longer exist, paired with the
-/// name that replaced them. Most were renamed to carry the `COMICS_` prefix;
-/// `COMICS_SEED` and `COMICS_SESSION_KEY` were folded into `COMICS_SECRET`.
-/// `NO_COLOR` (an ecosystem convention) and `GIT_VERSION` (build-time) are
-/// deliberately unprefixed and so deliberately absent here.
+/// Retired environment variables, paired with their replacement.
 const LEGACY_ENV_VARS: [(&str, &str); 9] = [
     ("AUTH_USERNAME", "COMICS_AUTH_USERNAME"),
     ("AUTH_PASSWORD_HASH", "COMICS_AUTH_PASSWORD_HASH"),
@@ -648,12 +551,9 @@ const LEGACY_ENV_VARS: [(&str, &str); 9] = [
     ("COMICS_SESSION_KEY", "COMICS_SECRET"),
 ];
 
-/// Fail fast when a retired environment variable name is still set — the old
-/// names are wired to nothing, so a stale deployment configuration would
-/// otherwise be silently ignored. That matters most for the two folded into
-/// `COMICS_SECRET`: a leftover `COMICS_SESSION_KEY` would quietly generate a
-/// random secret instead, logging everyone out on every restart while the
-/// configuration still looks correct.
+/// Fail fast when a retired variable is set: silently ignoring, say, a leftover
+/// `COMICS_SESSION_KEY` would fall back to a random secret that looks like it
+/// works.
 fn ensure_no_legacy_env_vars() -> anyhow::Result<()> {
     let found: Vec<String> = LEGACY_ENV_VARS
         .iter()
@@ -685,7 +585,7 @@ async fn main() -> anyhow::Result<()> {
             let seed = 0u64; // dummy salt
             let scan = scan_books(seed, &opts.data_dir)?;
             let mut stdout = std::io::stdout().lock();
-            // Ignore write errors (e.g., broken pipe when output is piped to `head`)
+            // Ignore write errors (e.g. broken pipe into `head`).
             for book in &scan.books {
                 let _ = writeln!(stdout, "{} ({}P)", book.title, book.pages.len());
             }
@@ -722,13 +622,11 @@ mod tests {
     use http::Method;
     use tokio::sync::oneshot;
 
-    /// Fixed secret so the derived ID seed — and therefore the URLs below — are
-    /// stable across runs. Any 64 hex characters will do.
+    /// Fixed so the derived IDs, and so `DATA_IDS`, are stable.
     const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    /// Book IDs under `TEST_SECRET`. Recompute them whenever the secret or the
-    /// derivation changes: `comics --secret <TEST_SECRET> --data-dir
-    /// fixtures/data` and read the `/book/…` hrefs off the index page.
+    /// Book IDs under `TEST_SECRET`. To recompute, run `comics --secret
+    /// <TEST_SECRET> --data-dir fixtures/data` and read the `/book/…` hrefs.
     const DATA_IDS: [&str; 2] = [
         // Pepper and Carrot 01 - Potion of Flight
         "1f1c111677715adf",
@@ -751,7 +649,6 @@ mod tests {
         let mut args = vec!["comics", "--data-dir", data_dir];
         args.extend_from_slice(extra_args);
         let mut opts = Opts::parse_from(args);
-        // Only when the caller did not pass `--secret` itself.
         opts.secret
             .get_or_insert_with(|| TEST_SECRET.parse().unwrap());
         let (router, state) = init_route(&opts);
@@ -781,11 +678,8 @@ mod tests {
         assert!(t.contains("Pepper and Carrot 02 - Rainbow Potions"));
     }
 
-    // The scan timestamp is localised client-side, but never through a
-    // customized built-in: WebKit does not implement `<time is="…">` (bug
-    // 182671), and app.js is one IIFE where a throw would cost the reader too.
-    // Opt in per element, so the sibling `<time>` holding an ISO duration is
-    // left alone.
+    // Not a customized built-in (`<time is="…">`): WebKit lacks them. Opt-in
+    // per element, so the duration `<time>` is left alone.
     #[tokio::test]
     async fn index_opts_timestamps_into_client_side_localisation() {
         let server = build_server().await;
@@ -795,9 +689,7 @@ mod tests {
         assert_eq!(1, t.matches("data-localtime").count());
     }
 
-    // A duration's time components sit behind the `T` designator, so a bare
-    // `P0.003S` parses as nothing at all. The localised timestamp above carries
-    // `data-localtime`, so `<time datetime=` matches only the duration.
+    // Seconds need the `T` designator: `P0.003S` is invalid.
     #[tokio::test]
     async fn index_renders_the_scan_duration_as_a_valid_duration() {
         let server = build_server().await;
@@ -829,8 +721,7 @@ mod tests {
     #[tokio::test]
     async fn get_page() {
         let server = build_server().await;
-        // Discover a real page id from the first book's reader page rather than
-        // hard-coding a hash that changes whenever the fixtures change.
+        // Discovered rather than hard-coded, so fixture changes do not break it.
         let book_id = DATA_IDS.first().unwrap();
         let html = server.get(&format!("/book/{book_id}")).await.text();
         let marker = "/data/";
@@ -849,7 +740,6 @@ mod tests {
         use std::fs;
         use tempfile::tempdir;
 
-        // A book with a single page in a temp data dir we are free to mutate.
         let dir = tempdir().unwrap();
         let book = dir.path().join("Temp Book");
         fs::create_dir(&book).unwrap();
@@ -862,14 +752,12 @@ mod tests {
 
         let server = build_server_at(dir.path().to_str().unwrap()).await;
 
-        // Discover the page id the scan assigned (cover of the only book).
         let html = server.get("/").await.text();
         let marker = "/thumb/md/";
         let start = html.find(marker).expect("a cover link") + marker.len();
         let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
         assert!(!id.is_empty());
 
-        // Serves while the file exists, then 404s once it is removed post-scan.
         assert_eq!(200, server.get(&format!("/data/{id}")).await.status_code());
         fs::remove_file(&page).unwrap();
         assert_eq!(404, server.get(&format!("/data/{id}")).await.status_code());
@@ -879,7 +767,6 @@ mod tests {
     async fn thumbnail_serves_jpeg() {
         let server = build_server().await;
 
-        // The cover link on the index uses the medium thumbnail endpoint.
         let html = server.get("/").await.text();
         let marker = "/thumb/md/";
         let start = html.find(marker).expect("a cover thumbnail") + marker.len();
@@ -894,12 +781,11 @@ mod tests {
             );
         }
 
-        // The second request for the same thumbnail is served from the disk cache.
+        // Served from the disk cache.
         let cached = server.get(&format!("/thumb/md/{id}")).await;
         assert_eq!(200, cached.status_code());
         assert!(cached.as_bytes().starts_with(b"\xFF\xD8\xFF"));
 
-        // Unknown size and unknown id both 404.
         assert_eq!(
             404,
             server.get(&format!("/thumb/xl/{id}")).await.status_code()
@@ -912,7 +798,6 @@ mod tests {
         use std::fs;
         use tempfile::tempdir;
 
-        // A "page" that is not a valid image.
         let dir = tempdir().unwrap();
         let book = dir.path().join("Bogus Book");
         fs::create_dir(&book).unwrap();
@@ -925,12 +810,10 @@ mod tests {
         let start = html.find(marker).expect("a cover link") + marker.len();
         let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
 
-        // Undecodable source falls back to the original bytes.
         let res = server.get(&format!("/thumb/sm/{id}")).await;
         assert_eq!(200, res.status_code());
         assert_eq!(res.as_bytes(), &b"this is not an image"[..]);
 
-        // Once the original is gone, the fallback 404s.
         fs::remove_file(&page).unwrap();
         assert_eq!(
             404,
@@ -987,10 +870,7 @@ mod tests {
         assert_eq!(200, res.status_code());
     }
 
-    /// The stateless CSRF origin guard rejects any state-changing POST a browser
-    /// reports as cross-site, including the public `/login` and `/logout` that
-    /// sit outside the auth layer. The guard is the outermost layer, so it fires
-    /// before auth and before the handler.
+    /// Includes the public `/login` and `/logout`, outside the auth layer.
     #[tokio::test]
     async fn csrf_cross_site_post_is_forbidden() {
         let server = build_server().await;
@@ -1003,9 +883,6 @@ mod tests {
         }
     }
 
-    /// A same-origin POST — the normal browser form submit — is untouched by the
-    /// guard and reaches the handler, whether flagged via `Sec-Fetch-Site` or a
-    /// matching `Origin`/`Host`.
     #[tokio::test]
     async fn csrf_same_origin_post_is_allowed() {
         let server = build_server().await;
@@ -1024,9 +901,7 @@ mod tests {
         assert_eq!(303, res.status_code());
     }
 
-    /// The plain-HTTP LAN lockout the escape hatch exists for: no
-    /// `Sec-Fetch-Site` (the origin is not potentially trustworthy, so the
-    /// browser sends none) plus an opaque `Origin: null` is rejected by default.
+    /// The plain-HTTP LAN lockout `--disable-csrf-guard` exists for.
     #[tokio::test]
     async fn csrf_null_origin_post_is_forbidden_by_default() {
         let server = build_server().await;
@@ -1038,8 +913,6 @@ mod tests {
         assert_eq!(403, res.status_code());
     }
 
-    /// With the guard disabled the same request reaches the handler. The layer
-    /// is not installed at all, so this also covers the `cross-site` label.
     #[tokio::test]
     async fn csrf_guard_can_be_disabled() {
         let server = build_server_with("./fixtures/data", &["--disable-csrf-guard"]).await;
@@ -1058,7 +931,6 @@ mod tests {
         assert_eq!(303, res.status_code());
     }
 
-    /// A GET is a safe method and never checked, even when reported cross-site.
     #[tokio::test]
     async fn csrf_safe_method_is_never_checked() {
         let server = build_server().await;
@@ -1069,12 +941,8 @@ mod tests {
         assert_eq!(200, res.status_code());
     }
 
-    /// The standard proxied deployment: TLS terminates in front, so the
-    /// forwarded `Host` carries no scheme and no port while the browser's
-    /// `Origin` carries `https://`. Their authorities still match, so the check
-    /// passes with no public URL configured anywhere. This is what the
-    /// hand-rolled guard's host-only comparison existed to protect, and it
-    /// survives the byte-exact authority comparison unchanged.
+    /// A TLS-terminating proxy forwards a portless `Host` against an `https://`
+    /// `Origin`; the authorities still match.
     #[tokio::test]
     async fn csrf_tls_terminating_proxy_origin_matches_forwarded_host() {
         let server = build_server().await;
@@ -1086,10 +954,7 @@ mod tests {
         assert_eq!(303, res.status_code());
     }
 
-    /// `Sec-Fetch-Site: same-site` is rejected, not allowed. comics is a single
-    /// origin, so its own forms always report `same-origin`; a `same-site` POST
-    /// came from a sibling host and has no legitimate reason to change state
-    /// here.
+    /// comics is a single origin, so its own forms report `same-origin`.
     #[tokio::test]
     async fn csrf_same_site_post_is_forbidden() {
         let server = build_server().await;
@@ -1100,10 +965,8 @@ mod tests {
         assert_eq!(403, res.status_code());
     }
 
-    /// The `Origin`/host fallback compares the full authority, port included, so
-    /// a port on one side and not the other is a mismatch. Only reachable
-    /// without `Sec-Fetch-Site`, i.e. from a plain-HTTP host, where the browser
-    /// puts the same port in both headers.
+    /// Only reached without `Sec-Fetch-Site`, i.e. over plain HTTP, where the
+    /// browser puts the same port in both headers.
     #[tokio::test]
     async fn csrf_origin_fallback_compares_the_port_too() {
         let server = build_server().await;
@@ -1123,8 +986,7 @@ mod tests {
         assert_eq!(403, res.status_code());
     }
 
-    /// A non-browser client sends neither header. It rides no ambient session
-    /// cookie, so it is not a CSRF vector and is let through.
+    /// A non-browser client carries no ambient cookie, so it is no CSRF vector.
     #[tokio::test]
     async fn csrf_client_sending_neither_header_is_allowed() {
         let server = build_server().await;
@@ -1132,9 +994,7 @@ mod tests {
         assert_eq!(303, res.status_code());
     }
 
-    /// `TRACE` is "safe" per RFC 7231 but is not exempt here — the exempt set is
-    /// `GET`/`HEAD`/`OPTIONS`, so a cross-site `TRACE` is refused by the guard
-    /// rather than falling through to the router's 405.
+    /// RFC 7231 calls `TRACE` safe, but only `GET`/`HEAD`/`OPTIONS` are exempt.
     #[tokio::test]
     async fn csrf_cross_site_trace_is_forbidden() {
         let server = build_server().await;
@@ -1162,7 +1022,6 @@ mod tests {
         ])
     }
 
-    /// A real hash — and no credentials at all — must both start the server.
     #[test]
     fn a_usable_password_hash_starts_the_server() {
         let hash = argon2_hash("password").unwrap();
@@ -1172,19 +1031,16 @@ mod tests {
         assert!(ensure_password_hash_is_usable(&public).is_ok());
     }
 
-    /// Without this the server starts, reports authentication as enabled, and
-    /// rejects the correct password with the message a typo gets. The empty
-    /// string is the case an unset shell variable produces.
+    /// The empty string is what an unset shell variable produces.
     #[test]
     fn a_malformed_password_hash_stops_startup() {
         let cases = [
             "",
             "not-a-hash",
             "password",
-            // Parses, but is a salt with no digest after it — legal as *input*
-            // to a hasher, and unable to match any password.
+            // Parses, but has no digest.
             "$argon2id$v=19$m=19456$nope",
-            // Another algorithm's hash: well-formed, and useless to this route.
+            // Another algorithm's hash.
             "$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
         ];
         for hash in cases {
@@ -1195,10 +1051,6 @@ mod tests {
         }
     }
 
-    /// Every configuration that worked before Argon2 lands here, so the message
-    /// has to say what happened and what to do — not the parser's "salt invalid:
-    /// too short". Every bcrypt version prefix, since which one an operator
-    /// holds depends only on when they generated it.
     #[test]
     fn a_bcrypt_hash_names_the_migration() {
         let hashes = [
@@ -1214,14 +1066,10 @@ mod tests {
             assert!(err.contains("bcrypt"), "{err}");
             assert!(err.contains("Argon2id"), "{err}");
             assert!(err.contains("hash-password"), "{err}");
-            // The reassurance that matters: they do not need a new password.
             assert!(err.contains("password itself is unchanged"), "{err}");
         }
     }
 
-    /// The lengths that must go through. The Chinese passphrase is the one worth
-    /// spelling out: at three bytes a character it was capped at 24 under
-    /// bcrypt's 72-byte ceiling, and a hundred of them is now unremarkable.
     #[test]
     fn hash_password_accepts_a_password_at_the_limit() {
         assert!(ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES)).is_ok());
@@ -1229,14 +1077,11 @@ mod tests {
         let cjk = "密".repeat(100);
         assert_eq!(300, cjk.len());
         assert!(ensure_password_fits(&cjk).is_ok());
-        // And it really does hash, rather than merely passing the length check.
         assert!(argon2_hash(&cjk).unwrap().starts_with("$argon2id$"));
     }
 
-    /// The cost parameters are the security property of this command, and they
-    /// come from `Argon2::default()` — an upstream constant, not ours. A crate
-    /// upgrade can move it without breaking a single type, so pin the values
-    /// the OWASP cheat sheet is being cited for, plus the 16-byte salt.
+    /// `Argon2::default()` is upstream's; pin it so a crate upgrade cannot
+    /// silently move the cost parameters.
     #[test]
     fn hash_password_records_the_owasp_parameters() {
         let hash = argon2_hash("a-password-long-enough").unwrap();
@@ -1250,8 +1095,7 @@ mod tests {
         assert_eq!(16, parsed.salt.unwrap().len());
     }
 
-    /// Past the ceiling the message must name the size that was submitted — the
-    /// operator cannot count the bytes of a passphrase they just typed blind.
+    /// The message names the size: the passphrase was typed blind.
     #[test]
     fn hash_password_refuses_an_over_long_password() {
         let err = ensure_password_fits(&"x".repeat(MAX_PASSWORD_BYTES + 1))
@@ -1262,22 +1106,15 @@ mod tests {
             "{err}"
         );
 
-        // `argon2_hash` applies the same check, so the subcommand cannot bypass it.
         assert!(argon2_hash(&"x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
     }
 
-    /// The one length that is a mistake rather than a choice. Hashing it would
-    /// produce a perfectly valid hash of nothing, which is the sort of thing an
-    /// operator discovers much later.
     #[test]
     fn hash_password_refuses_an_empty_password() {
         assert!(ensure_password_fits("").is_err());
         assert!(argon2_hash("").is_err());
     }
 
-    /// Short passwords are warned about, not refused — the one user is also the
-    /// operator. The warning has to name the length, which they typed blind, and
-    /// say it is advice.
     #[test]
     fn a_short_password_is_warned_about_but_still_hashed() {
         let short = "x".repeat(MIN_PASSWORD_CHARS - 1);
@@ -1291,13 +1128,10 @@ mod tests {
             "{warning}"
         );
         assert!(warning.contains("not a refusal"), "{warning}");
-        // Advice, so the hash still comes out.
         assert!(argon2_hash(&short).unwrap().starts_with("$argon2id$"));
     }
 
-    /// The stream split, which is the part a later edit could quietly undo:
-    /// `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` captures stdout, so a
-    /// leaked warning would be baked into the configured hash.
+    /// `$(comics hash-password)` captures stdout, so it must hold the hash alone.
     #[test]
     fn the_warning_never_reaches_stdout() {
         let short = "x".repeat(MIN_PASSWORD_CHARS - 1);
@@ -1307,7 +1141,6 @@ mod tests {
         let out = String::from_utf8(out).expect("utf-8 stdout");
         let err = String::from_utf8(err).expect("utf-8 stderr");
 
-        // stdout is the hash and nothing else — one line, parseable as it stands.
         assert_eq!(
             1,
             out.lines().count(),
@@ -1323,8 +1156,6 @@ mod tests {
         assert!(err.contains("warning:"), "{err}");
     }
 
-    /// Nothing on stderr when there is nothing to say — a warning on every run
-    /// is one nobody reads.
     #[test]
     fn a_long_enough_password_emits_only_the_hash() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -1335,8 +1166,6 @@ mod tests {
         assert!(err.is_empty(), "{:?}", String::from_utf8(err));
     }
 
-    /// A refused password writes nothing at all — not a partial line, and above
-    /// all not a hash.
     #[test]
     fn a_refused_password_writes_nothing() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -1345,16 +1174,12 @@ mod tests {
         assert!(err.is_empty());
     }
 
-    /// At or above the advice, nothing is said at all.
     #[test]
     fn a_long_enough_password_draws_no_warning() {
         assert!(password_strength_warning(&"x".repeat(MIN_PASSWORD_CHARS)).is_none());
         assert!(password_strength_warning(&"x".repeat(MIN_PASSWORD_CHARS + 40)).is_none());
     }
 
-    /// Counted in characters, not bytes: fifteen Chinese characters are 45
-    /// bytes, so a byte floor would pass five of them — a third of what an ASCII
-    /// passphrase is asked for.
     #[test]
     fn the_strength_floor_counts_characters_not_bytes() {
         let fifteen = "密".repeat(MIN_PASSWORD_CHARS);
@@ -1366,17 +1191,15 @@ mod tests {
         assert!(password_strength_warning(&five).is_some());
     }
 
-    // Authentication: form login backed by a signed session cookie.
     const SESSION_COOKIE: &str = "comics_session";
 
-    /// Build a server with credentials configured. When `save_cookies` is set,
-    /// the test client persists cookies across requests like a browser would.
+    /// A server with credentials `user`/`password`; `save_cookies` makes the
+    /// client keep cookies like a browser.
     async fn build_auth_server(save_cookies: bool) -> TestServer {
         build_auth_server_with(save_cookies, &[]).await
     }
 
-    /// Like [`build_auth_server`], with `extra_args` appended to the CLI so a
-    /// test can flip a single option (e.g. `--cookie-secure`).
+    /// Like [`build_auth_server`], with `extra_args` appended to the CLI.
     async fn build_auth_server_with(save_cookies: bool, extra_args: &[&str]) -> TestServer {
         use std::{thread, time};
 
@@ -1393,7 +1216,6 @@ mod tests {
         ];
         args.extend_from_slice(extra_args);
         let mut opts = Opts::parse_from(args);
-        // Only when the caller did not pass `--secret` itself.
         opts.secret
             .get_or_insert_with(|| TEST_SECRET.parse().unwrap());
         let (router, state) = init_route(&opts);
@@ -1462,9 +1284,7 @@ mod tests {
         assert!(res.text().contains("2 book(s)"));
     }
 
-    /// Collect the raw `Set-Cookie` header values. `maybe_cookie` parses the
-    /// cookie and drops its attributes, so attribute assertions have to read the
-    /// header verbatim.
+    /// Raw `Set-Cookie` values: `maybe_cookie` drops the attributes.
     fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
         res.headers()
             .get_all("set-cookie")
@@ -1503,8 +1323,7 @@ mod tests {
         );
     }
 
-    /// The default must stay attribute-free so plain-HTTP LAN deployments keep
-    /// working — a browser silently drops a `Secure` cookie sent over HTTP.
+    /// A browser drops a `Secure` cookie over plain HTTP.
     #[tokio::test]
     async fn auth_login_cookie_has_no_secure_by_default() {
         let server = build_auth_server(true).await;
@@ -1550,8 +1369,6 @@ mod tests {
         assert!(!res.headers().contains_key("strict-transport-security"));
     }
 
-    /// HSTS is a global outer layer, so it must be present even on the routes
-    /// that sit outside the auth layer.
     #[tokio::test]
     async fn hsts_present_when_configured() {
         let server = build_auth_server_with(false, &["--hsts-max-age", "63072000"]).await;
@@ -1565,9 +1382,6 @@ mod tests {
         }
     }
 
-    /// The constant part of the policy is a global outer layer, so it must reach
-    /// the public routes and the assets as well as the protected pages — an
-    /// asset served without `nosniff` is exactly the one worth sniffing.
     #[tokio::test]
     async fn security_headers_present_on_every_response() {
         let server = build_server().await;
@@ -1586,8 +1400,7 @@ mod tests {
             assert_security_headers(res.headers(), &path);
         }
 
-        // The login form, and the redirect an anonymous visitor is bounced with
-        // before ever reaching a handler — the layer is outermost, so both.
+        // Including the anonymous redirect, issued before any handler.
         let server = build_auth_server(false).await;
         let res = server.get("/login").await;
         assert_eq!(200, res.status_code());
@@ -1615,9 +1428,7 @@ mod tests {
         assert!(!csp.contains("unsafe-inline"), "{what} -> {csp}");
     }
 
-    /// The CSP is only worth the header bytes if the pages obey it: every
-    /// `<script>` must be an external `src`, or the browser drops the inline one
-    /// and the page breaks. Nothing else in the suite runs a script.
+    /// The CSP forbids inline scripts, so the browser would drop them.
     #[tokio::test]
     async fn rendered_pages_carry_no_inline_scripts() {
         let server = build_server().await;
@@ -1626,8 +1437,7 @@ mod tests {
         let pages = [
             server.get("/").await.text(),
             server.get(&format!("/book/{book}")).await.text(),
-            // `/login` only renders as a page when auth is on; otherwise it
-            // redirects to the library.
+            // `/login` only renders when auth is on.
             build_auth_server(false).await.get("/login").await.text(),
         ];
 
@@ -1637,15 +1447,12 @@ mod tests {
                 let open = &tag[..tag.find('>').expect("an unclosed <script")];
                 assert!(open.contains("src="), "inline script: <script{open}>");
             }
-            // A CSP without `unsafe-inline` drops event-handler attributes too.
             assert!(!html.contains("onclick="));
         }
     }
 
-    /// `.pg` is `display: none` until `is-current` lands on it, which app.js
-    /// normally does — so a reader without JavaScript would get a blank stage.
-    /// Exactly the first page carries the class server-side, the same one app.js
-    /// sets when it repaints from page 1 on load.
+    /// `.pg` is hidden until `is-current` lands on it; without app.js the
+    /// server has to set it on the first page.
     #[tokio::test]
     async fn the_first_page_is_visible_without_javascript() {
         let server = build_server().await;
@@ -1666,9 +1473,8 @@ mod tests {
         }
     }
 
-    /// Without a script there is no way for a shared control to know which page
-    /// it sits on, so every page carries its own neighbours and `:target` picks
-    /// the one to show. The ends must not offer a link past the book.
+    /// Without a script, `:target` picks the page, so each carries links to its
+    /// neighbours, and none past either end.
     #[tokio::test]
     async fn anchor_paging_links_every_page_to_its_neighbours() {
         let server = build_server().await;
@@ -1704,9 +1510,8 @@ mod tests {
         }
     }
 
-    /// Switching modes from the shared control in the topbar loses your place,
-    /// because without a script it cannot know which page you are on. Each page
-    /// carries the switch with its own anchor instead, in both directions.
+    /// The topbar switch would lose the page without a script, so each page
+    /// carries its own.
     #[tokio::test]
     async fn switching_mode_without_javascript_keeps_the_page() {
         let server = build_server().await;
@@ -1730,10 +1535,7 @@ mod tests {
         }
     }
 
-    /// A control only a script can operate must not be on screen without one.
-    /// Checked on every page that renders a theme toggle, not just the reader:
-    /// covering one of the three templates is how the topbar's counter was
-    /// missed the first time.
+    /// Checked on every template with a theme toggle, not just the reader.
     #[tokio::test]
     async fn script_only_controls_are_hidden_without_javascript() {
         let server = build_server().await;
@@ -1757,8 +1559,7 @@ mod tests {
             assert!(toggle.contains("js-only"), "{what}: {toggle}");
         }
 
-        // The topbar states the total, which is true without a script; only the
-        // live half — the current page — is dropped.
+        // The topbar keeps its total; only the live page number is hidden.
         let reader = server.get(&format!("/book/{book}")).await.text();
         let titleblock = reader
             .split("class=\"s\"")
@@ -1778,10 +1579,7 @@ mod tests {
         assert!(comics::assets::APP_CSS.contains("html:not(.js) .js-only"));
     }
 
-    /// The segmented control is a pair of links, so the mode has to survive a
-    /// round trip through the URL. An unrecognised value renders the default
-    /// rather than failing: it is a display preference, and a reader beats a
-    /// 400.
+    /// An unrecognised mode renders the default rather than a 400.
     #[tokio::test]
     async fn the_reader_mode_is_server_rendered() {
         let server = build_server().await;
@@ -1822,10 +1620,8 @@ mod tests {
         }
     }
 
-    /// The rail is the only one-step route to a distant page, and as `<button>`
-    /// it did nothing without a script. Each thumbnail anchors to its page, and
-    /// each page states its own number — the rail's counter is app.js-written,
-    /// so without a script it would read 1 everywhere.
+    /// Each thumbnail anchors to its page, and each page states its own number,
+    /// since the rail's counter is script-written.
     #[tokio::test]
     async fn the_rail_works_without_javascript() {
         let server = build_server().await;
@@ -1856,9 +1652,8 @@ mod tests {
         }
     }
 
-    /// theme.js sets `data-theme`, so a viewer without JavaScript never gets the
-    /// attribute the dark palette hangs off. The media-query copy covers them,
-    /// and it is a copy — this fails when the two lists drift apart.
+    /// Without theme.js there is no `data-theme`; the media-query copy of the
+    /// dark palette must match the attribute one.
     #[test]
     fn dark_theme_has_a_no_js_fallback() {
         /// The declarations between the braces that follow `selector`.
@@ -1892,9 +1687,7 @@ mod tests {
         assert_eq!(explicit, system, "the dark palettes have drifted");
     }
 
-    /// The no-JS paging keys off `html:not(.js)`, and the class has to be there
-    /// before the first paint — theme.js is the only script that early. Drop it
-    /// and `:target` would fight app.js over which page is showing.
+    /// Without the `js` class before first paint, `:target` fights app.js.
     #[tokio::test]
     async fn the_scripted_path_is_marked_before_first_paint() {
         let server = build_server().await;
@@ -1904,8 +1697,7 @@ mod tests {
         assert!(comics::assets::APP_CSS.contains("html:not(.js)"));
     }
 
-    /// Loaded synchronously in `<head>`, so it must not be deferred — the point
-    /// is that it runs before the first paint.
+    /// It must run before the first paint.
     #[tokio::test]
     async fn theme_script_is_served_and_not_deferred() {
         let server = build_server().await;
@@ -1950,8 +1742,7 @@ mod tests {
         assert_eq!("no-store", res.headers()["cache-control"]);
     }
 
-    /// Authenticated images stay browser-cacheable (page turns would otherwise
-    /// re-read the disk every time) but must not be kept by a shared cache.
+    /// Browser-cacheable, but never by a shared cache.
     #[tokio::test]
     async fn page_and_thumb_images_are_privately_cacheable() {
         let server = build_auth_server(true).await;
@@ -1977,8 +1768,6 @@ mod tests {
         }
     }
 
-    /// The middleware must not reach the assets: they carry no user data and
-    /// their fingerprinted URLs are what make the long cache safe.
     #[tokio::test]
     async fn static_assets_stay_publicly_cacheable() {
         let server = build_auth_server(false).await;
@@ -1990,21 +1779,9 @@ mod tests {
         );
     }
 
-    /// Sessions do **not** survive a rebuild of the router — the deliberate
-    /// trade the session store makes.
-    ///
-    /// This test once asserted the opposite: a fixed `COMICS_SECRET` made a
-    /// cookie issued by one server acceptable to the next, because the cookie
-    /// described itself and the server kept no record of it — which is exactly
-    /// what made logout unenforceable. Ending a session and surviving a restart
-    /// were the same property, and only one could be had. Revocation won.
-    ///
-    /// What the secret still buys is asserted below: stable URLs, and a
-    /// signature that stays valid across the rebuild.
+    /// Deliberate: a server-side store is what makes logout enforceable.
     #[tokio::test]
     async fn sessions_do_not_survive_a_router_rebuild() {
-        // Deliberately not TEST_SECRET: the flag, not the helper default, has to
-        // be what makes the two routers agree.
         const SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\
                               fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
@@ -2013,7 +1790,6 @@ mod tests {
         assert_eq!(303, res.status_code());
         let cookie = res.maybe_cookie(SESSION_COOKIE).expect("a session cookie");
 
-        // The same cookie against a fresh process: the store never heard of it.
         let second = build_auth_server_with(false, &["--secret", SECRET]).await;
         let res = second.get("/").add_cookie(cookie).await;
         assert_eq!(303, res.status_code(), "a stale session was accepted");
@@ -2025,9 +1801,6 @@ mod tests {
         );
     }
 
-    /// The shared secret still keeps book and page URLs stable across a restart.
-    /// That, and signature continuity, is what it is for now that it no longer
-    /// decides whether a session lives.
     #[tokio::test]
     async fn secret_keeps_urls_stable_across_router_rebuild() {
         const SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\
@@ -2041,9 +1814,7 @@ mod tests {
         login_response(&second).await;
         let second_page = second.get("/").await.text();
 
-        // Not DATA_IDS: those are derived from TEST_SECRET, and this test uses
-        // its own so the flag rather than the helper default is what makes the
-        // two agree. Comparing the two sets is the property either way.
+        // Not TEST_SECRET/DATA_IDS: the flag must be what makes them agree.
         let ids = |page: &str| -> Vec<String> {
             page.match_indices("/book/")
                 .map(|(at, marker)| {
@@ -2057,8 +1828,6 @@ mod tests {
         assert_eq!(before, ids(&second_page));
     }
 
-    /// The cookie carries the session identifier and nothing else — no expiry,
-    /// no username, nothing to decode or be tempted to trust.
     #[tokio::test]
     async fn session_cookie_value_is_a_bare_identifier() {
         let server = build_auth_server(true).await;
@@ -2076,9 +1845,6 @@ mod tests {
         assert!(value.len() > 32, "{value}");
     }
 
-    /// A successful login must not consume the anti-brute-force budget: the
-    /// control targets password guessing, and locking out someone who signs in
-    /// on several devices would be pure cost.
     #[tokio::test]
     async fn auth_successful_logins_do_not_count_against_the_limit() {
         let server = build_auth_server(false).await;
@@ -2088,9 +1854,8 @@ mod tests {
         }
     }
 
-    /// The sixth *failed* attempt inside the window is refused, and the refusal
-    /// happens before the credential check — so even the correct password gets a
-    /// 429.
+    /// The throttle runs before the credential check, so even the correct
+    /// password gets a 429.
     #[tokio::test]
     async fn auth_login_is_rate_limited_after_five_attempts() {
         let server = build_auth_server(false).await;
@@ -2116,8 +1881,7 @@ mod tests {
         assert!(res.maybe_cookie(SESSION_COOKIE).is_none());
     }
 
-    /// Fail a login `n` times as the client `X-Forwarded-For` names, returning
-    /// the status of the last attempt.
+    /// Fail one login as the client `X-Forwarded-For` names.
     async fn failed_login_from(server: &TestServer, forwarded_for: &str) -> http::StatusCode {
         server
             .post("/login")
@@ -2127,10 +1891,7 @@ mod tests {
             .status_code()
     }
 
-    /// End-to-end proof that `--trusted-proxies` reaches the limiter: naming
-    /// the test server's loopback peer as the proxy makes `X-Forwarded-For`
-    /// authoritative, so each forwarded client gets its own budget. Guards the
-    /// `Opts` → `AppState` → handler wiring no unit test can see.
+    /// Guards the `Opts` → `AppState` → handler wiring no unit test sees.
     #[tokio::test]
     async fn auth_trusted_proxy_gives_each_forwarded_client_its_own_budget() {
         let server = build_auth_server_with(false, &["--trusted-proxies", "127.0.0.1"]).await;
@@ -2140,12 +1901,9 @@ mod tests {
         }
         assert_eq!(429, failed_login_from(&server, "203.0.113.1").await);
 
-        // A different forwarded client is untouched by the first one's lockout.
         assert_eq!(401, failed_login_from(&server, "203.0.113.2").await);
     }
 
-    /// The default. With no proxy configured the header is ignored outright, so
-    /// two forwarded clients share the peer's single bucket — safe, and blunt.
     #[tokio::test]
     async fn auth_untrusted_forwarded_clients_share_one_budget() {
         let server = build_auth_server(false).await;
@@ -2156,13 +1914,8 @@ mod tests {
         assert_eq!(429, failed_login_from(&server, "203.0.113.99").await);
     }
 
-    /// The account-scoped ceiling, on the real router: four addresses spend
-    /// five apiece, and a fifth with an untouched per-IP budget is refused
-    /// anyway — the gap per-IP alone left open.
-    ///
-    /// Slower than its neighbours because each of those twenty attempts costs a
-    /// real verification; the throttle is reserved before the credential check,
-    /// so making them cheap would stop the test exercising its own path.
+    /// Four addresses spend their budgets; a fifth, fresh one is still refused.
+    /// Slow by necessity: each attempt runs a real Argon2 verification.
     #[tokio::test]
     async fn auth_login_is_throttled_across_all_client_addresses() {
         let server = build_auth_server_with(false, &["--trusted-proxies", "127.0.0.1"]).await;
@@ -2181,7 +1934,6 @@ mod tests {
 
     #[tokio::test]
     async fn auth_login_redirects_safely() {
-        // An off-site `next` is ignored in favour of the home page.
         let server = build_auth_server(true).await;
         let res = server
             .post("/login")
@@ -2198,8 +1950,6 @@ mod tests {
         );
     }
 
-    /// `SameSite=Strict` is the cheat sheet's stated preference and comics can
-    /// afford it: nothing third-party ever navigates into an authenticated URL.
     #[tokio::test]
     async fn session_cookie_is_same_site_strict() {
         let server = build_auth_server(false).await;
@@ -2211,10 +1961,7 @@ mod tests {
         assert!(issued.contains("SameSite=Strict"), "{issued}");
     }
 
-    /// Both responses that carry a session identifier are redirects, and neither
-    /// is reached by `no_store_html` — `/login` and `/logout` sit outside the
-    /// auth layer, and a redirect is not `text/html`. The cheat sheet asks for
-    /// `no-store` on exactly these.
+    /// `no_store_html` does not reach these: they are public, and redirects.
     #[tokio::test]
     async fn responses_carrying_a_session_cookie_are_not_cacheable() {
         let server = build_auth_server(false).await;
@@ -2231,9 +1978,7 @@ mod tests {
         assert_eq!("no-cache", res.headers()["pragma"]);
     }
 
-    /// End-to-end for the backslash open redirect: the endpoint must send the
-    /// visitor home, not to `//evil.example`, which is where a browser resolves
-    /// `Location: /\evil.example`.
+    /// A browser resolves `/\evil.example` to `//evil.example`.
     #[tokio::test]
     async fn auth_login_rejects_backslash_redirect_targets() {
         let server = build_auth_server(false).await;
@@ -2249,10 +1994,8 @@ mod tests {
         assert_eq!("/", res.headers()["location"]);
     }
 
-    /// `next` reaches the handler percent-decoded, and `Redirect::to` panics on
-    /// a value `HeaderValue` refuses — so this must answer, not drop the
-    /// connection. Reachable without credentials: `GET /login` redirects before
-    /// authenticating whenever auth is disabled.
+    /// `Redirect::to` panics on a value `HeaderValue` refuses, and `next`
+    /// arrives percent-decoded; this must answer, not drop the connection.
     #[tokio::test]
     async fn login_survives_a_control_character_in_next() {
         let server = build_server().await;
@@ -2261,13 +2004,8 @@ mod tests {
         assert_eq!("/", res.headers()["location"]);
     }
 
-    /// The change this branch exists for: after logout the *same* cookie is
-    /// refused, because the session it names is gone from the server.
-    ///
-    /// Replayed by hand rather than through the client jar, which would honour
-    /// the removal cookie and prove nothing — a browser that ignores it, or an
-    /// attacker holding an earlier copy, is the case that used to keep working
-    /// for a further seven days.
+    /// Replayed by hand, not via the jar (which honours the removal cookie): a
+    /// copied cookie must die with the server-side session.
     #[tokio::test]
     async fn auth_logout_invalidates_the_session_server_side() {
         let server = build_auth_server(false).await;
@@ -2302,9 +2040,7 @@ mod tests {
         );
     }
 
-    /// Logout ends *every* session, not just the one that submitted it, so a
-    /// reader who suspects a stolen cookie can invalidate it by signing out
-    /// anywhere. Without this the only remedy was restarting the server.
+    /// Logout ends *every* session, so signing out anywhere kills a stolen cookie.
     #[tokio::test]
     async fn auth_logout_ends_sessions_on_other_devices() {
         let server = build_auth_server(false).await;
@@ -2334,9 +2070,8 @@ mod tests {
         );
     }
 
-    /// `/logout` sits outside the auth middleware and the CSRF guard passes
-    /// header-less clients, so an anonymous `POST` must not be able to sign
-    /// everyone out.
+    /// `/logout` is public and the CSRF guard passes header-less clients, so
+    /// store membership must be what authorises the clear.
     #[tokio::test]
     async fn auth_anonymous_logout_ends_nothing() {
         let server = build_auth_server(false).await;
@@ -2374,8 +2109,7 @@ mod tests {
             "\"cache\", \"cookies\", \"storage\"",
             res.headers()["clear-site-data"]
         );
-        // The removal cookie must mirror the issued one, or the browser will not
-        // consider them the same cookie.
+        // Must mirror the issued cookie, or the browser treats it as another.
         let removal = set_cookie_headers(&res)
             .into_iter()
             .find(|h| h.starts_with(&format!("{SESSION_COOKIE}=")))
@@ -2384,7 +2118,6 @@ mod tests {
         assert!(removal.contains("SameSite=Strict"), "{removal}");
         assert!(removal.contains("Path=/"), "{removal}");
 
-        // Session is gone, so the protected page bounces to login again.
         assert_eq!(303, server.get("/").await.status_code());
     }
 
@@ -2395,10 +2128,8 @@ mod tests {
         assert_eq!(200, server.get("/assets/app.css").await.status_code());
     }
 
-    /// Every route behind the auth layer must refuse anonymous access: reads
-    /// bounce to the login form, writes get 401. Guards against a route slipping
-    /// out from under the middleware, e.g. by being declared after
-    /// `route_layer`.
+    /// Guards against a route slipping out from under the middleware, e.g. by
+    /// being declared after `route_layer`.
     #[tokio::test]
     async fn auth_every_protected_route_rejects_anonymous() {
         let server = build_auth_server(false).await;
@@ -2407,9 +2138,7 @@ mod tests {
         for path in [
             "/".to_string(),
             format!("/book/{book}"),
-            // Page images and thumbnails are content too, so they sit behind the
-            // login as well. The middleware runs before the handler, so a bogus
-            // id still redirects rather than 404ing.
+            // A bogus id still redirects: auth runs before the handler.
             format!("/data/{book}"),
             format!("/thumb/md/{book}"),
         ] {
@@ -2429,8 +2158,6 @@ mod tests {
         }
     }
 
-    /// The flip side: with a valid session every protected route is reachable
-    /// (no redirect to login, no 401).
     #[tokio::test]
     async fn auth_every_protected_route_reachable_when_logged_in() {
         let server = build_auth_server(true).await;
@@ -2445,15 +2172,13 @@ mod tests {
             200,
             server.get(&format!("/book/{book}")).await.status_code()
         );
-        // Write routes succeed and redirect (303), rather than being blocked.
         assert_eq!(303, server.post("/rescan").await.status_code());
         assert_eq!(303, server.post("/shuffle").await.status_code());
         assert_eq!(
             303,
             server.post(&format!("/shuffle/{book}")).await.status_code()
         );
-        // Image routes let the request through to the handler: an unknown id
-        // 404s (rather than redirecting to login), proving auth passed.
+        // 404, not a redirect, proves auth passed.
         assert_eq!(404, server.get("/data/deadbeef").await.status_code());
         assert_eq!(404, server.get("/thumb/md/deadbeef").await.status_code());
     }

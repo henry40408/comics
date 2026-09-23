@@ -14,9 +14,8 @@ pub struct Page {
 }
 
 impl Page {
-    /// Performs no image I/O — dimensions are deliberately not read, so the scan
-    /// only lists directories instead of opening every image (a big win on
-    /// spinning disks).
+    /// Performs no image I/O — deliberately, so a scan never opens every image
+    /// on a slow disk.
     pub fn new(seed: u64, path: &path::Path) -> anyhow::Result<Self> {
         if !path.is_file() {
             bail!("Not a file: {}", path.display());

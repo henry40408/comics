@@ -50,12 +50,10 @@ pub struct LoginForm {
 
 /// Verify `password` against a stored Argon2 PHC string.
 ///
-/// The parameters come from the stored hash, not from [`Argon2::default`] —
-/// which supplies only the algorithm implementation — so a hash from an older
-/// build, or a future one with a heavier cost, keeps verifying without a
-/// migration. An unparseable hash refuses rather than panicking; it should be
-/// unreachable, since `ensure_password_hash_is_usable` rejects one at startup,
-/// where an operator can act on it.
+/// Parameters come from the stored hash ([`Argon2::default`] only supplies the
+/// implementation), so raising the cost later needs no migration. An
+/// unparseable hash refuses; `ensure_password_hash_is_usable` should have
+/// rejected it at startup.
 fn verify_password_hash(password: &str, stored: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(stored) else {
         return false;
@@ -65,22 +63,17 @@ fn verify_password_hash(password: &str, stored: &str) -> bool {
         .is_ok()
 }
 
-/// Check submitted credentials against the configured ones. When no credentials
-/// are configured every request is already public, so anything is accepted.
+/// Check submitted credentials; anything passes when auth is not configured.
 ///
-/// **Both halves always run.** The obvious spelling — `username == expected &&
-/// verify(…)` — short-circuits, so a wrong username answers in microseconds
-/// while a wrong password pays a full Argon2id verification (~15 ms). The
-/// responses are byte-identical; the *timing* is not, and that is enough to
-/// enumerate the username — the "quick exit" the OWASP Authentication Cheat
-/// Sheet warns against under *Authentication and Error Messages*. So the
-/// verification runs unconditionally and is combined with a bitwise `&` on
-/// [`Choice`], which unlike `&&` is not a branch. The username comparison is
-/// [`ConstantTimeEq`] for the same reason; it still reveals whether the lengths
-/// match, which is inherent to comparing at all.
+/// **Both halves always run.** `username == expected && verify(…)` would
+/// short-circuit, so a wrong username would answer in microseconds and a wrong
+/// password in ~15 ms — a timing oracle enumerating the username (OWASP's
+/// "quick exit"). Hence the unconditional verification, the non-branching `&`
+/// on [`Choice`], and [`ConstantTimeEq`](subtle::ConstantTimeEq) for the username (which still leaks
+/// whether the lengths match).
 ///
-/// Callers must hold a permit from `AppState::verify_sem` — each call allocates
-/// [`MAX_CONCURRENT_VERIFICATIONS`]-worth of memory-hard state.
+/// Callers must hold a permit from `AppState::verify_sem`: each call allocates
+/// 19 MiB (see [`MAX_CONCURRENT_VERIFICATIONS`](crate::MAX_CONCURRENT_VERIFICATIONS)).
 pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> bool {
     match auth {
         AuthConfig::None => true,
@@ -88,11 +81,9 @@ pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> 
             username: expected_user,
             password_hash,
         } => {
-            // The cheat sheet's "maximum input length" on a comparison function.
-            // This exit *is* a branch, but it turns on the length of the
-            // attacker's own submission and so tells them nothing they did not
-            // already know — and it keeps an oversized body from buying a
-            // verification. See `hash_password` in `main.rs` for the other half.
+            // OWASP's "maximum input length". A branch, but on the attacker's
+            // own input, so it leaks nothing. Mirrors `ensure_password_fits` in
+            // `main.rs`, so any hashable password verifies.
             if password.len() > MAX_PASSWORD_BYTES {
                 return false;
             }
@@ -105,19 +96,12 @@ pub fn verify_credentials(auth: &AuthConfig, username: &str, password: &str) -> 
 
 /// Constrain a post-login redirect target to a local path.
 ///
-/// **It must be a path, not an authority.** A leading `//` makes the rest a
-/// host, so `//evil.example` is an absolute URL wearing a path's clothes. So is
-/// `/\evil.example`: the WHATWG URL parser reads a backslash as a slash for
-/// http(s), so browsers resolve `Location: /\evil.example` off-site. Testing
-/// only for `//` left the open redirect open — the second character has to be
-/// neither.
-///
-/// **It must survive being put in a header.** `Redirect::to` *panics* on a value
-/// `HeaderValue` will not take, and `next` arrives percent-decoded, so
-/// `?next=/%0Ax` reaches here holding a real newline. Checking it here keeps a
-/// crafted query string from taking the connection down — reachable without
-/// credentials, since `GET /login` redirects before authenticating when auth is
-/// disabled.
+/// - **A path, not an authority:** `//evil.example` is protocol-relative, and
+///   browsers read `/\evil.example` the same way (WHATWG treats `\` as `/` for
+///   http(s)), so the second character must be neither.
+/// - **A valid header value:** `next` arrives percent-decoded (`?next=/%0Ax`
+///   holds a real newline) and `Redirect::to` *panics* on an invalid
+///   `HeaderValue` — reachable anonymously via `GET /login`.
 fn safe_next(next: &str) -> String {
     let mut chars = next.chars();
     let is_local_path = chars.next() == Some('/') && !matches!(chars.next(), Some('/' | '\\'));
@@ -143,9 +127,8 @@ fn render_login(error: bool, next: &str) -> Response {
                 StatusCode::OK
             };
             let mut response = (status, Html(html)).into_response();
-            // The login page sits outside the auth layer, so the `no_store_html`
-            // middleware never sees it — and it must not be cached either: it
-            // carries the error state and the `next` target.
+            // Outside the auth layer, so `no_store_html` never sees it; it
+            // carries the error state and `next`.
             response
                 .headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -161,23 +144,19 @@ fn render_login(error: bool, next: &str) -> Response {
     }
 }
 
-/// Stamp `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0 caches) on a
-/// response.
+/// Stamp `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0) on a response.
 ///
-/// The cheat sheet asks for `no-store` on responses carrying a session ID, and
-/// the two that do are redirects: the 303 issuing the cookie and the 303
-/// removing it. `no_store_html` reaches neither — `/login` and `/logout` sit
-/// outside the auth layer, and a redirect is not `text/html` — so it happens
-/// here. Redirects are rarely cached without explicit freshness, but "rarely" is
-/// not a property to hang a `Set-Cookie` on.
+/// For the 303s that set and remove the session cookie: OWASP wants `no-store`
+/// on anything carrying a session ID, and `no_store_html` reaches neither
+/// (outside the auth layer, and not `text/html`).
 fn set_no_store(response: &mut Response) {
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
 }
 
-/// Open a session and attach its signed cookie to a response, returning the
-/// identifier so the caller can record a fingerprint of it in the audit log.
+/// Open a session and attach its signed cookie, returning the identifier for
+/// the audit log's fingerprint.
 fn set_session_cookie(response: &mut Response, state: &Arc<AppState>, user_agent: &str) -> String {
     let id = state.sessions.create(user_agent);
     let cookie = build_session_cookie(state.cookie_secure, &id);
@@ -191,17 +170,14 @@ fn set_session_cookie(response: &mut Response, state: &Arc<AppState>, user_agent
     id
 }
 
-/// `Clear-Site-Data` is not in `http`'s constant list, so name it here.
 static CLEAR_SITE_DATA: HeaderName = HeaderName::from_static("clear-site-data");
 
-/// The quotes are part of the grammar — each directive is a quoted string — so
-/// they must survive any tidy-up of this literal. `"executionContexts"` is
-/// omitted: it forces a reload of the browsing context, duplicating and possibly
-/// interfering with the 303 logout already performs.
+/// The quotes are part of the header grammar — keep them. `"executionContexts"`
+/// is omitted: its forced reload would fight logout's own 303.
 const CLEAR_SITE_DATA_VALUE: &str = "\"cache\", \"cookies\", \"storage\"";
 
-/// `GET /login` — render the login form. Skips it (redirecting home) when auth
-/// is disabled or the visitor already holds a valid session.
+/// `GET /login` — render the form, or redirect to `next` when auth is disabled
+/// or the visitor is already signed in.
 pub async fn login_route(
     Query(query): Query<LoginQuery>,
     State(state): State<Arc<AppState>>,
@@ -218,12 +194,11 @@ pub async fn login_route(
     render_login(false, &query.next)
 }
 
-/// The throttle is consulted *before* the credential check, so a throttled
-/// attacker cannot learn anything from the response either.
+/// `POST /login`. The throttle runs *before* the credential check, so a
+/// throttled attempt learns nothing.
 ///
-/// `Option<Extension<ConnectInfo<…>>>` keeps the handler usable from unit tests
-/// that build a request without the connection info; `Form` must stay last, as
-/// the body extractor.
+/// `ConnectInfo` is optional so unit tests can call this directly; `Form` must
+/// stay last, as the body extractor.
 pub async fn login_submit_route(
     State(state): State<Arc<AppState>>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -241,11 +216,8 @@ pub async fn login_submit_route(
         retry_after_secs,
     } = state.login_limiter.try_acquire(ip)
     {
-        // The global window is an *account lockout*, not a busy client, and the
-        // two want different reactions: one is a person mistyping, the other says
-        // several addresses are guessing and that the reader cannot get in
-        // either. They get separate event names so a log filter can tell them
-        // apart without parsing fields.
+        // The global window is an account lockout (the reader is locked out
+        // too), so it gets its own event name for alerting.
         if scope == Scope::Global {
             warn!(
                 event = "login_lockout",
@@ -265,29 +237,23 @@ pub async fn login_submit_route(
             );
         }
         let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
-        // Tell the client when to come back rather than leaving it to guess; the
-        // window is fixed, so this is exact rather than an estimate.
         if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
             response.headers_mut().insert(header::RETRY_AFTER, value);
         }
         return response;
     }
-    // Bound how many Argon2id verifications are in flight; each wants 19 MiB.
-    // Acquired *after* the throttle, so a refused attempt never queues, and held
-    // only across the verification itself. The semaphore is never closed, so the
-    // error case cannot arise — refuse rather than unwrap if it somehow does.
+    // Acquired *after* the throttle, so a refused attempt never queues. The
+    // semaphore is never closed; refuse rather than unwrap anyway.
     let Ok(_permit) = state.verify_sem.acquire().await else {
         error!("verification semaphore closed");
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if !verify_credentials(&state.auth_config, &form.username, &form.password) {
-        // Deliberately no username or password in the event: a failed login is
-        // exactly where a mistyped password lands in the log otherwise.
+        // No credentials: a password typed into the username field would leak.
         warn!(event = "login_failed", %ip, user_agent, "login failed");
         return render_login(true, &form.next);
     }
-    // Only failures keep their reservation, so signing in repeatedly never
-    // exhausts the window.
+    // Refund the attempt: only failures count against the windows.
     state.login_limiter.release(ip);
     let mut response = Redirect::to(&safe_next(&form.next)).into_response();
     let id = set_session_cookie(&mut response, &state, user_agent);
@@ -303,12 +269,10 @@ pub async fn login_submit_route(
 /// `POST /logout` — end every live session, clear the cookie, redirect to the
 /// login form.
 ///
-/// Sessions are destroyed **server-side** first, the half OWASP's Session
-/// Expiration guidance calls mandatory: the removal cookie and `Clear-Site-Data`
-/// below only ask the browser to forget, which does nothing about a copy taken
-/// earlier — and ending *every* session is what lets a reader who suspects one
-/// invalidate it. See [`crate::auth::SessionStore::destroy_all`] for why store
-/// membership authorises that on an otherwise public route.
+/// Server-side destruction is what counts; the removal cookie and
+/// `Clear-Site-Data` do nothing about a stolen copy. See
+/// [`crate::auth::SessionStore::destroy_all`] for why store membership
+/// authorises this on a public route.
 pub async fn logout_route(
     State(state): State<Arc<AppState>>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -321,10 +285,8 @@ pub async fn logout_route(
         &state.trusted_proxies,
     );
     let id = session_id_of(&state, &request);
-    // `destroyed` counts what this logout ended: every live session, since they
-    // all belong to the same credentials (see `SessionStore::destroy_all`). Zero
-    // distinguishes a logout that had nothing to end — an already-expired
-    // cookie, a double submit, or an anonymous POST — from one that did.
+    // Zero means nothing was ended: an expired cookie, a double submit, or an
+    // anonymous POST.
     let destroyed = id.as_deref().map_or(0, |id| state.sessions.destroy_all(id));
     let session = id.map_or_else(|| "-".to_string(), |id| state.audit_salt.fingerprint(&id));
     info!(
@@ -341,11 +303,8 @@ pub async fn logout_route(
     if let Ok(value) = HeaderValue::from_str(&removal.encoded().to_string()) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
-    // Ask the browser to drop what it already holds for this origin, which is
-    // the client-side half of what the OWASP Logout guidance requires (the
-    // no-store headers only stop new entries from being written). Browsers act
-    // on this only in a secure context, so it is inert on a plain-HTTP LAN
-    // deployment — harmless, just ineffective there.
+    // Drops what the browser already holds (no-store only prevents new
+    // entries). Inert outside a secure context, e.g. plain-HTTP LAN.
     response.headers_mut().insert(
         CLEAR_SITE_DATA.clone(),
         HeaderValue::from_static(CLEAR_SITE_DATA_VALUE),
@@ -371,8 +330,6 @@ mod tests {
         test_state_with(crate::auth::RateLimiter::new(5, 20, 60))
     }
 
-    /// The limiter's ceilings decide which window refuses first, so a test about
-    /// one of them has to be able to set both.
     fn test_state_with(limiter: crate::auth::RateLimiter) -> Arc<AppState> {
         Arc::new(AppState {
             auth_config: some_auth(),
@@ -416,9 +373,8 @@ mod tests {
         }
     }
 
-    /// The session identifier a `Set-Cookie` header carries: the signed value is
-    /// the jar's signature followed by the identifier, so it is the last 32
-    /// characters of the value before the attributes begin.
+    /// The session identifier in a `Set-Cookie` header: the last 32 characters
+    /// of the signed value.
     fn id_from_set_cookie(header: &str) -> String {
         let value = header
             .split_once('=')
@@ -430,9 +386,8 @@ mod tests {
         value[value.len() - 32..].to_string()
     }
 
-    /// OWASP is explicit that a session identifier must never be logged in
-    /// cleartext — only a salted hash of it. The handler is called directly so
-    /// the thread-local subscriber sees its events.
+    /// Only a salted hash of the identifier may be logged. The handler is
+    /// called directly so the thread-local subscriber sees its events.
     #[tokio::test]
     async fn session_events_do_not_leak_the_cookie_value() {
         let capture = Capture::default();
@@ -521,10 +476,7 @@ mod tests {
         assert!(verify_credentials(&AuthConfig::None, "", ""));
     }
 
-    /// A stored hash the parser rejects refuses everything, rather than
-    /// panicking or — far worse — accepting. `ensure_password_hash_is_usable`
-    /// stops the server first, but the route must not *depend* on it having run:
-    /// the two are reached by different entry points.
+    /// The route must not depend on `ensure_password_hash_is_usable` having run.
     #[test]
     fn an_unusable_stored_hash_refuses_every_password() {
         for stored in ["", "not-a-hash", "$argon2id$v=19$m=19456$nope"] {
@@ -537,7 +489,6 @@ mod tests {
         }
     }
 
-    /// A failed login, for the throttling tests below.
     fn wrong_password() -> Form<LoginForm> {
         Form(LoginForm {
             username: "alice".to_string(),
@@ -546,14 +497,11 @@ mod tests {
         })
     }
 
-    /// Everything the log subscriber saw.
     fn captured(capture: &Capture) -> String {
         String::from_utf8(capture.0.lock().clone()).expect("utf-8 logs")
     }
 
-    /// An ordinary throttle keeps the event name it has always had, so an
-    /// operator's existing filters do not quietly stop matching, and gains a
-    /// `scope` telling which window it was.
+    /// Operators' filters match on the event name; `scope` names the window.
     #[tokio::test]
     async fn a_per_ip_throttle_keeps_its_event_name() {
         let capture = Capture::default();
@@ -563,7 +511,6 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        // One attempt per address, against a global ceiling far out of reach.
         let state = test_state_with(crate::auth::RateLimiter::new(1, 100, 60));
         let first = login_submit_route(
             State(Arc::clone(&state)),
@@ -589,9 +536,6 @@ mod tests {
         assert!(!logs.contains("login_lockout"), "{logs}");
     }
 
-    /// The account-wide lockout is a different event: it says several addresses
-    /// are guessing *and* that the reader cannot sign in either. Burying it
-    /// under `login_rate_limited` is what the distinction exists to prevent.
     #[tokio::test]
     async fn a_global_lockout_logs_its_own_event() {
         let capture = Capture::default();
@@ -601,8 +545,6 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        // A global ceiling of one, and a per-IP ceiling that cannot be the
-        // reason for the refusal.
         let state = test_state_with(crate::auth::RateLimiter::new(100, 1, 60));
         let first = login_submit_route(
             State(Arc::clone(&state)),
@@ -630,8 +572,6 @@ mod tests {
         );
     }
 
-    /// A 429 that does not say when to come back leaves the client guessing, and
-    /// the window here is fixed, so the answer is exact rather than an estimate.
     #[tokio::test]
     async fn a_throttled_login_says_when_to_retry() {
         let state = test_state_with(crate::auth::RateLimiter::new(1, 100, 60));
@@ -663,10 +603,8 @@ mod tests {
         assert!((1..=60).contains(&seconds), "Retry-After: {seconds}");
     }
 
-    /// A permit that cannot be had is a *server* fault, not a rejected password
-    /// — the reader would retype a correct one for as long as their patience
-    /// held. Unreachable while nothing closes the semaphore, which is exactly
-    /// why the branch needs a test of its own.
+    /// A server fault must not read as a wrong password, or the reader keeps
+    /// retyping a correct one.
     #[tokio::test]
     async fn a_closed_verification_semaphore_is_not_reported_as_a_bad_password() {
         let state = test_state();
@@ -687,14 +625,9 @@ mod tests {
         assert_eq!(StatusCode::SERVICE_UNAVAILABLE, response.status());
     }
 
-    /// Regression: the check was `username == expected && bcrypt::verify(…)`,
-    /// which short-circuits, so the response *time* enumerated the username even
-    /// though the bodies were identical.
-    ///
-    /// Cost 8 puts a verification four orders of magnitude above the string
-    /// comparison a short circuit would leave, so the ratio does not need a quiet
-    /// machine. `[profile.dev.package."*"]` optimises bcrypt even in a debug
-    /// build, keeping this to tens of milliseconds.
+    /// Guards against a short-circuiting check. Even the cheap test hash is
+    /// orders of magnitude above a string comparison, so the ratio does not need
+    /// a quiet machine.
     #[test]
     fn wrong_username_costs_what_a_wrong_password_costs() {
         let auth = AuthConfig::Some {
@@ -717,12 +650,7 @@ mod tests {
         );
     }
 
-    /// Argon2 reads the whole password, so a long one is not its own prefix.
-    ///
-    /// Under bcrypt every string sharing the first 72 bytes verified against the
-    /// same hash, making a 100-byte password plus *any* suffix a valid
-    /// credential; the assertions below held only because comics refused
-    /// anything past 72 bytes. Now the property comes from the algorithm.
+    /// Every byte counts — no bcrypt-style 72-byte truncation.
     #[test]
     fn a_long_password_is_not_merely_its_own_prefix() {
         let password = "x".repeat(100);
@@ -736,13 +664,10 @@ mod tests {
             "alice",
             &format!("{password}extra")
         ));
-        // The byte bcrypt would never have reached.
         assert!(!verify_credentials(&auth, "alice", &"x".repeat(99)));
     }
 
-    /// A Traditional Chinese passphrase costs three bytes per character, so
-    /// bcrypt's ceiling was 24 of them — inside what someone might reasonably
-    /// choose. A hundred is now ordinary, and every one counts.
+    /// Three bytes per character: a 72-byte ceiling would stop at 24.
     #[test]
     fn a_chinese_passphrase_is_not_cut_short() {
         let password = "密".repeat(100);
@@ -756,8 +681,6 @@ mod tests {
         assert!(!verify_credentials(&auth, "alice", &"密".repeat(99)));
     }
 
-    /// The ceiling is a backstop, not a feature: past it the verifier refuses
-    /// without hashing, which is the cheat sheet's "maximum input length".
     #[test]
     fn a_password_past_the_ceiling_is_refused() {
         let password = "x".repeat(MAX_PASSWORD_BYTES);
@@ -786,9 +709,6 @@ mod tests {
         assert_eq!(safe_next("javascript:alert(1)"), "/");
     }
 
-    /// Regression: only `//` was rejected, but browsers resolve a backslash as a
-    /// slash for http(s), so `Location: /\evil.example` navigates off-site just
-    /// the same. The second character has to be neither.
     #[test]
     fn safe_next_blocks_backslash_authorities() {
         for target in [
@@ -799,13 +719,9 @@ mod tests {
         ] {
             assert_eq!(safe_next(target), "/", "{target} was accepted");
         }
-        // A single backslash is not a path at all.
         assert_eq!(safe_next(r"\evil.example"), "/");
     }
 
-    /// Regression: `next` arrives percent-decoded and lands in a `Location`
-    /// header, and `Redirect::to` panics on a value `HeaderValue` refuses. A
-    /// crafted query string must not be able to take the connection down.
     #[test]
     fn safe_next_rejects_values_a_header_cannot_carry() {
         for target in ["/foo\nbar", "/foo\rbar", "/foo\r\nSet-Cookie: x=y", "/\0"] {
@@ -813,8 +729,7 @@ mod tests {
         }
     }
 
-    /// The paths comics actually generates keep working. `next` is built by the
-    /// auth middleware's percent-encoder, so it is always ASCII.
+    /// `next` from the auth middleware is percent-encoded, so always ASCII.
     #[test]
     fn safe_next_still_accepts_ordinary_paths() {
         for target in ["/", "/book/1f1c111677715adf", "/book/abc?page=2", "/a%20b"] {

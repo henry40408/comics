@@ -5,9 +5,7 @@ on:
 
 name: Docker
 
-# One run per ref at a time. A newer push supersedes the run it interrupted;
-# a tag does not — a tagged build publishes one specific version and nothing
-# should quietly cancel it.
+# A newer push cancels the running one for the same ref; tag runs never are.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -19,8 +17,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # No qemu: the Dockerfile builder is pinned to the native platform and zig
-      # cross-compiles both musl targets, so the arm64 image needs no emulation.
+      # No qemu: the Dockerfile cross-compiles arm64 with zig.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -47,9 +44,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_VERSION=${{ steps.version.outputs.version }}
-          # Persist BuildKit layer cache across runs via the GitHub Actions cache
-          # backend. This caches image layers (apt install, cargo-zigbuild build,
-          # zig download) — not the in-Dockerfile cargo/target cache mounts, which
-          # are local to an ephemeral runner and don't survive between runs.
+          # Caches image layers only; the Dockerfile's cargo/target cache mounts
+          # do not survive the ephemeral runner.
           cache-from: type=gha
           cache-to: type=gha,mode=max

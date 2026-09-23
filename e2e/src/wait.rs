@@ -1,14 +1,9 @@
 //! Retrying assertions.
 //!
-//! Playwright's `expect(...)` polls until the assertion holds or a timeout
-//! expires, which is what let the old steps write `await expect(page).toHaveURL('/')`
-//! straight after a click. `WebDriver` has no such layer: a `find` that runs
-//! before `app.js` has finished swapping a class simply reports the old state.
-//!
-//! thirtyfour's `ElementQuery` filters cover the cases that are really "wait for
-//! an element matching X", and the page objects use them. These two helpers
-//! cover the rest — a computed value that has to settle, like the number of
-//! displayed pages or the URL after a form post.
+//! `WebDriver` has no retrying-assertion layer: a `find` that runs before
+//! `app.js` has swapped a class reports the old state. `ElementQuery` covers
+//! "wait for an element"; these cover computed values that have to settle,
+//! like the URL after a form post.
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -18,11 +13,8 @@ use anyhow::{Result, bail};
 
 use crate::browser::{WAIT_INTERVAL, WAIT_TIMEOUT};
 
-/// Polls `probe` until it reports the expected value.
-///
-/// On timeout the failure names the last value seen, not merely that a wait
-/// expired — that is the difference between "the counter never reached 2" and a
-/// message you have to reproduce by hand to understand.
+/// Polls `probe` until it reports the expected value; on timeout the error
+/// names the last value seen.
 pub async fn eventually_eq<T, E, F, Fut>(what: &str, expected: E, mut probe: F) -> Result<()>
 where
     T: Debug,

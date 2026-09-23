@@ -1,6 +1,5 @@
-// Comics — shared front-end behaviour for the library and reader pages.
-// Loaded with `defer`, so the DOM is ready when this runs. The pre-paint
-// theme is set by theme.js, loaded synchronously in each template's <head>.
+// Comics — shared front-end behaviour. Loaded with `defer`; the pre-paint
+// theme is set by theme.js.
 (function () {
   "use strict";
 
@@ -22,11 +21,9 @@
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
 
   // ---- library: render server-side timestamps in the viewer's locale ----
-  // Plain DOM rather than a customized built-in (`<time is="x-time">`): WebKit
-  // has declined to implement those (WebKit bug 182671), so the `extends` form
-  // of customElements.define is dead on Safari — and it lived in this file's
-  // single IIFE, where a throw would have taken the reader down with it.
-  // The server-rendered text is the fallback when this never runs.
+  // Plain DOM, not a customized built-in (`<time is=…>`): Safari does not
+  // support those (WebKit bug 182671), and a throw here would take the reader
+  // down with it.
   document.querySelectorAll("time[data-localtime]").forEach(function (el) {
     var d = new Date(el.getAttribute("datetime"));
     if (Number.isNaN(d.getTime())) return; // keep whatever the server rendered
@@ -48,7 +45,6 @@
   const bar = document.getElementById("bar");
   const curEls = [document.getElementById("cur"), document.getElementById("cur2")];
   const thumbsBox = document.getElementById("thumbs");
-  // Anchors rather than buttons, so the rail still jumps without a script.
   const thumbBtns = [...thumbsBox.querySelectorAll("a")];
   let current = 1;
 
@@ -101,9 +97,7 @@
     else if (k === " ") { e.preventDefault(); setCurrent(e.shiftKey ? current - 1 : current + 1); }
   });
 
-  // thumbnails jump (both modes); cancel the href so the browser does not also
-  // scroll to the anchor — goTo animates, and in paged mode there is nowhere to
-  // scroll anyway.
+  // thumbnails jump (both modes); cancel the anchor jump, goTo animates
   thumbBtns.forEach((b, i) =>
     b.addEventListener("click", (e) => {
       e.preventDefault();
@@ -125,9 +119,7 @@
   );
   pgs.forEach((p) => io.observe(p));
 
-  // mode switch (segmented control). The halves are links so the mode works
-  // without a script; here we cancel the navigation and switch in place, which
-  // keeps the current page instead of reloading back to the top.
+  // mode switch: cancel the link and switch in place, keeping the current page
   seg.addEventListener("click", (e) => {
     const b = e.target.closest("a");
     if (!b) return;

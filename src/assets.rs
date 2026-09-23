@@ -6,10 +6,9 @@ pub const APP_CSS: &str = include_str!("../vendor/assets/app.css");
 
 pub const APP_JS: &str = include_str!("../vendor/assets/app.js");
 
-/// The pre-paint theme snippet. Served separately from [`APP_JS`] because it
-/// must run synchronously in `<head>` while `app.js` is deferred — and it lives
-/// in a file rather than inline in the templates so the CSP can stay at
-/// `script-src 'self'`.
+/// The pre-paint snippet: runs synchronously in `<head>`, unlike the deferred
+/// [`APP_JS`], and is a file rather than inline so the CSP needs no
+/// `'unsafe-inline'`.
 pub const THEME_JS: &str = include_str!("../vendor/assets/theme.js");
 
 pub const FAVICON_SVG: &str = include_str!("../vendor/assets/favicon.svg");
@@ -20,9 +19,8 @@ pub const FAVICON_PNG: &[u8] = include_bytes!("../vendor/assets/favicon-32.png")
 /// Separate from the favicon because iOS does not accept SVG for the home screen.
 pub const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../vendor/assets/apple-touch-icon.png");
 
-/// Appended to asset URLs as `?v=`, so they can be served immutable: the value
-/// changes whenever any asset changes, busting the cache exactly then and never
-/// otherwise.
+/// Hash of every embedded asset, appended as `?v=` so assets can be served
+/// immutable.
 pub fn assets_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION
