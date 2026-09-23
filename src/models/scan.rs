@@ -10,10 +10,8 @@ use super::book::{Book, Page};
 pub struct BookScan {
     pub books: Vec<Book>,
     pub books_map: HashMap<String, usize>,
-    /// Maps a page id to its location as `(book index, page index)` into
-    /// [`books`]. Storing the location instead of a cloned [`Page`] avoids
-    /// duplicating every page's metadata strings — resolve to the owning page
-    /// with [`BookScan::page_by_id`].
+    /// Page id → `(book index, page index)` into [`books`](Self::books), rather
+    /// than a cloned [`Page`]; resolve with [`BookScan::page_by_id`].
     pub pages_map: HashMap<String, (usize, usize)>,
     pub scan_duration: Duration,
     pub scanned_at: DateTime<Utc>,

@@ -5,11 +5,8 @@ edition = "2024"
 publish = false
 description = "Browser E2E tests and screenshot pipeline for Comics"
 
-# Deliberately its own workspace, not a member of the one at the repository
-# root. CI runs coverage as `cargo llvm-cov nextest --all-features --workspace`,
-# which would otherwise compile thirtyfour and drive a real browser on every
-# coverage run. `e2e/` was already a self-contained sub-project when it was
-# JavaScript; this keeps that boundary.
+# Deliberately its own workspace: CI runs coverage with `--workspace`, which
+# would otherwise drive a real browser on every coverage run.
 [workspace]
 
 [dependencies]
@@ -23,9 +20,8 @@ tokio = { version = "1.52.3", features = ["macros", "process", "rt-multi-thread"
 name = "e2e"
 harness = false
 
-# Mirrors the root crate's lint set, minus the entries that only apply to the
-# server. Being a separate workspace means none of it is inherited, and test
-# code that lints differently from the code it tests drifts.
+# Mirrors the root crate's lint set (minus server-only entries); a separate
+# workspace inherits none of it.
 [lints.rust]
 unexpected_cfgs = "deny"
 unsafe_code = "deny"

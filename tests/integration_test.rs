@@ -10,10 +10,8 @@ use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 
-/// Ceiling for waiting on a log line, not an expected duration — the waits
-/// below finish in milliseconds. Generous on purpose: it exists so a wedged
-/// binary fails the run instead of hanging it, and a machine under load must
-/// never be able to reach it.
+/// Bounds a wedged binary rather than pacing the tests, which finish in
+/// milliseconds; generous so a loaded machine never reaches it.
 const LOG_WAIT: Duration = Duration::from_secs(30);
 
 #[test]
@@ -31,10 +29,9 @@ Pepper and Carrot 02 - Rainbow Potions (5P)
         .stderr_eq(str![]);
 }
 
-/// The scan runs on a background thread *after* the listener is up, so the log
-/// is the only place it reports in. Read until that line arrives, then stop the
-/// server: the server never exits on its own, so a fixed timeout would be the
-/// test's whole runtime *and* a race against the scan on a loaded machine.
+/// Reads stdout until the scan reports in, then kills the server: it never
+/// exits on its own, so a `snapbox` timeout would be the whole runtime *and* a
+/// race against the scan.
 #[test]
 fn initial_scan_finished() {
     let mut server = Process::new(cmd::cargo_bin!("comics"))
@@ -62,7 +59,7 @@ fn initial_scan_finished() {
                 break;
             }
         }
-        // A closed channel means the test already gave up; nothing to do.
+        // A closed channel means the test already gave up.
         drop(tx.send(logs));
     });
 
@@ -87,8 +84,7 @@ fn initial_scan_finished() {
 
 #[test]
 fn legacy_env_var_aborts_startup() {
-    // A stale, pre-prefix env var name must fail fast instead of being ignored.
-    // `env_clear` makes the check deterministic regardless of the ambient env.
+    // `env_clear` keeps the ambient environment out of the check.
     Command::new(cmd::cargo_bin!("comics"))
         .env_clear()
         .env("BIND", "127.0.0.1:0")
@@ -105,10 +101,8 @@ Error: these environment variables no longer exist; rename (or unset) them to co
 
 #[test]
 fn folded_env_vars_abort_startup() {
-    // COMICS_SEED and COMICS_SESSION_KEY were folded into COMICS_SECRET, and
-    // ignoring a leftover one falls back to a random secret — logging everyone
-    // out and reshuffling every URL per restart, while the configuration still
-    // looks correct.
+    // Ignoring a leftover one would fall back to a random secret, silently
+    // logging everyone out and reshuffling every URL on each restart.
     Command::new(cmd::cargo_bin!("comics"))
         .env_clear()
         .env("COMICS_SEED", "1")
@@ -136,9 +130,7 @@ fn initial_scan_failed() {
             "COMICS_SECRET",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )
-        // A failed scan shuts the server down, so this bounds a hang rather
-        // than pacing the test — it costs nothing to be generous, and at one
-        // second a loaded machine could be interrupted before it exits.
+        // A failed scan shuts the server down; this only bounds a hang.
         .timeout(LOG_WAIT)
         .args(["--bind", "127.0.0.1:0", "--data-dir", &path])
         .assert()

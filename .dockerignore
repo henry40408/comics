@@ -2,14 +2,10 @@ data
 !data/.keep
 target
 
-# The image never needs git history: CI resolves `git describe` on the runner
-# and passes it in as the GIT_VERSION build arg. Keeping .git out of the context
-# stops every commit from invalidating the `COPY . .` layer (and the cargo build
-# behind it) even when no source file changed.
+# CI passes the version in as GIT_VERSION; excluding .git stops every commit
+# from invalidating the `COPY . .` layer and the build behind it.
 .git
 .github
 
-# Browser tests, and their own `target/` — a separate workspace, so the `target`
-# rule above (root-level only) does not cover it. The image builds the server
-# alone and never runs these.
+# Browser tests: a separate workspace whose target/ the rule above misses.
 e2e

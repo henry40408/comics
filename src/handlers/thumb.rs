@@ -37,8 +37,7 @@ fn jpeg_response(bytes: Vec<u8>) -> Response {
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "image/jpeg"),
-            // `private`, not `public`: thumbnails are authenticated content too.
-            // See the note in `handlers/page.rs`.
+            // `private`: see `handlers/page.rs`.
             (
                 header::CACHE_CONTROL,
                 "private, max-age=31536000, immutable",
@@ -51,9 +50,7 @@ fn jpeg_response(bytes: Vec<u8>) -> Response {
 
 /// `GET /thumb/{size}/{id}`, size being `sm` or `md`.
 ///
-/// Thumbnails are written to the cache dir on first request and read back
-/// afterwards, so the full-resolution source is opened at most once per
-/// (size, page).
+/// Generated on first request and cached on disk afterwards.
 pub async fn show_thumb_route(
     State(state): State<Arc<AppState>>,
     Path((size, id)): Path<(String, String)>,

@@ -15,14 +15,13 @@ Feature: Reader
     When I switch to scroll mode
     Then the reader should be in "scroll" mode
 
-  # The thumbnails are anchors now, so app.js has to cancel the navigation and
-  # animate instead — this covers that the scripted path still works.
+  # The thumbnails are anchors; app.js cancels the navigation and animates.
   Scenario: Jumping from the thumbnail rail
     When I jump to page "3" from the rail
     Then the current page should be "3"
 
-  # Runs in the `e2e-nojs` project, which serves the same pages with scripting
-  # off. Paging falls back to per-page anchors resolved by CSS `:target`.
+  # `@nojs` runs with scripting off; paging falls back to per-page anchors
+  # resolved by CSS `:target`.
   @nojs
   Scenario: Paging works without JavaScript
     Then page "1" should be the only one showing
@@ -39,8 +38,8 @@ Feature: Reader
     And the top bar should not show the current page
     And the top bar should still read "3 ページ"
 
-  # Without a script the switch lives on each page, not in the topbar: the
-  # shared control cannot know where you are, so it would drop you at page 1.
+  # Without a script the switch lives on each page: the shared one would drop
+  # you at page 1.
   @nojs
   Scenario: Switching to scroll mode works without JavaScript
     Then the shared mode control should not be visible
@@ -67,8 +66,8 @@ Feature: Reader
     Then page "3" should be the only one showing
     And the page counter should read "3 / 3"
 
-  # Tagged so it runs in its own project, after every other one: logging out
-  # ends *every* session, so alongside the others it signs them out mid-test.
+  # Runs in its own pass, after every other scenario: logging out ends *every*
+  # session.
   @logout
   Scenario: Logging out returns to the login page
     When I log out

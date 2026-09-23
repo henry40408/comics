@@ -31,47 +31,30 @@ pub const VERSION: &str = env!("APP_VERSION");
 
 /// Longest password accepted, in bytes.
 ///
-/// Not the algorithm's ceiling — RFC 9106 allows 2^32-1 bytes and the password
-/// only feeds a linear `BLAKE2b` pre-hash, so length costs nothing the way
-/// bcrypt's 72-byte truncation did. It is the "maximum input length" the OWASP
-/// Authentication Cheat Sheet asks of a comparison function, set as a backstop
-/// against absurd input. A kilobyte is 1024 ASCII characters or roughly 341
-/// Traditional Chinese ones, comfortably past the 64 the cheat sheet asks be
-/// supported — which the old bcrypt ceiling could not honour for a non-ASCII
-/// passphrase.
+/// A backstop against absurd input (OWASP's "maximum input length"), not an
+/// Argon2 limit. 1024 bytes is ~341 Traditional Chinese characters, well past
+/// the 64 characters OWASP asks be supported.
 pub const MAX_PASSWORD_BYTES: usize = 1024;
 
-/// Shortest password `hash-password` accepts without comment, in **characters**.
+/// Shortest password `hash-password` accepts without a warning, in
+/// **characters** (OWASP's minimum without a second factor).
 ///
-/// The OWASP Authentication Cheat Sheet calls a password under 15 characters
-/// weak when no second factor is available, and comics has none. Advice rather
-/// than a rule: the one user is also the operator, so their own password length
-/// is their call, and a hard floor would only teach them to generate the hash
-/// elsewhere.
-///
-/// Counted in characters where [`MAX_PASSWORD_BYTES`] counts bytes: the ceiling
-/// is about resource use, the floor about how much a person had to remember. A
-/// 15-*byte* floor would pass a Traditional Chinese passphrase at five
-/// characters, a third of what is asked of an ASCII one.
+/// Advice, not a rule: the one user is the operator, and a hard floor would only
+/// push them to hash elsewhere. Characters, not bytes like
+/// [`MAX_PASSWORD_BYTES`]: the floor measures memorability, the ceiling
+/// resource use.
 pub const MIN_PASSWORD_CHARS: usize = 15;
 
 /// How many password verifications may run at once.
 ///
-/// Argon2id at the parameters below allocates **19 MiB per verification**,
-/// against bcrypt's four kilobytes. Being memory-hard is the point, but it means
-/// concurrency has to be bounded, or the twenty attempts a minute the rate
-/// limiter admits could ask for 380 MiB at once — on what may well be a NAS.
-/// Four caps it near 76 MiB while leaving room for a household's simultaneous
-/// sign-ins; beyond that requests queue for the ~15 ms, rather than being
-/// refused.
+/// Argon2id at the default parameters allocates **19 MiB per verification**, so
+/// the 20 attempts the rate limiter admits could want 380 MiB at once — on what
+/// may be a NAS. Four caps it near 76 MiB; excess requests queue, not fail.
 pub const MAX_CONCURRENT_VERIFICATIONS: usize = 4;
 
-/// An Argon2 hash at parameters far below the real ones.
-///
-/// Test-only. Verification reads its parameters from the hash itself, so the
-/// tests exercise the server's code path without paying 19 MiB and ~25 ms per
-/// fixture. One mebibyte and one pass still leave a verification three orders of
-/// magnitude above a string comparison, which is what the timing test needs.
+/// A test-only Argon2 hash at far cheaper parameters (1 MiB, one pass).
+/// Verification reads them from the hash, so tests use the real code path, and
+/// it stays well above a string comparison, as the timing test needs.
 #[cfg(test)]
 pub(crate) fn test_password_hash(password: &str) -> String {
     use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher as _, Version};

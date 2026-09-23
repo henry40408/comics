@@ -1,26 +1,21 @@
 # syntax=docker/dockerfile:1
 
 # ---- build: cross-compile a static musl binary with cargo-zigbuild ----------
-# The builder is pinned to the native build platform; zig cross-compiles to the
-# target arch's musl triple, so no qemu emulation is needed — an arm64 image
-# builds at the host's native speed. The only C dependency is mimalloc, which
-# zig cc compiles from source; everything else (image codecs, argon2, xxhash) is
-# pure Rust, so no CMake or system libraries are required.
-# No Rust version here: rust-toolchain.toml is the single source of truth and
-# rustup installs it below. Do not "simplify" this to `rust:1.97` — the
-# un-suffixed tag resolves to trixie, which would be a silent Debian major bump.
+# Runs on the native build platform; zig cross-compiles to the target's musl
+# triple, so no qemu. mimalloc is the only C dependency (zig cc builds it).
+# No Rust version tag: rust-toolchain.toml is the single source of truth. Keep
+# the `bookworm` suffix — a bare tag resolves to trixie, a silent Debian bump.
 FROM --platform=$BUILDPLATFORM rust:bookworm AS build
 
-# curl + xz fetch zig; that is the only build-time system dependency.
+# curl + xz fetch zig.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Zig 0.14.1 avoids the libc++-19 bindgen requirement that 0.15+ introduces.
 ARG ZIG_VERSION=0.14.1
-# 0.23.0 is the floor: rustc now passes `-Wl,--fix-cortex-a53-843419` in the
-# aarch64-unknown-linux-musl pre-link args, which zig cc rejects outright, and
-# only from that release does cargo-zigbuild filter the flag back out.
+# At least 0.23.0: earlier releases pass rustc's `-Wl,--fix-cortex-a53-843419`
+# (aarch64 musl) through to zig cc, which rejects it.
 ARG ZIGBUILD_VERSION=0.23.4
 RUN cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
 RUN set -eux; \
@@ -36,16 +31,13 @@ RUN set -eux; \
 WORKDIR /app
 
 # Install the pinned toolchain in a layer keyed on rust-toolchain.toml alone, so
-# editing source does not re-download the compiler. Any rustup proxy invocation
-# triggers the install, and the musl targets declared in the file come with it.
+# source edits do not re-download the compiler.
 COPY rust-toolchain.toml .
 RUN cargo --version
 
 COPY . .
 
-# Map Docker's TARGETARCH onto the Rust musl triple and build. `rustup target
-# add` runs after the source (and rust-toolchain.toml) is in place, so it
-# resolves against the pinned toolchain rather than the base image's default.
+# Map Docker's TARGETARCH onto the Rust musl triple and build.
 ARG TARGETARCH
 ARG GIT_VERSION=dev
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -61,9 +53,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     install -Dm755 "target/${target}/release/comics" /out/comics
 
 # ---- runtime: minimal static image (CA certs + tzdata, no shell) ------------
-# distroless/static (not :nonroot) keeps the root runtime user the previous
-# distroless/cc image defaulted to, so a bind-mounted data/cache dir stays
-# writable without a permissions change.
+# Not :nonroot — running as root keeps bind-mounted data/cache dirs writable
+# without a permissions change.
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/comics /comics
 

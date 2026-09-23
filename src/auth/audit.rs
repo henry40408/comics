@@ -3,17 +3,11 @@ use sha2::{Digest as _, Sha256};
 use crate::secret::hex_lower;
 
 const SALT_BYTES: usize = 16;
-/// Eight bytes are ample to correlate the handful of session events one process
-/// emits, and truncation removes any temptation to treat the value as
-/// reversible.
+/// Ample to correlate one process's session events.
 const FINGERPRINT_BYTES: usize = 8;
 
-/// Per-process salt for session-identifier hashing.
-///
-/// Random per start and never logged: it only needs to correlate events within
-/// one process lifetime. OWASP's *Logging Sessions Life Cycle* is explicit that
-/// the session ID must not be logged in cleartext and that a salted hash should
-/// be logged instead.
+/// Per-process random salt, never logged, for hashing session identifiers
+/// into the audit log — OWASP forbids logging them in cleartext.
 pub struct SessionAuditSalt([u8; SALT_BYTES]);
 
 impl SessionAuditSalt {
@@ -21,11 +15,8 @@ impl SessionAuditSalt {
         Self(rand::random())
     }
 
-    /// First [`FINGERPRINT_BYTES`] of `SHA-256(salt || nonce)`, hex-encoded.
-    ///
-    /// SHA-256 rather than the `xxh3` used for content IDs: xxh3 is not a
-    /// cryptographic hash, so a salted xxh3 would not resist the recovery the
-    /// OWASP guidance is guarding against.
+    /// First `FINGERPRINT_BYTES` of `SHA-256(salt || nonce)`, hex-encoded.
+    /// Not `xxh3` like content IDs: that is not a cryptographic hash.
     pub fn fingerprint(&self, nonce: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.0);
@@ -61,8 +52,6 @@ mod tests {
         assert_ne!(a.fingerprint(NONCE), b.fingerprint(NONCE));
     }
 
-    /// The whole point of the hash: the logged value must not carry the
-    /// identifier it stands for.
     #[test]
     fn fingerprint_does_not_contain_the_nonce() {
         let salt = SessionAuditSalt::generate();

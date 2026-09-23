@@ -4,27 +4,23 @@ use anyhow::{Context as _, bail};
 use cookie::Key;
 use sha2::{Digest as _, Sha256, Sha512};
 
-/// Sized to what it protects: `cookie`'s signed jar is HMAC-SHA256 keyed with
-/// 32 bytes, so 256 bits of input entropy saturates it. (`cookie::Key` holds 64,
-/// but the second half is the *encryption* key for private jars, which comics
-/// never builds.) Longer secrets are hashed just the same, and buy nothing.
+/// The signed jar is HMAC-SHA256 with a 32-byte key, so 256 bits saturates it
+/// (the other half of `cookie::Key` encrypts private jars, which comics never
+/// uses). Longer secrets buy nothing.
 const SECRET_MIN_BYTES: usize = 32;
 
 const SECRET_MIN_HEX_LEN: usize = SECRET_MIN_BYTES * 2;
 
-/// Domain separators, so the values derived from the secret cannot be turned
-/// into one another. That matters because the ID seed is not secret in practice:
-/// book IDs are `xxh3(seed, title)`, they appear in URLs, and xxh3 is not
-/// cryptographic — invert enough IDs and you have the seed. Passing the secret's
-/// bytes straight through would leak eight bytes of cookie-signing material.
+/// Domain separators. The ID seed is effectively public — IDs are
+/// `xxh3(seed, …)` in URLs and xxh3 is invertible with enough samples — so it
+/// must not share bytes with the signing key.
 const SESSION_KEY_DOMAIN: &[u8] = b"comics/session-key/v1";
 const ID_SEED_DOMAIN: &[u8] = b"comics/id-seed/v1";
 
 /// The one secret comics is configured with (`COMICS_SECRET`).
 ///
-/// Both the cookie signing key and the salt for hashed book/page IDs are derived
-/// from it, so a deployment has a single value to generate, store and rotate.
-/// Rotating it is a global logout *and* changes every book and page URL.
+/// Derives both the cookie signing key and the ID seed. Rotating it logs
+/// everyone out *and* changes every book and page URL.
 #[derive(Clone)]
 pub struct Secret(Vec<u8>);
 
@@ -34,10 +30,8 @@ impl Secret {
         Self(rand::random::<[u8; SECRET_MIN_BYTES]>().to_vec())
     }
 
-    /// SHA-512 outputs exactly the 64 bytes `Key` wants, so comics leaves the
-    /// `cookie` crate's `key-expansion` feature off (it would pull in `hkdf` for
-    /// `Key::derive_from`): a domain-separated hash is all a 512-bit secret
-    /// needs.
+    /// SHA-512 yields exactly the 64 bytes `Key` wants, so `cookie`'s
+    /// `key-expansion` feature (and `hkdf`) stays off.
     pub fn session_key(&self) -> Key {
         let mut hasher = Sha512::new();
         hasher.update(SESSION_KEY_DOMAIN);
@@ -60,10 +54,8 @@ impl Secret {
 impl FromStr for Secret {
     type Err = anyhow::Error;
 
-    /// Decode at least 64 hex characters (32 bytes). A *minimum*, not a fixed
-    /// length: the value is hashed, so the floor only keeps someone from
-    /// configuring a guessable string, and hex is required as evidence the value
-    /// came out of a CSPRNG rather than off a keyboard.
+    /// Decode at least 64 hex characters (32 bytes). Hex is required as a hint
+    /// the value came from a CSPRNG rather than a keyboard.
     fn from_str(raw: &str) -> anyhow::Result<Self> {
         let raw = raw.trim();
         if raw.len() < SECRET_MIN_HEX_LEN {
@@ -93,15 +85,13 @@ impl FromStr for Secret {
     }
 }
 
-/// Redacted: `Opts` derives `Debug` and is handed to `debug!` in `main`, and
-/// the secret must not ride along if that output ever reaches a log.
+/// Redacted: `main` logs `Opts` with `debug!`.
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret([redacted])")
     }
 }
 
-/// Here rather than from a crate: not worth a dependency.
 pub fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -115,12 +105,10 @@ pub fn hex_lower(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    /// 64 hex characters — what `openssl rand -hex 32` emits, and the
-    /// documented size.
+    /// What `openssl rand -hex 32` emits.
     const VALID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    /// The 128-character form the secret used to require. Still accepted: the
-    /// length is a floor, not a fixed size.
+    /// The length is a floor, not a fixed size.
     const LONGER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\
                           fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
@@ -136,9 +124,7 @@ mod tests {
         assert!(parse(&VALID.to_uppercase()).is_ok());
     }
 
-    /// The acceptance test above only asserts `is_ok()`, which leaves the
-    /// decoding loop unpinned: a dropped trailing pair or a reordered byte
-    /// would still parse. Round-tripping through `hex_lower` pins it.
+    /// Pins the decoding loop, which `is_ok()` alone does not.
     #[test]
     fn decodes_every_hex_pair_in_order() {
         assert_eq!(VALID, hex_lower(&parse(VALID).unwrap().0));
@@ -175,9 +161,6 @@ mod tests {
         );
     }
 
-    /// The whole point of a configured secret: the same string must always
-    /// yield the same signing material and the same IDs, across restarts and
-    /// across replicas.
     #[test]
     fn derivation_is_deterministic() {
         let a = parse(VALID).unwrap();
@@ -194,7 +177,6 @@ mod tests {
         assert_ne!(a.id_seed(), b.id_seed());
     }
 
-    /// Domain separation: the seed must not be a window onto the signing key.
     #[test]
     fn the_id_seed_is_not_a_prefix_of_the_signing_key() {
         let secret = parse(VALID).unwrap();

@@ -2,9 +2,7 @@ name: CI
 
 on: [pull_request, push]
 
-# One run per ref at a time. A newer push supersedes the run it interrupted;
-# a tag does not — a tagged build publishes one specific version and nothing
-# should quietly cancel it.
+# A newer push cancels the running one for the same ref; tag runs never are.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -21,11 +19,8 @@ jobs:
           tool: cargo-deny@0.18.9
       - run: cargo deny check
 
-  # Linux clippy. Runs in parallel with everything else — coverage/e2e are no
-  # longer gated on it. On GitHub Actions a compile gate can't hand its build
-  # cache to downstream jobs, so gating would only serialize a second compile
-  # onto the critical path for no wall-clock win (the cheap checks, fmt/deny in
-  # lint, don't validate compilation anyway). Kept ubuntu-only; macOS is below.
+  # Not a gate for coverage/e2e: a gate cannot share its build cache with
+  # downstream jobs, so it would only serialize a second compile.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -33,11 +28,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets -- -D warnings
 
-  # macOS portability sanity check. Runs independently and still fails the
-  # workflow on a regression, but does not block coverage/e2e. Windows was
-  # dropped from the matrix: comics ships only as a Linux Docker image
-  # (linux/amd64, linux/arm64 via distroless), so a Windows build had no
-  # deployment value and was the slowest leg in the matrix.
+  # macOS portability check. No Windows: comics ships only as a Linux image.
   check-cross:
     runs-on: macos-latest
     steps:
@@ -66,32 +57,23 @@ jobs:
           fetch-depth: 0 # full history so build.rs `git describe` resolves a tagged version
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # `e2e` is its own workspace, deliberately outside the root one, so it
-          # has to be named or none of its dependencies are cached.
+          # `e2e` is a separate workspace, so it must be named to be cached.
           workspaces: |
             .
             e2e
-          # This job builds the server with the dev profile, unlike every other
-          # job here. A cache key is only ever written once — an exact hit is
-          # restored and never re-saved — so without a key of its own this job
-          # would keep restoring whatever profile happened to populate the key
-          # first, and rebuild all its dependencies every run.
+          # Own key: the only dev-profile build here, and an exact cache hit is
+          # never re-saved, so a shared key could stay pinned to another profile.
           key: dev
-      # The suite starts this binary itself; building it here keeps the
-      # compile off the test's own timeout. Dev, not release: the release
-      # profile is tuned for image size (LTO, one codegen unit, `opt-level =
-      # "z"`) and none of that makes eight fixture pages serve faster.
+      # Prebuild the server the suite launches, keeping the compile off its
+      # timeout. Dev profile: release is tuned for size, not test speed.
       - run: cargo build
-      # `e2e` is linted here rather than in `lint`, so it shares the build this
-      # job already pays for. It is deliberately outside `cargo deny`: the
-      # browser stack pulls in licences the server's allow-list does not carry,
-      # and none of it is distributed — the Docker image contains the server
-      # alone.
+      # Linted here to reuse this job's build. Not under `cargo deny`: the
+      # browser stack's licences are outside the allow-list, and none of it
+      # ships in the image.
       - run: cargo fmt --check
         working-directory: e2e
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: e2e
-      # No browser install step: the driver manager downloads a matching
-      # chromedriver on demand, and the runner image already ships Chrome.
+      # The runner ships Chrome; chromedriver is downloaded on demand.
       - run: cargo test --test e2e
         working-directory: e2e

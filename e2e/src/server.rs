@@ -1,12 +1,8 @@
 //! The comics server under test.
 //!
-//! Replaces `playwright.config.js`'s `webServer` block: builds the binary if
-//! missing, starts it against `fixtures/data`, waits for the port, and kills it
-//! on drop. An already-listening port is adopted rather than fought over, which
-//! is what makes a local re-run fast.
-//!
-//! Spawned directly rather than through `cargo run`, so the PID held here is the
-//! server's own — killing `cargo` would leave its child holding the port.
+//! An already-listening port is adopted, which makes a local re-run fast.
+//! Spawned directly rather than through `cargo run`: killing `cargo` would
+//! leave its child holding the port.
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -15,17 +11,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-/// Fixed port, as in the Playwright config — what lets a developer leave a
-/// server running between runs.
+/// Fixed, so a developer can leave a server running between runs.
 pub const PORT: u16 = 3030;
 
 /// Base URL every page object navigates against.
 pub const BASE_URL: &str = "http://127.0.0.1:3030";
 
-/// Argon2id hash of "password", from `comics hash-password` — a throwaway
-/// credential unlocking only the committed fixtures. The server refuses to start
-/// on a hash it cannot use, so a stale one is reported directly rather than as a
-/// failing login step.
+/// Argon2id hash of "password" — a throwaway credential for the fixtures.
 const TEST_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$C2qIDpzPcTL0a5wYL1152Q$2MWeEDjhoNnp8oRwz9DkFoLgYH3NTe+qArT3vPHN14g";
 
 const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -64,15 +56,13 @@ impl Server {
             .env("COMICS_AUTH_USERNAME", USERNAME)
             .env("COMICS_AUTH_PASSWORD_HASH", TEST_PASSWORD_HASH)
             .env("COMICS_SECRET", TEST_SECRET)
-            // Inherited, so a refusal to start is visible in the test output
-            // rather than swallowed into a pipe nobody reads.
+            // Inherited, so a refusal to start shows in the test output.
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .with_context(|| format!("spawning the comics server at {}", binary.display()))?;
 
-        // Bound before the wait, so a server that never answers is still killed
-        // when the error propagates.
+        // Bound before the wait, so a server that never answers is still killed.
         let server = Self { child: Some(child) };
         wait_until_listening()?;
         Ok(server)
@@ -90,15 +80,9 @@ impl Drop for Server {
 
 /// Path to the server binary, building it first when it is not there.
 ///
-/// The **dev** profile, deliberately. The release profile is tuned for the
-/// Docker image — `lto = true`, `codegen-units = 1`, `opt-level = "z"` — none
-/// of which this is asking for; it wants a server that serves eight fixture
-/// pages. Dev builds it in a fraction of the time, and `profile.dev.package."*"`
-/// still compiles the dependencies that do the real work (image decoding) at
-/// `opt-level = 3`. It also shares its artefacts with `cargo nextest run`,
-/// which the release profile never could.
-///
-/// CI builds it in an earlier step, so this is the local-developer path.
+/// The **dev** profile, deliberately: the release profile's LTO buys nothing
+/// for eight fixture pages, dependencies still build at `opt-level = 3`, and
+/// the artefacts are shared with `cargo nextest run`. CI builds it beforehand.
 fn ensure_binary() -> Result<PathBuf> {
     let binary = repo_root().join("target/debug/comics");
     if binary.is_file() {

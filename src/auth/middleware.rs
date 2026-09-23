@@ -17,15 +17,12 @@ use crate::state::AppState;
 pub const SESSION_COOKIE: &str = "comics_session";
 const SESSION_COOKIE_HOST_PREFIXED: &str = "__Host-comics_session";
 
-/// Cookie name with the `__Host-` prefix applied when it is legal to do so.
+/// Cookie name, `__Host-`-prefixed when `secure`.
 ///
-/// The prefix makes the browser itself guarantee the cookie was set by this
-/// exact host, over HTTPS, with `Path=/` and no `Domain` — closing off subdomain
-/// overwrites as a session-fixation vector (RFC 6265bis, quoted by the OWASP
-/// Session Management Cheat Sheet under "Cookie Prefixes"). **Conditional on
-/// `secure`**: a browser rejects a `__Host-` cookie arriving without `Secure`,
-/// so applying it unconditionally would silently break login on the plain-HTTP
-/// LAN deployment the configurable `Secure` exists for.
+/// The prefix has the browser guarantee a host-only, HTTPS, `Path=/` cookie,
+/// closing subdomain overwrites as a session-fixation vector. **Only when
+/// `secure`**: browsers reject a `__Host-` cookie without `Secure`, which would
+/// silently break login on plain-HTTP LAN hosts.
 pub fn session_cookie_name(secure: bool) -> &'static str {
     if secure {
         SESSION_COOKIE_HOST_PREFIXED
@@ -33,65 +30,47 @@ pub fn session_cookie_name(secure: bool) -> &'static str {
         SESSION_COOKIE
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthState {
     /// No credentials are configured; everything is public.
     Public,
     /// The cookie named a live session.
     Authenticated {
-        /// The `User-Agent` changed since the last request on this session.
-        /// Worth recording; never worth acting on. See [`super::SessionStore`].
+        /// Worth logging, never acting on; see [`super::Validation`].
         user_agent_changed: bool,
     },
     Unauthenticated(Rejection),
 }
 
-/// Why a request was treated as unauthenticated.
-///
-/// Not a plain boolean because the reasons differ enormously: a bad signature
-/// cannot happen by accident, while an unknown identifier is what every
-/// legitimate cookie becomes after a restart. One level would either bury the
-/// first or cry wolf about the second.
+/// Why a request was treated as unauthenticated. The reasons are logged at
+/// different levels: a bad signature cannot happen by accident, while every
+/// legitimate cookie becomes unknown after a restart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
-    /// No session cookie at all — an anonymous visitor.
     Absent,
-    /// A cookie of the right name that this server's key did not sign: forged,
-    /// tampered with, or left over from a different `COMICS_SECRET`.
+    /// Not signed by this key: forged, or from a different `COMICS_SECRET`.
     BadSignature,
     /// Correctly signed, but not the shape this version issues.
     Malformed,
-    /// Well-formed, but names no live session: already destroyed, long expired,
-    /// or issued by a previous process.
+    /// Names no live session.
     Unknown,
-    /// The session was live and has just been ended for this reason.
+    /// The session was live and has just been ended.
     Expired(Expiry),
 }
 
-/// The value is the store's opaque identifier and nothing else — 128 CSPRNG
-/// bits as hex, no expiry, no username, no structure, which is what the OWASP
-/// Session Management Cheat Sheet asks under "Session ID Content". Everything
-/// needed to judge the session lives in [`super::SessionStore`].
+/// The value is the store's opaque identifier and nothing else.
 ///
-/// The signature stays even though the identifier is looked up rather than
-/// parsed: it is not what makes the session valid, it is what separates a forged
-/// cookie from a stale one — an alert worth acting on from the noise every
-/// restart produces — and it rejects junk before the store's lock is touched.
+/// It is still signed: not for validity (the store decides that) but to tell a
+/// forged cookie from a stale one, and to reject junk before the store's lock.
 ///
-/// `secure` comes from `--cookie-secure` rather than being hardcoded: a browser
-/// silently discards a `Secure` cookie sent over plain HTTP, so forcing it on
-/// would lock LAN deployments out of the login form with no visible error.
+/// `secure` is configurable because browsers silently discard a `Secure` cookie
+/// over plain HTTP, which would lock LAN deployments out with no visible error.
 ///
-/// `SameSite=Strict` is the cheat sheet's preference, and comics can afford it
-/// where a general web application cannot: no OAuth callback, no payment return,
-/// no third party navigating *into* an authenticated URL. The cost is that an
-/// external link to a book lands on the login form even while signed in, since
-/// the browser withholds the cookie on that first cross-site navigation; the
-/// next same-site one carries it. `Lax` would avoid that at the price of sending
-/// the cookie on every top-level cross-site GET.
+/// `SameSite=Strict` is affordable here (no OAuth or third-party entry points);
+/// the cost is that an external link to a book lands on the login form once.
 ///
-/// `Max-Age` mirrors the store's absolute ceiling, as a browser hint only — the
-/// server enforces both deadlines itself.
+/// `Max-Age` is a browser hint only; the server enforces both deadlines.
 pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), id.to_owned()))
         .http_only(true)
@@ -104,9 +83,9 @@ pub fn build_session_cookie(secure: bool, id: &str) -> Cookie<'static> {
         .build()
 }
 
-/// A browser matches a removal cookie on name + `Path` + `Domain`, and rejects a
-/// `__Host-` name missing `Secure`, so every attribute must mirror the issued
-/// cookie. Kept below `build_session_cookie` so divergence shows up in review.
+/// Every attribute must mirror [`build_session_cookie`]: browsers match a
+/// removal on name, `Path` and `Domain`, and reject a `__Host-` name without
+/// `Secure`.
 pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
     Cookie::build((session_cookie_name(secure), ""))
         .http_only(true)
@@ -117,9 +96,8 @@ pub fn build_session_removal_cookie(secure: bool) -> Cookie<'static> {
         .build()
 }
 
-/// Exposed so logout can both end the session and fingerprint it for the audit
-/// log without the handler having to know about jars or signatures. **Never log
-/// the value directly** — hash it with [`crate::auth::SessionAuditSalt`].
+/// The verified session identifier from the request's cookie. **Never log it
+/// directly** — hash it with [`crate::auth::SessionAuditSalt`].
 pub fn session_id_of(state: &Arc<AppState>, request: &Request) -> Option<String> {
     let jar = jar_from_request(request);
     let cookie = jar
@@ -128,9 +106,8 @@ pub fn session_id_of(state: &Arc<AppState>, request: &Request) -> Option<String>
     is_session_id(cookie.value()).then(|| cookie.value().to_owned())
 }
 
-/// Absent or non-ASCII values become `-` rather than being dropped, so every
-/// audit event carries the field and the session store always has something
-/// stable to compare against.
+/// Absent or non-ASCII values become `-`, so every audit event carries the
+/// field and the store always has something stable to compare.
 pub fn user_agent(headers: &HeaderMap) -> &str {
     headers
         .get(header::USER_AGENT)
@@ -149,21 +126,18 @@ fn jar_from_request(request: &Request) -> CookieJar {
     jar
 }
 
-/// Three gates, cheapest first: the signature, the identifier's shape, then the
-/// store. Only the last takes a lock, and only it can say the session is *live*
-/// — which is what makes logout effective.
+/// Three gates, cheapest first: signature, identifier shape, then the store —
+/// the only one that takes a lock or can say the session is *live*.
 pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
     if matches!(state.auth_config, AuthConfig::None) {
         return AuthState::Public;
     }
-    // Exactly one name is accepted, the one the current configuration issues.
-    // Accepting both would let an unprefixed cookie keep working after `Secure`
-    // is enabled, cancelling out the guarantee the prefix buys.
+    // Exactly one name is accepted: taking the unprefixed one too once `Secure`
+    // is on would cancel the `__Host-` guarantee.
     let name = session_cookie_name(state.cookie_secure);
     let jar = jar_from_request(request);
     let Some(cookie) = jar.signed(&state.key).get(name) else {
-        // The signed jar cannot tell "absent" from "badly signed", but the
-        // unverified jar can, and the two mean completely different things.
+        // Only the unverified jar can tell "absent" from "badly signed".
         return AuthState::Unauthenticated(if jar.get(name).is_some() {
             Rejection::BadSignature
         } else {
@@ -183,17 +157,11 @@ pub fn authenticate(state: &Arc<AppState>, request: &Request) -> AuthState {
     }
 }
 
-/// The level is chosen to match what each rejection actually says.
-///
-/// `Absent` is silent: an anonymous visitor on a protected URL is the ordinary
-/// case. `Unknown` is `DEBUG` because every valid cookie becomes unknown when
-/// the process restarts, so warning would bury the log after every upgrade. The
-/// two that cannot arise by accident — a cookie this key did not sign, and one
-/// shaped like nothing this version issues — are `WARN`, the OWASP *Detecting
-/// Session ID Anomalies* signal worth alerting on.
+/// `Absent` is silent (ordinary anonymous visit). `Unknown` is `DEBUG`, since
+/// every cookie becomes unknown on restart. `BadSignature` and `Malformed`
+/// cannot happen by accident, so they `WARN`.
 fn record_rejection(state: &Arc<AppState>, request: &Request, why: Rejection) {
     let user_agent = user_agent(request.headers());
-    // Only ever a salted hash: the identifier itself must never reach the log.
     let session = session_id_of(state, request)
         .map_or_else(|| "-".to_string(), |id| state.audit_salt.fingerprint(&id));
     match why {
@@ -236,9 +204,7 @@ pub async fn auth_middleware_fn(
         AuthState::Public => next.run(request).await,
         AuthState::Authenticated { user_agent_changed } => {
             if user_agent_changed {
-                // Reported once per change — the store swaps the digest in — and
-                // never enforced. See `SessionStore` for why terminating here
-                // would cost more than it buys.
+                // Reported, never enforced; see `Validation::Valid`.
                 warn!(
                     event = "session_user_agent_changed",
                     session = session_id_of(&state, &request)
@@ -251,8 +217,7 @@ pub async fn auth_middleware_fn(
         }
         AuthState::Unauthenticated(why) => {
             record_rejection(&state, &request, why);
-            // A GET is a browser navigation, so send it somewhere useful; any
-            // other method is an API-style write, which gets a bare 401.
+            // Redirect navigations; other methods get a bare 401.
             if request.method() == Method::GET {
                 let next_path = request.uri().path_and_query().map_or_else(
                     || request.uri().path().to_owned(),
@@ -366,9 +331,6 @@ mod tests {
         ));
     }
 
-    /// The change this module exists for: once the store forgets the session,
-    /// the very same cookie stops working. A signed self-describing cookie
-    /// stayed valid until its own expiry.
     #[test]
     fn authenticate_rejects_a_destroyed_session() {
         let key = Key::generate();
@@ -387,14 +349,11 @@ mod tests {
         );
     }
 
-    /// Each rejection reason must be distinguishable: they are logged at
-    /// different levels precisely because they mean different things.
     #[test]
     fn authenticate_reports_why_it_refused() {
         let key = Key::generate();
         let state = create_state(some_auth(), key.clone());
 
-        // No cookie at all.
         assert_eq!(
             AuthState::Unauthenticated(Rejection::Absent),
             authenticate(&state, &request_with_cookie(None))
@@ -426,9 +385,6 @@ mod tests {
         );
     }
 
-    /// The pre-store cookie value was `<nonce>.<expiry>`, refused even when
-    /// correctly signed: upgrading logs existing sessions out once, by design,
-    /// and the value carries an expiry the server no longer honours.
     #[test]
     fn authenticate_rejects_the_legacy_nonce_dot_expiry_cookie() {
         let key = Key::generate();
@@ -455,7 +411,6 @@ mod tests {
         );
     }
 
-    /// A changed `User-Agent` is surfaced but still authenticates.
     #[test]
     fn authenticate_surfaces_a_changed_user_agent_without_refusing() {
         let key = Key::generate();
@@ -500,8 +455,6 @@ mod tests {
         assert_eq!("comics_session", build_session_cookie(false, "id").name());
     }
 
-    /// The cookie carries the identifier and nothing else — no expiry, no
-    /// username, nothing to decode.
     #[test]
     fn build_session_cookie_value_is_the_bare_identifier() {
         let id = "0123456789abcdef0123456789abcdef";
@@ -510,8 +463,6 @@ mod tests {
         assert!(is_session_id(cookie.value()));
     }
 
-    /// Once `Secure` is on, an unprefixed cookie must stop being accepted —
-    /// otherwise the `__Host-` guarantee buys nothing.
     #[test]
     fn authenticate_rejects_unprefixed_cookie_when_secure_is_on() {
         let key = Key::generate();
@@ -529,9 +480,6 @@ mod tests {
         );
     }
 
-    /// The removal cookie only deletes the real one if every matching attribute
-    /// agrees, so this fails the moment `build_session_cookie` changes an
-    /// attribute without the removal path following.
     #[test]
     fn removal_cookie_mirrors_the_session_cookie() {
         for secure in [false, true] {

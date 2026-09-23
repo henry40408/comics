@@ -10,30 +10,24 @@ use crate::models::BookScan;
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: AuthConfig,
-    /// Key signing session cookies, derived from `COMICS_SECRET`; when that is
-    /// unset a random secret is generated at startup, in which case a restart
-    /// invalidates every existing session.
+    /// Signs session cookies; derived from `COMICS_SECRET`.
     pub key: Key,
     pub data_dir: PathBuf,
     pub scan: Arc<RwLock<Option<BookScan>>>,
-    /// Salt for hashed book/page IDs, derived from `COMICS_SECRET` through a
-    /// different domain separator than [`key`](Self::key).
+    /// Salt for book/page IDs; derived from `COMICS_SECRET`.
     pub seed: u64,
     pub cache_dir: PathBuf,
-    /// Bounds concurrent thumbnail generation (CPU-bound decode + resize).
+    /// Bounds concurrent thumbnail generation.
     pub thumb_sem: Arc<Semaphore>,
-    /// Bounds concurrent password verifications. Argon2id is memory-hard by
-    /// design — 19 MiB a time — so without this the login attempts the rate
-    /// limiter admits could all allocate at once. See
+    /// Bounds concurrent Argon2id verifications (19 MiB each); see
     /// [`MAX_CONCURRENT_VERIFICATIONS`](crate::MAX_CONCURRENT_VERIFICATIONS).
     pub verify_sem: Arc<Semaphore>,
     pub cookie_secure: bool,
     pub login_limiter: Arc<RateLimiter>,
-    /// Reverse proxies whose `X-Forwarded-For` is believed when deriving that
-    /// client IP. Empty by default, which means the TCP peer is used instead.
+    /// Proxies whose `X-Forwarded-For` is trusted for the client IP. Empty by
+    /// default: the TCP peer is used.
     pub trusted_proxies: TrustedProxies,
-    /// The live sessions. Held in memory only, so a restart ends every session —
-    /// the price of being able to end one deliberately.
+    /// In memory only, so a restart ends every session.
     pub sessions: Arc<SessionStore>,
     /// Salts session identifiers before they reach the audit log. Never logged.
     pub audit_salt: Arc<SessionAuditSalt>,

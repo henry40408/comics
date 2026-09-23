@@ -1,9 +1,7 @@
 //! The Cucumber world: one browser session per scenario.
 //!
-//! The session cannot be opened in `new`: whether the page's scripts run is
-//! decided by the scenario's `@nojs` tag, which `World::new` never sees. A
-//! `before` hook opens it instead — also the only order that works, since
-//! `Emulation.setScriptExecutionDisabled` applies to the next document.
+//! Opened by a `before` hook rather than `new`, which never sees the
+//! scenario's `@nojs` tag.
 
 use anyhow::{Context, Result};
 use cucumber::World;

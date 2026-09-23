@@ -7,8 +7,6 @@ description = "Simple file server for comic books"
 build = "build.rs"
 license = "MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = "1.0.102"
 argon2 = "0.6.0"
@@ -19,8 +17,7 @@ clap = { version = "4.6.1", features = ["derive", "env"] }
 cookie = { version = "0.18.1", default-features = false, features = ["signed", "percent-encode"] }
 http = "1.4.1"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
-# CIDR parsing and prefix matching for `COMICS_TRUSTED_PROXIES`. Default features
-# are `std` only, so it adds no transitive dependencies.
+# CIDR matching for `COMICS_TRUSTED_PROXIES`; no transitive dependencies.
 ipnet = "2.12.0"
 mimalloc = "0.1"
 parking_lot = "0.12.1"
@@ -28,13 +25,11 @@ rand = "0.10.0"
 rayon = "1.12.0"
 rpassword = "7.5.3"
 serde = { version = "1.0.228", features = ["derive"] }
-# Already in the tree as a transitive dependency of `cookie`'s `signed` feature.
-# Used to salt-and-hash session identifiers before they reach the audit log;
-# `xxhash-rust` is not a cryptographic hash and would not do.
+# Key derivation in `secret.rs` and salted session-ID hashes for the audit log
+# (`xxhash-rust` is not cryptographic). Already pulled in by `cookie`.
 sha2 = "0.11.0"
-# Constant-time comparison of the *username*, so that a wrong username cannot be
-# told from a wrong password by response time. Already in the tree by way of
-# `password-hash`, which uses it to compare digests.
+# Constant-time username comparison, so timing cannot tell a wrong username
+# from a wrong password. Already pulled in by `password-hash`.
 subtle = "2.6.1"
 tokio = { version = "1.52.3", features = [
   "fs",
@@ -63,10 +58,7 @@ opt-level = "z"
 panic = "abort"
 strip = true
 
-# Self-maintained lint set (originally seeded from Embark Studios' rust-ecosystem
-# list). The bulk of the old itemised pedantic lints are now covered by the
-# `pedantic` group; only the noisy/low-signal ones are opted back out, plus the
-# restriction and nursery lints that have no safe umbrella group.
+# `pedantic` minus its noisy lints, plus hand-picked restriction/nursery lints.
 [lints.rust]
 unexpected_cfgs = "deny"
 unsafe_code = "deny"
