@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn version_is_stable_and_hex() {
         assert_eq!(assets_version(), assets_version());
-        assert!(!assets_version().is_empty());
+        assert_ne!(assets_version(), "");
         assert!(assets_version().chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

@@ -84,7 +84,7 @@ mod tests {
         fs::write(&path, b"data").unwrap();
         let page = Page::new(7, &path).unwrap();
         assert_eq!(page.filename, "01.jpg");
-        assert!(!page.id.is_empty());
+        assert_ne!(page.id, "");
     }
 
     #[test]

@@ -727,7 +727,7 @@ mod tests {
         let marker = "/data/";
         let start = html.find(marker).expect("a page image") + marker.len();
         let page_id: String = html[start..].chars().take_while(|&c| c != '"').collect();
-        assert!(!page_id.is_empty());
+        assert_ne!(page_id, "");
 
         let res = server.get(&format!("/data/{page_id}")).await;
         assert_eq!(200, res.status_code());
@@ -756,7 +756,7 @@ mod tests {
         let marker = "/thumb/md/";
         let start = html.find(marker).expect("a cover link") + marker.len();
         let id: String = html[start..].chars().take_while(|&c| c != '"').collect();
-        assert!(!id.is_empty());
+        assert_ne!(id, "");
 
         assert_eq!(200, server.get(&format!("/data/{id}")).await.status_code());
         fs::remove_file(&page).unwrap();
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn version_is_set() {
-        assert!(!VERSION.is_empty());
+        assert_ne!(VERSION, "");
     }
 
     fn opts_with_hash(hash: &str) -> Opts {
@@ -1170,8 +1170,8 @@ mod tests {
     fn a_refused_password_writes_nothing() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         assert!(emit_password_hash("", &mut out, &mut err).is_err());
-        assert!(out.is_empty());
-        assert!(err.is_empty());
+        assert_eq!(out, [] as [u8; 0]);
+        assert_eq!(err, [] as [u8; 0]);
     }
 
     #[test]
@@ -1329,7 +1329,7 @@ mod tests {
         let server = build_auth_server(true).await;
         let res = login_response(&server).await;
         let headers = set_cookie_headers(&res);
-        assert!(!headers.is_empty());
+        assert_ne!(headers, [] as [String; 0]);
         assert!(
             !headers.iter().any(|h| h.contains("Secure")),
             "unexpected Secure attribute in {headers:?}"
