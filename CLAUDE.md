@@ -120,7 +120,7 @@ Guardrail tests: `auth_every_protected_route_rejects_anonymous` / `auth_every_pr
 
 ## Versioning & Release
 
-`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe`, or from the `GIT_VERSION` env var when `.git` is absent (Docker builds pass it as a build arg because `.dockerignore` excludes `.git`; a value of `dev` is treated as unset, and without git the result is `unknown`), as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
+`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from the `GIT_VERSION` env var when set (not empty, not `dev`), else `git describe` (Docker builds pass it as a build arg because `.dockerignore` excludes `.git`; a value of `dev` is treated as unset, and without git the result is `unknown`), as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
 
 ## Conventions
 
