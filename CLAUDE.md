@@ -119,7 +119,7 @@ Guardrail tests: `auth_every_protected_route_rejects_anonymous` / `auth_every_pr
 
 ## Versioning & Release
 
-`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe` (or `GIT_VERSION` in Docker) as `comics::VERSION`. Release with `gh release create --generate-notes`; `.github/workflows/docker.yaml` (multi-arch → GHCR) runs on pushes to `main` and on tags, so the release tag publishes the versioned image. Never hand-edit versions or `git tag`.
+`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe` (or `GIT_VERSION` in Docker) as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
 
 ## Conventions
 
