@@ -14,7 +14,7 @@ Run from the repository root.
 
 - Build: `cargo build` (`--release` for release)
 - Run: `cargo run` (serves `./data` on `127.0.0.1:8080`)
-- Tests: `cargo nextest run` (never `cargo test`); single test: `cargo nextest run <test_name>`
+- Tests: `cargo nextest run` (never `cargo test`); single test: `cargo nextest run <substring>`, `cargo nextest run -E 'test(initial_scan_finished)'`, or `cargo nextest run --test integration_test`
 - Coverage (as CI): `cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info`
 - Lint (CI-enforced): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`
 - Format before committing: `cargo fmt`
@@ -30,8 +30,9 @@ Subcommands:
 - A **separate workspace**, not a root member, so `--workspace` coverage does not drive a browser. Run from `e2e/`: `cargo test --test e2e`; regenerate `docs/screenshots/` with `cargo run --bin screenshots`. `cargo nextest run` at the root does not run it.
 - Regenerate the screenshots in the same change for visual edits (CSS, template layout, front-end JS); copy-only or logic-only edits do not need it.
 - `e2e/Cargo.toml`'s lint set mirrors the root crate's (minus server-only entries); keep the two in sync.
+- Root-level fmt, clippy, nextest and coverage do not cover `e2e/`, so run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` inside `e2e/` too. CI does (the `e2e` job); `e2e/` is not under `cargo deny`.
 - Needs a local Chrome/Chromium; `WebDriver::managed` fetches chromedriver but not the browser.
-- Starts the **dev** server binary itself (building it if missing), or adopts one already listening on `127.0.0.1:3030`.
+- Starts the **dev** server binary itself (building it if missing), or adopts one already listening on `127.0.0.1:3030`. An existing binary is not rebuilt, so run `cargo build` after changing code before E2E.
 - Up to `CONCURRENCY_CEILING` (4) scenarios in parallel. `Browser::prepare` opens one throwaway session first so concurrent sessions do not race the cold driver download (that wedges the run).
 - Every click goes through `click_until` (`pages.rs`). On CI, Chrome sometimes accepts a click but delivers no mouse event, for the rest of the session. When a click does not take, `click_until` probes the page (`elementFromPoint`, a capture-phase event recorder, a `requestAnimationFrame` count); if the point hit the element (`hitIsTarget`) and no event arrived, it dispatches a scripted click (`pointerdown`…`mouseup`, then `HTMLElement.click()` — the reader's tap zones listen on `pointerup`) and logs a `WARNING`. A covered control or a broken handler still fails. `@nojs` scenarios cannot run the recorder, so they rely on `hitIsTarget` alone.
 
@@ -119,7 +120,7 @@ Guardrail tests: `auth_every_protected_route_rejects_anonymous` / `auth_every_pr
 
 ## Versioning & Release
 
-`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe` (or `GIT_VERSION` in Docker) as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
+`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from the `GIT_VERSION` env var when set (not empty, not `dev`), else `git describe` (Docker builds pass it as a build arg because `.dockerignore` excludes `.git`; a value of `dev` is treated as unset, and without git the result is `unknown`), as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
 
 ## Conventions
 
