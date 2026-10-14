@@ -28,6 +28,8 @@ Subcommands:
 ### E2E (`e2e/`)
 
 - A **separate workspace**, not a root member, so `--workspace` coverage does not drive a browser. Run from `e2e/`: `cargo test --test e2e`; regenerate `docs/screenshots/` with `cargo run --bin screenshots`. `cargo nextest run` at the root does not run it.
+- Regenerate the screenshots in the same change for visual edits (CSS, template layout, front-end JS); copy-only or logic-only edits do not need it.
+- `e2e/Cargo.toml`'s lint set mirrors the root crate's (minus server-only entries); keep the two in sync.
 - Needs a local Chrome/Chromium; `WebDriver::managed` fetches chromedriver but not the browser.
 - Starts the **dev** server binary itself (building it if missing), or adopts one already listening on `127.0.0.1:3030`.
 - Up to `CONCURRENCY_CEILING` (4) scenarios in parallel. `Browser::prepare` opens one throwaway session first so concurrent sessions do not race the cold driver download (that wedges the run).
@@ -117,7 +119,7 @@ Guardrail tests: `auth_every_protected_route_rejects_anonymous` / `auth_every_pr
 
 ## Versioning & Release
 
-`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe` (or `GIT_VERSION` in Docker) as `comics::VERSION`. Release with `gh release create --generate-notes`; the tag triggers `.github/workflows/docker.yaml` (multi-arch → GHCR). Never hand-edit versions or `git tag`.
+`Cargo.toml` `version` stays `0.0.0-dev`; `build.rs` derives the real one from `git describe` (or `GIT_VERSION` in Docker) as `comics::VERSION`. Release with `gh release create --generate-notes`; its tag makes `.github/workflows/docker.yaml` publish the versioned image (multi-arch → GHCR), and every push to `main` publishes `nightly`. Never hand-edit versions or `git tag`.
 
 ## Conventions
 
@@ -126,3 +128,4 @@ Guardrail tests: `auth_every_protected_route_rejects_anonymous` / `auth_every_pr
 - User-facing template/login strings are Traditional Chinese (e.g. `帳號或密碼錯誤`).
 - Config env vars carry a `COMICS_` prefix (except `NO_COLOR` and build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`.
 - `ensure_no_legacy_env_vars` fails startup on retired names. Update `LEGACY_ENV_VARS` whenever an `#[arg(env = …)]` is added, renamed or removed — a silently ignored variable (e.g. falling back to a random secret) is worse than a startup failure.
+- GitHub Actions are pinned by commit SHA with the tag as a trailing comment (`uses: owner/repo@<sha> # v1.2.3`).
