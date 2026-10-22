@@ -11,4 +11,6 @@ allow = [
 [advisories]
 version = 2
 ignore = [
+  # Transitive via askama_derive; no patched release yet. Tracked in #452.
+  "RUSTSEC-2026-0374",
 ]
