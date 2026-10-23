@@ -30,7 +30,7 @@ where
     }
 }
 
-pub fn get_scan_lock(state: &Arc<AppState>) -> RwLockWriteGuard<'_, Option<BookScan>> {
+pub fn write_scan(state: &Arc<AppState>) -> RwLockWriteGuard<'_, Option<BookScan>> {
     state.scan.write()
 }
 
@@ -116,9 +116,9 @@ mod tests {
     }
 
     #[test]
-    fn get_scan_lock_returns_guard() {
+    fn write_scan_returns_guard() {
         let state = create_test_state(Some(create_test_scan()));
-        let guard = get_scan_lock(&state);
+        let guard = write_scan(&state);
         assert!(guard.is_some());
     }
 }
