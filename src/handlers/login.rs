@@ -587,6 +587,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_client_key_is_the_tcp_peer_when_no_proxy_is_trusted() {
+        let peer: SocketAddr = "203.0.113.7:4000".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
+
+        let key = client_key(Some(&ConnectInfo(peer)), &headers, &test_state());
+
+        assert_eq!(peer.ip(), key);
+    }
+
     #[tokio::test]
     async fn a_throttled_login_says_when_to_retry() {
         let state = test_state_with(crate::auth::RateLimiter::new(1, 100, 60));
