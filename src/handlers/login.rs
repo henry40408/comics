@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
 use askama::Template;
@@ -194,6 +197,50 @@ pub async fn login_route(
     render_login(false, &query.next)
 }
 
+/// The rate-limit key for a request: the TCP peer, or the forwarded client
+/// when the peer is a trusted proxy.
+fn client_key(
+    connect: Option<&ConnectInfo<SocketAddr>>,
+    headers: &HeaderMap,
+    state: &AppState,
+) -> IpAddr {
+    rate_limit_key(connect.map(|ci| ci.0.ip()), headers, &state.trusted_proxies)
+}
+
+/// The `429` for a refused login, logged by which window refused it.
+fn throttled_response(
+    scope: Scope,
+    retry_after_secs: u64,
+    ip: IpAddr,
+    user_agent: &str,
+) -> Response {
+    // The global window is an account lockout (the reader is locked out
+    // too), so it gets its own event name for alerting.
+    if scope == Scope::Global {
+        warn!(
+            event = "login_lockout",
+            retry_after_secs,
+            %ip, user_agent,
+            "login refused for every client address: the account-wide attempt \
+             budget is spent, which also locks out legitimate sign-ins until \
+             the window passes"
+        );
+    } else {
+        warn!(
+            event = "login_rate_limited",
+            scope = scope.as_str(),
+            retry_after_secs,
+            %ip, user_agent,
+            "login rate limited"
+        );
+    }
+    let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+    if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
+}
+
 /// `POST /login`. The throttle runs *before* the credential check, so a
 /// throttled attempt learns nothing.
 ///
@@ -205,42 +252,14 @@ pub async fn login_submit_route(
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let ip = rate_limit_key(
-        connect.as_deref().map(|ci| ci.0.ip()),
-        &headers,
-        &state.trusted_proxies,
-    );
+    let ip = client_key(connect.as_deref(), &headers, &state);
     let user_agent = user_agent(&headers);
     if let Throttle::Refused {
         scope,
         retry_after_secs,
     } = state.login_limiter.try_acquire(ip)
     {
-        // The global window is an account lockout (the reader is locked out
-        // too), so it gets its own event name for alerting.
-        if scope == Scope::Global {
-            warn!(
-                event = "login_lockout",
-                retry_after_secs,
-                %ip, user_agent,
-                "login refused for every client address: the account-wide attempt \
-                 budget is spent, which also locks out legitimate sign-ins until \
-                 the window passes"
-            );
-        } else {
-            warn!(
-                event = "login_rate_limited",
-                scope = scope.as_str(),
-                retry_after_secs,
-                %ip, user_agent,
-                "login rate limited"
-            );
-        }
-        let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
-        if let Ok(value) = HeaderValue::from_str(&retry_after_secs.to_string()) {
-            response.headers_mut().insert(header::RETRY_AFTER, value);
-        }
-        return response;
+        return throttled_response(scope, retry_after_secs, ip, user_agent);
     }
     // Acquired *after* the throttle, so a refused attempt never queues. The
     // semaphore is never closed; refuse rather than unwrap anyway.
@@ -279,11 +298,7 @@ pub async fn logout_route(
     headers: HeaderMap,
     request: Request,
 ) -> Response {
-    let ip = rate_limit_key(
-        connect.as_deref().map(|ci| ci.0.ip()),
-        &headers,
-        &state.trusted_proxies,
-    );
+    let ip = client_key(connect.as_deref(), &headers, &state);
     let id = session_id_of(&state, &request);
     // Zero means nothing was ended: an expired cookie, a double submit, or an
     // anonymous POST.
@@ -570,6 +585,17 @@ mod tests {
             !logs.contains("login_rate_limited"),
             "the lockout was logged as an ordinary throttle: {logs}"
         );
+    }
+
+    #[test]
+    fn the_client_key_is_the_tcp_peer_when_no_proxy_is_trusted() {
+        let peer: SocketAddr = "203.0.113.7:4000".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
+
+        let key = client_key(Some(&ConnectInfo(peer)), &headers, &test_state());
+
+        assert_eq!(peer.ip(), key);
     }
 
     #[tokio::test]

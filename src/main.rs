@@ -582,8 +582,8 @@ async fn main() -> anyhow::Result<()> {
     match &opts.command {
         Some(Commands::HashPassword { .. }) => hash_password()?,
         Some(Commands::List { .. }) => {
-            let seed = 0u64; // dummy salt
-            let scan = scan_books(seed, &opts.data_dir)?;
+            // IDs are not printed, so any seed does.
+            let scan = scan_books(0, &opts.data_dir)?;
             let mut stdout = std::io::stdout().lock();
             // Ignore write errors (e.g. broken pipe into `head`).
             for book in &scan.books {
@@ -627,6 +627,8 @@ mod tests {
 
     /// Book IDs under `TEST_SECRET`. To recompute, run `comics --secret
     /// <TEST_SECRET> --data-dir fixtures/data` and read the `/book/…` hrefs.
+    const JPEG_MAGIC: &[u8] = b"\xFF\xD8\xFF";
+
     const DATA_IDS: [&str; 2] = [
         // Pepper and Carrot 01 - Potion of Flight
         "1f1c111677715adf",
@@ -732,7 +734,7 @@ mod tests {
         let res = server.get(&format!("/data/{page_id}")).await;
         assert_eq!(200, res.status_code());
         let content = res.as_bytes();
-        assert!(content.starts_with(b"\xFF\xD8\xFF")); // JPEG magic bytes
+        assert!(content.starts_with(JPEG_MAGIC));
     }
 
     #[tokio::test]
@@ -776,7 +778,7 @@ mod tests {
             let res = server.get(&format!("/thumb/{size}/{id}")).await;
             assert_eq!(200, res.status_code(), "size {size}");
             assert!(
-                res.as_bytes().starts_with(b"\xFF\xD8\xFF"),
+                res.as_bytes().starts_with(JPEG_MAGIC),
                 "JPEG magic for {size}"
             );
         }
@@ -784,7 +786,7 @@ mod tests {
         // Served from the disk cache.
         let cached = server.get(&format!("/thumb/md/{id}")).await;
         assert_eq!(200, cached.status_code());
-        assert!(cached.as_bytes().starts_with(b"\xFF\xD8\xFF"));
+        assert!(cached.as_bytes().starts_with(JPEG_MAGIC));
 
         assert_eq!(
             404,
