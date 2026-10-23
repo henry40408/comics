@@ -13,4 +13,7 @@ version = 2
 ignore = [
   # Transitive via askama_derive; no patched release yet. Tracked in #452.
   "RUSTSEC-2026-0374",
+  # ctutils < 0.4.4 non-constant-time masks. Not reachable from the password
+  # comparison (cmov asm path). Fix 0.4.4 is in cooldown until 2026-10-30. Tracked in #457.
+  "RUSTSEC-2026-0385",
 ]
