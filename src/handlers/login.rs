@@ -661,13 +661,20 @@ mod tests {
             password_hash: crate::test_password_hash("s3cret"),
         };
 
-        let started = Instant::now();
-        assert!(!verify_credentials(&auth, "alice", "nope"));
-        let wrong_password = started.elapsed();
-
-        let started = Instant::now();
-        assert!(!verify_credentials(&auth, "mallory", "nope"));
-        let wrong_username = started.elapsed();
+        // The minimum of several runs drops the cold first call and scheduler
+        // noise, either of which can skew a single sample past the ratio.
+        let cheapest = |username: &str| {
+            (0..5)
+                .map(|_| {
+                    let started = Instant::now();
+                    assert!(!verify_credentials(&auth, username, "nope"));
+                    started.elapsed()
+                })
+                .min()
+                .expect("a non-empty range")
+        };
+        let wrong_password = cheapest("alice");
+        let wrong_username = cheapest("mallory");
 
         assert!(
             wrong_username * 4 >= wrong_password,
