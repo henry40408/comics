@@ -1,6 +1,9 @@
 name: CI
 
-on: [pull_request, push]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 # A newer push cancels the running one for the same ref; tag runs never are.
 concurrency:
@@ -9,6 +12,7 @@ concurrency:
 
 jobs:
   deny:
+    name: deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -20,14 +24,27 @@ jobs:
   # Not a gate for coverage/e2e: a gate cannot share its build cache with
   # downstream jobs, so it would only serialize a second compile.
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # `e2e` is a separate workspace, so it must be named to be cached.
+          workspaces: |
+            .
+            e2e
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      # Not under `cargo deny`: the browser stack's licences are outside the
+      # allow-list, and none of it ships in the image.
+      - run: cargo fmt --check
+        working-directory: e2e
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: e2e
 
   coverage:
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +58,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   e2e:
+    name: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,13 +76,6 @@ jobs:
       # Prebuild the server the suite launches, keeping the compile off its
       # timeout. Dev profile: release is tuned for size, not test speed.
       - run: cargo build
-      # Linted here to reuse this job's build. Not under `cargo deny`: the
-      # browser stack's licences are outside the allow-list, and none of it
-      # ships in the image.
-      - run: cargo fmt --check
-        working-directory: e2e
-      - run: cargo clippy --all-targets -- -D warnings
-        working-directory: e2e
       # The runner ships Chrome; chromedriver is downloaded on demand.
       - run: cargo test --test e2e
         working-directory: e2e
