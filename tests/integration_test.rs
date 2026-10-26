@@ -82,6 +82,69 @@ fn initial_scan_finished() {
     assert_data_eq!(String::from_utf8_lossy(&rest.stderr).as_ref(), str![]);
 }
 
+/// SIGTERM is what a container runtime sends; the server must drain and exit 0
+/// rather than die from the signal. Sent only after the scan reports in, by
+/// which time the handler is installed in practice.
+#[cfg(unix)]
+#[test]
+fn sigterm_shuts_down_gracefully() {
+    let mut server = Process::new(cmd::cargo_bin!("comics"))
+        .env("NO_COLOR", "true")
+        .env(
+            "COMICS_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .args(["--bind", "127.0.0.1:0", "--data-dir", "fixtures/data"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to start comics");
+
+    let stdout = server.stdout.take().expect("a piped stdout");
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (logs_tx, logs_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut logs = String::new();
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if line.contains("initial scan finished") {
+                // A closed channel means the test already gave up.
+                let _ = ready_tx.send(());
+            }
+            logs.push_str(&line);
+            logs.push('\n');
+        }
+        drop(logs_tx.send(logs));
+    });
+
+    ready_rx
+        .recv_timeout(LOG_WAIT)
+        .expect("the scan never reported in");
+    let sent = Process::new("kill")
+        .args(["-TERM", &server.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(sent.success());
+
+    let logs = logs_rx
+        .recv_timeout(LOG_WAIT)
+        .expect("the server never shut down");
+    let rest = server.wait_with_output().expect("failed to reap comics");
+
+    assert!(rest.status.success(), "exited with {}", rest.status);
+    assert_data_eq!(String::from_utf8_lossy(&rest.stderr).as_ref(), str![]);
+    assert_data_eq!(
+        logs,
+        str![[r"
+[..]  WARN comics: no authorization enabled, server is publicly accessible
+[..]  INFO comics: server started addr=127.0.0.1:[..] version=[..]
+[..]  INFO comics: initial scan finished books=2 pages=8 duration_ms=[..]
+[..]  INFO comics: received shutdown signal
+
+"]]
+    );
+}
+
 #[test]
 fn legacy_env_var_aborts_startup() {
     // `env_clear` keeps the ambient environment out of the check.
