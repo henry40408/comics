@@ -1,6 +1,9 @@
 name: CI
 
-on: [pull_request, push]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 # A newer push cancels the running one for the same ref; tag runs never are.
 concurrency:
@@ -9,6 +12,7 @@ concurrency:
 
 jobs:
   deny:
+    name: deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -20,14 +24,38 @@ jobs:
   # Not a gate for coverage/e2e: a gate cannot share its build cache with
   # downstream jobs, so it would only serialize a second compile.
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # `e2e` is a separate workspace, so it must be named to be cached.
+          workspaces: |
+            .
+            e2e
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      # Not under `cargo deny`: the browser stack's licences are outside the
+      # allow-list, and none of it ships in the image.
+      - run: cargo fmt --check
+        working-directory: e2e
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: e2e
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-nextest@0.9.87
+      - run: cargo nextest run
 
   coverage:
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +69,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   e2e:
+    name: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,13 +87,26 @@ jobs:
       # Prebuild the server the suite launches, keeping the compile off its
       # timeout. Dev profile: release is tuned for size, not test speed.
       - run: cargo build
-      # Linted here to reuse this job's build. Not under `cargo deny`: the
-      # browser stack's licences are outside the allow-list, and none of it
-      # ships in the image.
-      - run: cargo fmt --check
-        working-directory: e2e
-      - run: cargo clippy --all-targets -- -D warnings
-        working-directory: e2e
       # The runner ships Chrome; chromedriver is downloaded on demand.
       - run: cargo test --test e2e
         working-directory: e2e
+
+  lint-workflow:
+    name: lint-workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # install-action has no actionlint manifest, so download the release and
+      # verify its checksum.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive" actionlint
+      - run: ./actionlint
