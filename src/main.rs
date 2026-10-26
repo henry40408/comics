@@ -1,4 +1,4 @@
-use std::{io, io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
+use std::{future::Future, io, io::Write as _, net::SocketAddr, path::PathBuf, sync::Arc, thread};
 
 use anyhow::{anyhow, bail};
 use argon2::{Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
@@ -310,28 +310,30 @@ fn init_route(opts: &Opts) -> (Router, Arc<AppState>) {
     (router, state)
 }
 
-async fn shutdown_signal() {
-    let ctrl_c = async {
+/// Install the SIGINT/SIGTERM handlers now and return the future that waits for them.
+///
+/// Installing inside the future would defer it to the first poll, so a signal
+/// arriving before then would hit the default action and kill the process
+/// without a graceful shutdown. Windows has no such default action to race.
+#[cfg(unix)]
+fn install_shutdown_signal() -> io::Result<impl Future<Output = ()>> {
+    let mut interrupt = signal::unix::signal(signal::unix::SignalKind::interrupt())?;
+    let mut terminate = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn install_shutdown_signal() -> io::Result<impl Future<Output = ()>> {
+    Ok(async {
         signal::ctrl_c()
             .await
             .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => {}
-        () = terminate => {}
-    }
+    })
 }
 
 /// bcrypt hash prefixes, matched only to name the migration: the bare parse
@@ -405,6 +407,7 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
         );
     }
     let version = VERSION;
+    let shutdown_signal = install_shutdown_signal()?;
     let listener = TcpListener::bind(&addr).await?;
     let local_addr: SocketAddr = listener.local_addr()?;
     info!(addr = %local_addr, %version, "server started");
@@ -414,18 +417,19 @@ async fn run_server(addr: SocketAddr, opts: &Opts) -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async {
+    .with_graceful_shutdown(async move {
+        tokio::pin!(shutdown_signal);
         tokio::select! {
             result = rx => {
                 if result.is_ok() {
                     warn!("fatal error occurred, shutdown the server");
                 } else {
                     // Sender dropped after a successful scan; wait for a real signal.
-                    shutdown_signal().await;
+                    (&mut shutdown_signal).await;
                     info!("received shutdown signal");
                 }
             }
-            () = shutdown_signal() => {
+            () = &mut shutdown_signal => {
                 info!("received shutdown signal");
             }
         }

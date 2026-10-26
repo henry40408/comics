@@ -65,7 +65,7 @@ fn initial_scan_finished() {
 
     let logs = rx
         .recv_timeout(LOG_WAIT)
-        .expect("the scan never reported in");
+        .expect("the marker line was never logged");
 
     server.kill().expect("failed to stop comics");
     let rest = server.wait_with_output().expect("failed to reap comics");
@@ -82,12 +82,10 @@ fn initial_scan_finished() {
     assert_data_eq!(String::from_utf8_lossy(&rest.stderr).as_ref(), str![]);
 }
 
-/// SIGTERM is what a container runtime sends; the server must drain and exit 0
-/// rather than die from the signal. Sent only after the scan reports in, by
-/// which time the handler is installed in practice.
+/// Run the server, send SIGTERM once a log line contains `marker`, and return
+/// the stdout logs after asserting a clean exit.
 #[cfg(unix)]
-#[test]
-fn sigterm_shuts_down_gracefully() {
+fn run_until_sigterm(marker: &'static str) -> String {
     let mut server = Process::new(cmd::cargo_bin!("comics"))
         .env("NO_COLOR", "true")
         .env(
@@ -107,7 +105,7 @@ fn sigterm_shuts_down_gracefully() {
         let mut logs = String::new();
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
-            if line.contains("initial scan finished") {
+            if line.contains(marker) {
                 // A closed channel means the test already gave up.
                 let _ = ready_tx.send(());
             }
@@ -119,7 +117,7 @@ fn sigterm_shuts_down_gracefully() {
 
     ready_rx
         .recv_timeout(LOG_WAIT)
-        .expect("the scan never reported in");
+        .expect("the marker line was never logged");
     let sent = Process::new("kill")
         .args(["-TERM", &server.id().to_string()])
         .status()
@@ -133,6 +131,15 @@ fn sigterm_shuts_down_gracefully() {
 
     assert!(rest.status.success(), "exited with {}", rest.status);
     assert_data_eq!(String::from_utf8_lossy(&rest.stderr).as_ref(), str![]);
+    logs
+}
+
+/// SIGTERM is what a container runtime sends; the server must drain and exit 0
+/// rather than die from the signal.
+#[cfg(unix)]
+#[test]
+fn sigterm_shuts_down_gracefully() {
+    let logs = run_until_sigterm("initial scan finished");
     assert_data_eq!(
         logs,
         str![[r"
@@ -142,6 +149,18 @@ fn sigterm_shuts_down_gracefully() {
 [..]  INFO comics: received shutdown signal
 
 "]]
+    );
+}
+
+/// A signal that lands right after startup, before anything polls the
+/// shutdown future, must still shut down gracefully.
+#[cfg(unix)]
+#[test]
+fn sigterm_right_after_startup_shuts_down_gracefully() {
+    let logs = run_until_sigterm("server started");
+    assert!(
+        logs.contains("received shutdown signal"),
+        "unexpected logs:\n{logs}"
     );
 }
 
