@@ -13,7 +13,7 @@ description = "Browser E2E tests and screenshot pipeline for Comics"
 anyhow = "1.0.102"
 cucumber = "0.23.0"
 serde_json = "1.0.145"
-thirtyfour = "0.37"
+thirtyfour = "0.38"
 tokio = { version = "1.52.3", features = ["macros", "process", "rt-multi-thread", "time"] }
 
 [[test]]
