@@ -20,7 +20,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 # CIDR matching for `COMICS_TRUSTED_PROXIES`; no transitive dependencies.
 ipnet = "2.12.0"
 mimalloc = "0.1"
-parking_lot = "0.12.1"
+parking_lot = "0.13.0"
 rand = "0.10.0"
 rayon = "1.12.0"
 rpassword = "7.5.3"
