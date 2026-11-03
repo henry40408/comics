@@ -36,7 +36,7 @@
             <div><b>{{ books.len() }}</b> volume(s)</div>
             <div>
               scanned
-              <time data-localtime datetime="{{ scanned_at }}">{{ scanned_at }}</time>
+              <time data-localtime datetime="{{ scanned_at_iso }}">{{ scanned_at }}</time>
               ·
               <time datetime="PT{{ scan_duration / 1000.0 }}S">{{ scan_duration }}ms</time>
             </div>
