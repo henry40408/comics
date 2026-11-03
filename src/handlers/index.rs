@@ -19,7 +19,10 @@ use crate::state::AppState;
 struct IndexTemplate<'a> {
     books: &'a Vec<Book>,
     scan_duration: f64,
+    /// Shown when scripting is off.
     scanned_at: String,
+    /// The `datetime` attribute: RFC 2822 is not a valid HTML date-time value.
+    scanned_at_iso: String,
     version: &'static str,
     assets_version: &'static str,
     auth_enabled: bool,
@@ -35,6 +38,11 @@ pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoRespons
         books: &scan.books,
         scan_duration: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
+        // Millis: HTML allows at most three fractional digits, `to_rfc3339` emits
+        // the clock's full precision (six or nine).
+        scanned_at_iso: scan
+            .scanned_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         version: VERSION,
         assets_version: assets_version(),
         auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),

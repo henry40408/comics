@@ -695,6 +695,32 @@ mod tests {
         assert_eq!(1, t.matches("data-localtime").count());
     }
 
+    // RFC 2822 is not a valid `datetime`, and `new Date()` only happens to parse it.
+    #[tokio::test]
+    async fn index_scan_time_has_a_valid_datetime_attribute() {
+        let server = build_server().await;
+        let t = server.get("/").await.text();
+
+        let marker = "<time data-localtime datetime=\"";
+        let start = t.find(marker).expect("a localised <time>") + marker.len();
+        let end = start + t[start..].find('"').expect("a closing quote");
+        let datetime = &t[start..end];
+
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(datetime).is_ok(),
+            "not an RFC 3339 date-time: {datetime}"
+        );
+        // `parse_from_rfc3339` accepts any number of fractional digits; HTML
+        // and ECMAScript's own format take at most three.
+        let fraction_digits = datetime.split_once('.').map_or(0, |(_, rest)| {
+            rest.chars().take_while(char::is_ascii_digit).count()
+        });
+        assert!(
+            fraction_digits <= 3,
+            "more than three fractional digits: {datetime}"
+        );
+    }
+
     // Seconds need the `T` designator: `P0.003S` is invalid.
     #[tokio::test]
     async fn index_renders_the_scan_duration_as_a_valid_duration() {
