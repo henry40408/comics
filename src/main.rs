@@ -1483,6 +1483,44 @@ mod tests {
         }
     }
 
+    /// Pins the escaping that maud does by default: a `PreEscaped` around
+    /// user-controlled text would pass every other test.
+    #[tokio::test]
+    async fn user_controlled_text_is_html_escaped() {
+        let data = tempfile::tempdir().unwrap();
+        // A `/` cannot appear in a file name, so no closing tags here.
+        let book_dir = data.path().join(r#"<i>"b""#);
+        std::fs::create_dir(&book_dir).unwrap();
+        std::fs::write(book_dir.join(r#"<u>"p".jpg"#), b"x").unwrap();
+        let server = build_server_at(data.path().to_str().unwrap()).await;
+
+        let index = server.get("/").await.text();
+        let book_id = index
+            .split("href=\"/book/")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("the index links the book");
+        let book = server.get(&format!("/book/{book_id}")).await.text();
+        let login = build_auth_server(false)
+            .await
+            .get("/login")
+            .add_query_param("next", r#"/"><x"#)
+            .await
+            .text();
+
+        for (what, html, raw) in [
+            ("index title", &index, "<i>"),
+            ("book title", &book, "<i>"),
+            ("page filename", &book, "<u>"),
+            ("login next", &login, "<x"),
+        ] {
+            assert!(!html.contains(raw), "{what} is not escaped: {raw}");
+        }
+        assert!(book.contains("&lt;i&gt;&quot;b&quot;"), "{book}");
+        assert!(book.contains("&lt;u&gt;&quot;p&quot;.jpg"), "{book}");
+        assert!(login.contains("&quot;&gt;&lt;x"), "{login}");
+    }
+
     /// `.pg` is hidden until `is-current` lands on it; without app.js the
     /// server has to set it on the first page.
     #[tokio::test]
