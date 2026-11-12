@@ -235,6 +235,22 @@ impl ReaderPage<'_> {
         .await
     }
 
+    /// Whether the tap zone (`"next"` or `"previous"`) is on screen; a zone
+    /// past either end of the book is not offered.
+    pub async fn arrow_shown(&self, direction: &str) -> Result<bool> {
+        let testid = match direction {
+            "next" => "reader-next",
+            "previous" => "reader-prev",
+            other => anyhow::bail!("unknown arrow direction {other:?}"),
+        };
+        Ok(self
+            .0
+            .find(By::Testid(testid))
+            .await?
+            .is_displayed()
+            .await?)
+    }
+
     /// The book title in the topbar.
     pub async fn title(&self) -> Result<String> {
         Ok(self.0.find(By::Css(".titleblock .t")).await?.text().await?)

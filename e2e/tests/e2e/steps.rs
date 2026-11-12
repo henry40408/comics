@@ -112,6 +112,19 @@ async fn current_page_should_be(world: &mut ComicsWorld, n: String) -> anyhow::R
     .await
 }
 
+#[then(expr = "the {string} arrow should be {string}")]
+async fn arrow_should_be(
+    world: &mut ComicsWorld,
+    direction: String,
+    state: String,
+) -> anyhow::Result<()> {
+    let shown = state == "shown";
+    eventually_eq("the tap-zone arrow", shown, || async {
+        world.reader_page()?.arrow_shown(&direction).await
+    })
+    .await
+}
+
 #[when("I advance to the next page")]
 async fn advance(world: &mut ComicsWorld) -> anyhow::Result<()> {
     world.reader_page()?.advance().await

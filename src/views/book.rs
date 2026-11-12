@@ -36,8 +36,8 @@ pub fn book_page(view: &BookView<'_>) -> Markup {
         body class="reader" data-mode=(view.mode.as_str()) {
             (topbar(view))
             div class="viewer" id="viewer" {
-                div class="zone next" id="next" title="Next" data-testid="reader-next" { span { "‹" } }
-                div class="zone prev" id="prev" title="Previous" data-testid="reader-prev" { span { "›" } }
+                div class="zone next" id="next" title="Next" data-testid="reader-next" { span {} }
+                div class="zone prev" id="prev" title="Previous" data-testid="reader-prev" { span {} }
                 div class="pages" id="pages" {
                     @for (index, page) in book.pages.iter().enumerate() {
                         (figure(view, page, index + 1))
