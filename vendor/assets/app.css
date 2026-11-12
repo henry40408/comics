@@ -278,7 +278,8 @@ body[data-mode="scroll"] .pg img { width: 100%; height: auto; aspect-ratio: auto
 body[data-mode="scroll"] .zone { display: none; }
 
 /* tap/click zones cover the full half so the whole left/right side flips */
-.zone { position: absolute; top: 0; bottom: 0; width: 50%; z-index: 2; display: grid; place-items: center; cursor: pointer; }
+/* `manipulation` stops a quick second tap from being read as a double-tap zoom */
+.zone { position: absolute; top: 0; bottom: 0; width: 50%; z-index: 2; display: grid; place-items: center; cursor: pointer; touch-action: manipulation; }
 .zone span {
   background: var(--paper);
   border: 1px solid var(--ink);

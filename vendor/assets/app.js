@@ -78,11 +78,9 @@
     else pgs[current - 1].scrollIntoView({ block: "start" });
   };
 
-  // RTL paged nav: left = next. pointerup + dedupe avoids ghost-click double fire.
-  let lastTap = 0;
-  const tapNav = (d) => { const now = Date.now(); if (now - lastTap < 90) return; lastTap = now; setCurrent(current + d); };
-  document.getElementById("next").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(1); });
-  document.getElementById("prev").addEventListener("pointerup", (e) => { e.preventDefault(); tapNav(-1); });
+  // RTL paged nav: left = next.
+  document.getElementById("next").addEventListener("click", () => setCurrent(current + 1));
+  document.getElementById("prev").addEventListener("click", () => setCurrent(current - 1));
 
   // keyboard shortcuts (ignored while a link/button/field has focus)
   document.addEventListener("keydown", (e) => {
