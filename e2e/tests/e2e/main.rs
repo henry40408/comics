@@ -4,7 +4,10 @@
 //! * `@nojs` — the `before` hook opens that scenario's session with scripting
 //!   disabled.
 //! * `@logout` — `POST /logout` ends *every* live session, so it would sign
-//!   concurrent scenarios out mid-run. It gets a second pass of its own.
+//!   concurrent scenarios out mid-run.
+//! * `@rescan` — swaps the scan every other scenario reads.
+//!
+//! Both get a second pass of their own, one scenario at a time.
 
 mod steps;
 
@@ -39,22 +42,26 @@ async fn main() -> anyhow::Result<()> {
     // Before anything runs in parallel — see `Browser::prepare`.
     Browser::prepare().await?;
 
-    let others = run(|_, _, scenario| !tagged(scenario, "logout")).await;
-    let logout = run(|_, _, scenario| tagged(scenario, "logout")).await;
+    let others = run(max_concurrent_scenarios(), |_, _, scenario| {
+        !is_exclusive(scenario)
+    })
+    .await;
+    // One at a time: each of these disturbs every other live session.
+    let exclusive = run(1, |_, _, scenario| is_exclusive(scenario)).await;
 
     // Both passes run before either can fail the process.
-    let failures = others + logout;
+    let failures = others + exclusive;
     anyhow::ensure!(failures == 0, "{failures} cucumber failure(s)");
     Ok(())
 }
 
 /// Runs the scenarios a filter selects, reporting how many ways it failed.
-async fn run<F>(filter: F) -> usize
+async fn run<F>(concurrency: usize, filter: F) -> usize
 where
     F: Fn(&gherkin::Feature, Option<&gherkin::Rule>, &gherkin::Scenario) -> bool + 'static,
 {
     let writer = ComicsWorld::cucumber()
-        .max_concurrent_scenarios(max_concurrent_scenarios())
+        .max_concurrent_scenarios(concurrency)
         .fail_on_skipped()
         .before(|_feature, _rule, scenario, world| {
             Box::pin(async move {
@@ -80,6 +87,11 @@ where
         .await;
 
     writer.failed_steps() + writer.parsing_errors() + writer.hook_errors()
+}
+
+/// Scenarios that must not overlap anything: `@logout` and `@rescan`.
+fn is_exclusive(scenario: &gherkin::Scenario) -> bool {
+    tagged(scenario, "logout") || tagged(scenario, "rescan")
 }
 
 fn tagged(scenario: &gherkin::Scenario, tag: &str) -> bool {

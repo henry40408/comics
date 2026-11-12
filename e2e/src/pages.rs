@@ -51,6 +51,24 @@ impl LoginPage<'_> {
     pub async fn error(&self) -> Result<Option<WebElement>> {
         optional(self.0, By::Testid("login-error")).await
     }
+
+    /// Where the form will send you after signing in (the hidden `next` field).
+    pub async fn next_target(&self) -> Result<String> {
+        let field = self.0.find(By::Css("input[name=next]")).await?;
+        Ok(field.value().await?.unwrap_or_default())
+    }
+
+    /// The `data-testid` of the focused element, empty when nothing is.
+    pub async fn focused_testid(&self) -> Result<String> {
+        let focused = self
+            .0
+            .execute(
+                "return document.activeElement?.getAttribute('data-testid') ?? '';",
+                Vec::new(),
+            )
+            .await?;
+        Ok(focused.json().as_str().unwrap_or_default().to_string())
+    }
 }
 
 /// The library index (`/`).
@@ -87,6 +105,79 @@ impl LibraryPage<'_> {
         .await
     }
 
+    /// Title, page count, index and cover alt text of every card.
+    pub async fn card_summaries(&self) -> Result<Vec<CardSummary>> {
+        let mut summaries = Vec::new();
+        for card in self.cards().await? {
+            let title = card.find(By::Testid("book-title")).await?.text().await?;
+            let pages = card.find(By::Css(".p")).await?.text().await?;
+            let index = card.find(By::Css(".idx")).await?.text().await?;
+            let cover_alt = card
+                .find(By::Css("img"))
+                .await?
+                .attr("alt")
+                .await?
+                .unwrap_or_default();
+            summaries.push(CardSummary {
+                title,
+                pages,
+                index,
+                cover_alt,
+            });
+        }
+        Ok(summaries)
+    }
+
+    /// The header's volume count and the "所蔵 N 冊" note beside the buttons.
+    pub async fn volume_counts(&self) -> Result<(String, String)> {
+        let header = self.0.find(By::Css(".stat b")).await?.text().await?;
+        let note = self.0.find(By::Css(".note")).await?.text().await?;
+        Ok((header, note))
+    }
+
+    /// The text of the two `<time>` elements in the header.
+    pub async fn scan_times(&self) -> Result<Vec<String>> {
+        let mut texts = Vec::new();
+        for time in self.0.find_all(By::Css(".stat time")).await? {
+            texts.push(time.text().await?);
+        }
+        Ok(texts)
+    }
+
+    /// Presses "Re-scan", and confirms the redirect back to the library.
+    pub async fn rescan(&self) -> Result<()> {
+        self.press_form_button("the Re-scan button", "/rescan", |path| path == "/")
+            .await
+    }
+
+    /// Presses "Shuffle", and confirms it opened a book.
+    pub async fn shuffle(&self) -> Result<()> {
+        self.press_form_button("the Shuffle button", "/shuffle", |path| {
+            path.starts_with("/book/")
+        })
+        .await
+    }
+
+    async fn press_form_button(
+        &self,
+        what: &str,
+        action: &str,
+        landed: impl Fn(&str) -> bool,
+    ) -> Result<()> {
+        let driver = self.0;
+        click_until(
+            driver,
+            what,
+            async || {
+                Ok(driver
+                    .find(By::Css(format!("form[action=\"{action}\"] button")))
+                    .await?)
+            },
+            async || Ok(landed(driver.current_url().await?.path())),
+        )
+        .await
+    }
+
     /// Submits the logout form, and confirms it reached the login page.
     pub async fn logout(&self) -> Result<()> {
         let driver = self.0;
@@ -98,6 +189,15 @@ impl LibraryPage<'_> {
         )
         .await
     }
+}
+
+/// What a library card shows.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CardSummary {
+    pub title: String,
+    pub pages: String,
+    pub index: String,
+    pub cover_alt: String,
 }
 
 /// The reader (`/book/{id}`).
@@ -118,6 +218,78 @@ impl ReaderPage<'_> {
             "the next-page zone",
             async || Ok(driver.find(By::Testid("reader-next")).await?),
             async || Ok(self.current_page_text().await? != before),
+        )
+        .await
+    }
+
+    /// Clicks the "previous page" zone, and confirms the page turned.
+    pub async fn go_back(&self) -> Result<()> {
+        let driver = self.0;
+        let before = self.current_page_text().await?;
+        click_until(
+            driver,
+            "the previous-page zone",
+            async || Ok(driver.find(By::Testid("reader-prev")).await?),
+            async || Ok(self.current_page_text().await? != before),
+        )
+        .await
+    }
+
+    /// The book title in the topbar.
+    pub async fn title(&self) -> Result<String> {
+        Ok(self.0.find(By::Css(".titleblock .t")).await?.text().await?)
+    }
+
+    /// The mode the segmented control highlights.
+    pub async fn highlighted_mode(&self) -> Result<Option<String>> {
+        let Some(on) = optional(self.0, By::Css("#seg a.on")).await? else {
+            return Ok(None);
+        };
+        Ok(on.attr("data-m").await?)
+    }
+
+    /// The progress bar's inline width, empty before a script sets it.
+    pub async fn progress_width(&self) -> Result<String> {
+        let width = self
+            .0
+            .execute(
+                "return document.getElementById('bar').style.width;",
+                Vec::new(),
+            )
+            .await?;
+        Ok(width.json().as_str().unwrap_or_default().to_string())
+    }
+
+    /// Does `<body>` carry the first-visit `hint` class?
+    pub async fn is_hinting(&self) -> Result<bool> {
+        Ok(self.0.query(By::Css("body.hint")).nowait().exists().await?)
+    }
+
+    /// Clicks the "←" link, and confirms it reached the library.
+    pub async fn go_home(&self) -> Result<()> {
+        let driver = self.0;
+        click_until(
+            driver,
+            "the back link",
+            async || Ok(driver.find(By::Css("a.back")).await?),
+            async || Ok(driver.current_url().await?.path() == "/"),
+        )
+        .await
+    }
+
+    /// Presses the topbar's "Shuffle", and confirms it opened another book.
+    pub async fn shuffle(&self) -> Result<()> {
+        let driver = self.0;
+        let before = driver.current_url().await?;
+        click_until(
+            driver,
+            "the reader's Shuffle button",
+            async || {
+                Ok(driver
+                    .find(By::Css("form[action^=\"/shuffle/\"] button"))
+                    .await?)
+            },
+            async || Ok(driver.current_url().await? != before),
         )
         .await
     }
@@ -292,6 +464,25 @@ impl ReaderPage<'_> {
         }
         bail!("no displayed `.pg` carries `{css}`")
     }
+}
+
+/// Clicks the theme toggle, and confirms the theme differs from `before`.
+pub async fn click_theme_toggle(driver: &WebDriver, before: &str) -> Result<()> {
+    click_until(
+        driver,
+        "the theme toggle",
+        async || Ok(driver.find(By::Id("theme")).await?),
+        async || {
+            let theme = driver
+                .execute(
+                    "return document.documentElement.getAttribute('data-theme');",
+                    Vec::new(),
+                )
+                .await?;
+            Ok(theme.json().as_str() != Some(before))
+        },
+    )
+    .await
 }
 
 /// Clicks what `locate` finds, and confirms `took_effect` before returning.
