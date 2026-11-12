@@ -56,6 +56,9 @@
     curEls.forEach((e) => (e.textContent = current));
     bar.style.width = (current / TOTAL) * 100 + "%";
     thumbBtns.forEach((b, i) => b.classList.toggle("on", i + 1 === current));
+    // nothing to flip to past either end, so don't offer the arrow
+    document.getElementById("next").classList.toggle("is-off", current === TOTAL);
+    document.getElementById("prev").classList.toggle("is-off", current === 1);
     centerThumb();
   };
   const paintPage = () => pgs.forEach((p, i) => p.classList.toggle("is-current", i + 1 === current));

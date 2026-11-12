@@ -1,58 +1,31 @@
 use std::sync::Arc;
 
-use askama::Template;
 use axum::{
     extract::State,
     response::{Html, IntoResponse},
 };
 use http::StatusCode;
-use tracing::error;
 
-use crate::VERSION;
-use crate::assets::assets_version;
 use crate::auth::AuthConfig;
-use crate::models::Book;
 use crate::state::AppState;
-
-#[derive(Template)]
-#[template(path = "index.html")]
-struct IndexTemplate<'a> {
-    books: &'a Vec<Book>,
-    scan_duration: f64,
-    /// Shown when scripting is off.
-    scanned_at: String,
-    /// The `datetime` attribute: RFC 2822 is not a valid HTML date-time value.
-    scanned_at_iso: String,
-    version: &'static str,
-    assets_version: &'static str,
-    auth_enabled: bool,
-}
+use crate::views::{IndexView, index_page};
 
 pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Hold read lock through render — template render is pure CPU, no await
+    // Hold read lock through render — rendering is pure CPU, no await
     let locked = state.scan.read();
     let Some(scan) = locked.as_ref() else {
         return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new()));
     };
-    let t = IndexTemplate {
+    let view = IndexView {
         books: &scan.books,
-        scan_duration: scan.scan_duration.num_milliseconds() as f64,
+        scan_duration_ms: scan.scan_duration.num_milliseconds() as f64,
         scanned_at: scan.scanned_at.to_rfc2822(),
         // Millis: HTML allows at most three fractional digits, `to_rfc3339` emits
         // the clock's full precision (six or nine).
         scanned_at_iso: scan
             .scanned_at
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        version: VERSION,
-        assets_version: assets_version(),
         auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),
     };
-    let rendered = match t.render() {
-        Ok(html) => html,
-        Err(err) => {
-            error!(%err, "failed to render index");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Html(String::new()));
-        }
-    };
-    (StatusCode::OK, Html(rendered))
+    (StatusCode::OK, Html(index_page(&view).into_string()))
 }

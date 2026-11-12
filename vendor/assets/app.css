@@ -280,8 +280,6 @@ body[data-mode="scroll"] .zone { display: none; }
 /* tap/click zones cover the full half so the whole left/right side flips */
 .zone { position: absolute; top: 0; bottom: 0; width: 50%; z-index: 2; display: grid; place-items: center; cursor: pointer; }
 .zone span {
-  font-size: 30px;
-  color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--ink);
   width: 50px;
@@ -292,6 +290,13 @@ body[data-mode="scroll"] .zone { display: none; }
   opacity: 0;
   transition: opacity 0.2s;
 }
+/* The chevron is drawn, not a glyph: a font's "‹" sits below the line box's
+   centre by an amount that varies per font, so it never centred in the circle.
+   The translate recentres the rotated corner's ink (it spans half the diagonal). */
+.zone span::before { content: ""; width: 10px; height: 10px; border: solid var(--ink); border-width: 0 0 2.5px 2.5px; }
+.zone.next span::before { transform: translateX(3px) rotate(45deg); }
+.zone.prev span::before { transform: translateX(-3px) rotate(-135deg); }
+.zone.is-off { display: none; }
 .zone.next { left: 0; justify-items: start; padding-left: 14px; }
 .zone.prev { right: 0; justify-items: end; padding-right: 14px; }
 .viewer:hover .zone span { opacity: 0.85; }

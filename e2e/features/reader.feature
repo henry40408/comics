@@ -11,6 +11,13 @@ Feature: Reader
     When I advance to the next page
     Then the current page should be "2"
 
+  Scenario: The arrows stop at the ends of the book
+    Then the "previous" arrow should be "hidden"
+    And the "next" arrow should be "shown"
+    When I press "End"
+    Then the "next" arrow should be "hidden"
+    And the "previous" arrow should be "shown"
+
   Scenario: Switching to scroll mode
     When I switch to scroll mode
     Then the reader should be in "scroll" mode

@@ -55,7 +55,8 @@ Thin binary (`src/main.rs`) + library (`src/lib.rs`), so tests can build routers
 | `state.rs` | `AppState`: signing `Key`, `RwLock<Option<BookScan>>`, cache dir, `thumb_sem`, `verify_sem` |
 | `assets.rs` | Embedded CSS/JS/icons + `assets_version()` (`?v=<hash>`) |
 | `error.rs`, `helpers.rs` | `AppError`/`AppResult`; `with_scan` |
-| `templates/`, `vendor/assets/` | Askama templates and hand-written CSS/JS, embedded at compile time |
+| `views/` | maud page builders (`layout` holds the shared `<head>`; `index`, `book`, `login`), compiled in |
+| `vendor/assets/` | Hand-written CSS/JS, embedded at compile time |
 
 **Scanning performs no image I/O** — `Page::new` only stats the path; dimensions are never read (deliberate, for slow disks).
 
@@ -80,17 +81,17 @@ Rejections carry a `ProtectionError` extension; nothing reads it yet.
 
 ### Content-Security-Policy
 
-`default-src 'none'`, no `'unsafe-inline'`. Inline `<script>` and `on*=` attributes are blocked — hence `/assets/theme.js` as a separate, synchronous (not deferred) `<head>` script. `rendered_pages_carry_no_inline_scripts` catches violations. `style-src`/`font-src` allow `fonts.bunny.net` only for the templates' webfont `<link>`s.
+`default-src 'none'`, no `'unsafe-inline'`. Inline `<script>` and `on*=` attributes are blocked — hence `/assets/theme.js` as a separate, synchronous (not deferred) `<head>` script. `rendered_pages_carry_no_inline_scripts` catches violations. `style-src`/`font-src` allow `fonts.bunny.net` only for the views' webfont `<link>`s.
 
 ### Reading without JavaScript
 
 The reader must work with scripting off:
 
 - `theme.js` sets `data-theme` and adds the `js` class to `<html>` before first paint; all no-JS CSS is scoped to `html:not(.js)` so `:target` does not fight `app.js`'s `is-current`. Guarded by `the_scripted_path_is_marked_before_first_paint`; the `@nojs` e2e scenarios prove the CSS works (their session disables scripts via `Emulation.setScriptExecutionDisabled`, which applies to the next document, so it cannot be shared).
-- Paging: `book.html` renders `is-current` on page 1 and `#p{n}` neighbour anchors resolved by CSS `:target`. The thumbnail rail is `<a href="#p{n}">` (`app.js` intercepts and animates).
+- Paging: `views/book.rs` (`figure`) renders `is-current` on page 1 and `#p{n}` neighbour anchors resolved by CSS `:target`. The thumbnail rail is `<a href="#p{n}">` (`app.js` intercepts and animates).
 - The `:has(.pg:target)` rule is scoped to paged mode; unscoped, a leftover `#p{n}` blanks the first page in scroll mode.
 - Mode switch: links to `?mode=paged|scroll`, rendered by `handlers/book.rs` onto `<body data-mode>`; `app.js` switches in place. An unknown `mode` renders the default (no 400). Without JS the shared control is hidden and each page has its own `nojs-mode` link to `?mode=…#p{n}`, anchored to its `.pg`, not `.viewer`.
-- Script-only UI is hidden without JS rather than shown dead or stale: `.js-only` (theme toggle in all three templates, topbar's live page number), plus `.counter` and `.progress`. Each page carries a `nojs-counter` instead. `script_only_controls_are_hidden_without_javascript` checks every template with a toggle.
+- Script-only UI is hidden without JS rather than shown dead or stale: `.js-only` (theme toggle in all three views, topbar's live page number), plus `.counter` and `.progress`. Each page carries a `nojs-counter` instead. `script_only_controls_are_hidden_without_javascript` checks every view with a toggle.
 - The dark palette is defined twice (`html[data-theme="dark"]` and `prefers-color-scheme: dark` for `html:not([data-theme])`); `dark_theme_has_a_no_js_fallback` fails if they drift.
 - Deliberately script-only: keyboard shortcuts, theme toggle, progress bar.
 

@@ -33,7 +33,7 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
 }
 
 /// Deny-by-default (`default-src 'none'`); each named directive is exactly
-/// what the templates load, so a new feature must opt itself in.
+/// what the views load, so a new feature must opt itself in.
 ///
 /// - `script-src 'self'` — no `'unsafe-inline'`, which would admit *injected*
 ///   scripts too; that is why the pre-paint theme snippet is `theme.js`.
