@@ -34,7 +34,7 @@ Subcommands:
 - Needs a local Chrome/Chromium; `WebDriver::managed` fetches chromedriver but not the browser.
 - Starts the **dev** server binary itself (building it if missing), or adopts one already listening on `127.0.0.1:3030`. An existing binary is not rebuilt, so run `cargo build` after changing code before E2E.
 - Up to `CONCURRENCY_CEILING` (4) scenarios in parallel. `Browser::prepare` opens one throwaway session first so concurrent sessions do not race the cold driver download (that wedges the run).
-- Every click goes through `click_until` (`pages.rs`). On CI, Chrome sometimes accepts a click but delivers no mouse event, for the rest of the session. When a click does not take, `click_until` probes the page (`elementFromPoint`, a capture-phase event recorder, a `requestAnimationFrame` count); if the point hit the element (`hitIsTarget`) and no event arrived, it dispatches a scripted click (`pointerdown`…`mouseup`, then `HTMLElement.click()` — the reader's tap zones listen on `pointerup`) and logs a `WARNING`. A covered control or a broken handler still fails. `@nojs` scenarios cannot run the recorder, so they rely on `hitIsTarget` alone.
+- Every click goes through `click_until` (`pages.rs`). On CI, Chrome sometimes accepts a click but delivers no mouse event, for the rest of the session. When a click does not take, `click_until` probes the page (`elementFromPoint`, a capture-phase event recorder, a `requestAnimationFrame` count); if the point hit the element (`hitIsTarget`) and no event arrived, it dispatches a scripted `HTMLElement.click()` and logs a `WARNING`. A covered control or a broken handler still fails. `@nojs` scenarios cannot run the recorder, so they rely on `hitIsTarget` alone.
 
 ### Integration tests
 

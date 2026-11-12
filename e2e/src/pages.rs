@@ -658,9 +658,8 @@ impl std::fmt::Display for ScriptedClick {
 
 /// Clicks the element from script, and reports whether *that* took effect.
 ///
-/// Dispatches `pointerdown` through `mouseup` before `click()`, because the
-/// reader's tap zones are bound to `pointerup`, which `click()` alone never
-/// fires; `click()` then triggers link and form activation.
+/// Calls `click()`, which covers link and form activation and every `click`
+/// listener (the reader's tap zones included).
 ///
 /// Only trusted together with [`input_never_arrived`]: alone it bypasses
 /// hit-testing, and the suite would stop testing that controls are reachable.
@@ -676,26 +675,7 @@ where
         Ok(json) => json,
         Err(e) => return ScriptedClick::Unanswered(e.to_string()),
     };
-    let dispatched = driver
-        .execute(
-            r"
-            const el = arguments[0];
-            const r = el.getBoundingClientRect();
-            const at = {
-                bubbles: true, cancelable: true, composed: true,
-                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
-                button: 0, buttons: 1,
-            };
-            const released = { ...at, buttons: 0 };
-            el.dispatchEvent(new PointerEvent('pointerdown', at));
-            el.dispatchEvent(new MouseEvent('mousedown', at));
-            el.dispatchEvent(new PointerEvent('pointerup', released));
-            el.dispatchEvent(new MouseEvent('mouseup', released));
-            el.click();
-            ",
-            vec![json],
-        )
-        .await;
+    let dispatched = driver.execute("arguments[0].click();", vec![json]).await;
     if let Err(e) = dispatched {
         return ScriptedClick::Unanswered(e.to_string());
     }
