@@ -7,7 +7,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
 use axum::{
     Extension, Form,
     extract::{ConnectInfo, Query, Request, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use cookie::CookieJar;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
@@ -107,13 +107,13 @@ fn safe_next(next: &str) -> String {
 
 fn render_login(error: bool, next: &str) -> Response {
     let next = safe_next(next);
-    let html = login_page(&LoginView { error, next: &next }).into_string();
+    let page = login_page(&LoginView { error, next: &next });
     let status = if error {
         StatusCode::UNAUTHORIZED
     } else {
         StatusCode::OK
     };
-    let mut response = (status, Html(html)).into_response();
+    let mut response = (status, page).into_response();
     // Outside the auth layer, so `no_store_html` never sees it; it carries the
     // error state and `next`.
     response

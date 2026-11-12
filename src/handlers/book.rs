@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Response},
 };
 use http::StatusCode;
 use serde::Deserialize;
@@ -32,19 +32,19 @@ pub async fn show_book_route(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<BookQuery>,
-) -> impl IntoResponse {
+) -> Response {
     // Hold read lock through render — rendering is pure CPU, no await
     let locked = state.scan.read();
     let Some(scan) = locked.as_ref() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new()));
+        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())).into_response();
     };
     let Some(book) = scan.books_map.get(&id).and_then(|&idx| scan.books.get(idx)) else {
-        return (StatusCode::NOT_FOUND, Html(String::from("not found")));
+        return (StatusCode::NOT_FOUND, Html(String::from("not found"))).into_response();
     };
     let view = BookView {
         book,
         auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),
         mode: query.mode(),
     };
-    (StatusCode::OK, Html(book_page(&view).into_string()))
+    (StatusCode::OK, book_page(&view)).into_response()
 }
