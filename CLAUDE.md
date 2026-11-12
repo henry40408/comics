@@ -88,7 +88,7 @@ Rejections carry a `ProtectionError` extension; nothing reads it yet.
 The reader must work with scripting off:
 
 - `theme.js` sets `data-theme` and adds the `js` class to `<html>` before first paint; all no-JS CSS is scoped to `html:not(.js)` so `:target` does not fight `app.js`'s `is-current`. Guarded by `the_scripted_path_is_marked_before_first_paint`; the `@nojs` e2e scenarios prove the CSS works (their session disables scripts via `Emulation.setScriptExecutionDisabled`, which applies to the next document, so it cannot be shared).
-- Paging: `book.html` renders `is-current` on page 1 and `#p{n}` neighbour anchors resolved by CSS `:target`. The thumbnail rail is `<a href="#p{n}">` (`app.js` intercepts and animates).
+- Paging: `views/book.rs` (`figure`) renders `is-current` on page 1 and `#p{n}` neighbour anchors resolved by CSS `:target`. The thumbnail rail is `<a href="#p{n}">` (`app.js` intercepts and animates).
 - The `:has(.pg:target)` rule is scoped to paged mode; unscoped, a leftover `#p{n}` blanks the first page in scroll mode.
 - Mode switch: links to `?mode=paged|scroll`, rendered by `handlers/book.rs` onto `<body data-mode>`; `app.js` switches in place. An unknown `mode` renders the default (no 400). Without JS the shared control is hidden and each page has its own `nojs-mode` link to `?mode=…#p{n}`, anchored to its `.pg`, not `.viewer`.
 - Script-only UI is hidden without JS rather than shown dead or stale: `.js-only` (theme toggle in all three views, topbar's live page number), plus `.counter` and `.progress`. Each page carries a `nojs-counter` instead. `script_only_controls_are_hidden_without_javascript` checks every view with a toggle.
