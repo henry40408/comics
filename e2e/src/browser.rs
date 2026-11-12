@@ -35,6 +35,19 @@ pub enum Scripting {
     Disabled,
 }
 
+/// What [`Browser::audit_resources`] found.
+#[derive(Debug)]
+pub struct ResourceAudit {
+    /// How many `<img>` the page has.
+    pub images: u64,
+    /// Images the browser could not decode.
+    pub undecodable: Vec<String>,
+    /// Same-origin requests that failed, with their status.
+    pub failed: Vec<String>,
+    /// Paths of every same-origin resource the page loaded.
+    pub linked: Vec<String>,
+}
+
 /// A browser session, scoped to one scenario.
 #[derive(Debug)]
 pub struct Browser {
@@ -123,6 +136,96 @@ impl Browser {
             .as_bool()
             .with_context(|| format!("no element with id `{id}`"))?;
         Ok(visible)
+    }
+
+    /// The theme on `<html data-theme>`.
+    pub async fn theme(&self) -> Result<String> {
+        let theme = self
+            .driver
+            .execute(
+                "return document.documentElement.getAttribute('data-theme') ?? '';",
+                Vec::new(),
+            )
+            .await?;
+        Ok(theme.json().as_str().unwrap_or_default().to_string())
+    }
+
+    /// Types a key at the page, as a reader would.
+    pub async fn press(&self, key: &str) -> Result<()> {
+        let typed = match key {
+            "ArrowLeft" => char::from(Key::Left).to_string(),
+            "ArrowRight" => char::from(Key::Right).to_string(),
+            "Home" => char::from(Key::Home).to_string(),
+            "End" => char::from(Key::End).to_string(),
+            "Space" => " ".to_string(),
+            other => other.to_string(),
+        };
+        self.driver
+            .action_chain()
+            .send_keys(typed)
+            .perform()
+            .await?;
+        Ok(())
+    }
+
+    /// Counts the page's images and lists what the server failed to answer.
+    ///
+    /// Not `fetch`: the CSP has no `connect-src`. Lazy images are forced to
+    /// load first, so every `src` is exercised; the failures come from the
+    /// browser's own resource timings, so stylesheets and scripts are covered
+    /// too. Same-origin only: the webfont host is not ours.
+    pub async fn audit_resources(&self) -> Result<ResourceAudit> {
+        let audit = self
+            .driver
+            .execute_async(
+                r"
+                const done = arguments[arguments.length - 1];
+                document.querySelectorAll('img[loading=lazy]').forEach((i) => { i.loading = 'eager'; });
+                const images = [...document.images];
+                Promise.all(images.map((i) => i.decode().then(() => true, () => false))).then((ok) => {
+                    const undecodable = images.filter((_, k) => !ok[k]).map((i) => i.src);
+                    const failed = performance.getEntriesByType('resource')
+                        .filter((e) => e.name.startsWith(location.origin) && (e.responseStatus >= 400 || e.responseStatus === 0))
+                        .map((e) => e.name + ' -> ' + e.responseStatus);
+                    const linked = performance.getEntriesByType('resource')
+                        .filter((e) => e.name.startsWith(location.origin))
+                        .map((e) => new URL(e.name).pathname);
+                    done({ images: images.length, undecodable, failed, linked });
+                });
+                ",
+                Vec::new(),
+            )
+            .await?;
+        let json = audit.json();
+        let strings = |key: &str| -> Vec<String> {
+            json[key]
+                .as_array()
+                .map(|all| {
+                    all.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Ok(ResourceAudit {
+            images: json["images"].as_u64().unwrap_or(0),
+            undecodable: strings("undecodable"),
+            failed: strings("failed"),
+            linked: strings("linked"),
+        })
+    }
+
+    /// How many `<script>` and `<style>` elements have no external source.
+    /// The CSP has no `'unsafe-inline'`, so each would be blocked.
+    pub async fn inline_code_count(&self) -> Result<u64> {
+        let count = self
+            .driver
+            .execute(
+                "return document.querySelectorAll('script:not([src]), style').length;",
+                Vec::new(),
+            )
+            .await?;
+        Ok(count.json().as_u64().unwrap_or(0))
     }
 
     /// Grows the viewport to `height`, so a screenshot catches the whole page.
