@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::State,
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Response},
 };
 use http::StatusCode;
 
@@ -10,11 +10,11 @@ use crate::auth::AuthConfig;
 use crate::state::AppState;
 use crate::views::{IndexView, index_page};
 
-pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn index_route(State(state): State<Arc<AppState>>) -> Response {
     // Hold read lock through render — rendering is pure CPU, no await
     let locked = state.scan.read();
     let Some(scan) = locked.as_ref() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new()));
+        return (StatusCode::SERVICE_UNAVAILABLE, Html(String::new())).into_response();
     };
     let view = IndexView {
         books: &scan.books,
@@ -27,5 +27,5 @@ pub async fn index_route(State(state): State<Arc<AppState>>) -> impl IntoRespons
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         auth_enabled: matches!(state.auth_config, AuthConfig::Some { .. }),
     };
-    (StatusCode::OK, Html(index_page(&view).into_string()))
+    (StatusCode::OK, index_page(&view)).into_response()
 }

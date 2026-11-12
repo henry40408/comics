@@ -684,6 +684,23 @@ mod tests {
         assert!(t.contains("Pepper and Carrot 02 - Rainbow Potions"));
     }
 
+    #[tokio::test]
+    async fn content_routes_answer_503_until_the_scan_finishes() {
+        let mut opts = Opts::parse_from(["comics", "--data-dir", "./fixtures/data"]);
+        opts.secret = Some(TEST_SECRET.parse().unwrap());
+        // No `spawn_initial_scan`: the scan never lands.
+        let (router, _state) = init_route(&opts);
+        let server =
+            TestServer::new(router.into_make_service_with_connect_info::<std::net::SocketAddr>());
+
+        assert_eq!(503, server.get("/").await.status_code());
+        let book_id = DATA_IDS.first().unwrap();
+        assert_eq!(
+            503,
+            server.get(&format!("/book/{book_id}")).await.status_code()
+        );
+    }
+
     // Not a customized built-in (`<time is="…">`): WebKit lacks them. Opt-in
     // per element, so the duration `<time>` is left alone.
     #[tokio::test]
