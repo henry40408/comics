@@ -81,7 +81,7 @@ Rejections carry a `ProtectionError` extension; nothing reads it yet.
 
 ### Content-Security-Policy
 
-`default-src 'none'`, no `'unsafe-inline'`. Inline `<script>` and `on*=` attributes are blocked — hence `/assets/theme.js` as a separate, synchronous (not deferred) `<head>` script. `rendered_pages_carry_no_inline_scripts` catches violations. `style-src`/`font-src` allow `fonts.bunny.net` only for the views' webfont `<link>`s.
+`default-src 'none'`, no `'unsafe-inline'`. Inline `<script>` and `on*=` attributes are blocked — hence `/assets/theme.js` as a separate, synchronous (not deferred) `<head>` script. `rendered_pages_carry_no_inline_scripts` catches violations. `style-src`/`font-src` allow `fonts.bunny.net` only for the views' webfont `<link>`s; `font-src` also allows `https://cdn.jsdelivr.net/fontsource/fonts/`, where Bunny's stylesheet points the font files (path-pinned: jsDelivr serves arbitrary npm/GitHub content).
 
 ### Reading without JavaScript
 

@@ -37,7 +37,10 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
 ///
 /// - `script-src 'self'` — no `'unsafe-inline'`, which would admit *injected*
 ///   scripts too; that is why the pre-paint theme snippet is `theme.js`.
-/// - `fonts.bunny.net` is the only third party (webfonts).
+/// - `fonts.bunny.net` (the stylesheet) and the `fontsource` path of
+///   `cdn.jsdelivr.net` (the font files Bunny's stylesheet points at) are the
+///   only third parties. The path is pinned so the rest of jsDelivr, which
+///   serves arbitrary npm and GitHub content, stays out.
 /// - `form-action`/`base-uri` stop an injection re-pointing the login form or
 ///   every relative URL.
 /// - `frame-ancestors 'none'` is the clickjacking control; `SameSite=Strict`
@@ -45,7 +48,7 @@ pub async fn no_store_html(req: Request, next: Next) -> Response {
 const CSP: &str = "default-src 'none'; \
                    script-src 'self'; \
                    style-src 'self' https://fonts.bunny.net; \
-                   font-src https://fonts.bunny.net; \
+                   font-src https://fonts.bunny.net https://cdn.jsdelivr.net/fontsource/fonts/; \
                    img-src 'self'; \
                    form-action 'self'; \
                    base-uri 'none'; \
