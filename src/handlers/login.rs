@@ -4,7 +4,6 @@ use std::{
 };
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
-use askama::Template;
 use axum::{
     Extension, Form,
     extract::{ConnectInfo, Query, Request, State},
@@ -16,22 +15,13 @@ use serde::Deserialize;
 use subtle::{Choice, ConstantTimeEq as _};
 use tracing::{error, info, warn};
 
-use crate::assets::assets_version;
+use crate::MAX_PASSWORD_BYTES;
 use crate::auth::{
     AuthConfig, AuthState, Scope, Throttle, authenticate, build_session_cookie,
     build_session_removal_cookie, rate_limit_key, session_id_of, user_agent,
 };
 use crate::state::AppState;
-use crate::{MAX_PASSWORD_BYTES, VERSION};
-
-#[derive(Template)]
-#[template(path = "login.html")]
-struct LoginTemplate {
-    version: &'static str,
-    assets_version: &'static str,
-    error: bool,
-    next: String,
-}
+use crate::views::{LoginView, login_page};
 
 fn default_next() -> String {
     "/".to_string()
@@ -116,35 +106,23 @@ fn safe_next(next: &str) -> String {
 }
 
 fn render_login(error: bool, next: &str) -> Response {
-    let template = LoginTemplate {
-        version: VERSION,
-        assets_version: assets_version(),
-        error,
-        next: safe_next(next),
+    let next = safe_next(next);
+    let html = login_page(&LoginView { error, next: &next }).into_string();
+    let status = if error {
+        StatusCode::UNAUTHORIZED
+    } else {
+        StatusCode::OK
     };
-    match template.render() {
-        Ok(html) => {
-            let status = if error {
-                StatusCode::UNAUTHORIZED
-            } else {
-                StatusCode::OK
-            };
-            let mut response = (status, Html(html)).into_response();
-            // Outside the auth layer, so `no_store_html` never sees it; it
-            // carries the error state and `next`.
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-            response
-                .headers_mut()
-                .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
-            response
-        }
-        Err(err) => {
-            error!(%err, "failed to render login");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let mut response = (status, Html(html)).into_response();
+    // Outside the auth layer, so `no_store_html` never sees it; it carries the
+    // error state and `next`.
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    response
 }
 
 /// Stamp `Cache-Control: no-store` (plus `Pragma` for HTTP/1.0) on a response.

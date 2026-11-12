@@ -7,6 +7,7 @@ pub mod models;
 pub mod secret;
 pub mod security_headers;
 pub mod state;
+mod views;
 
 pub use assets::{
     APP_CSS, APP_JS, APPLE_TOUCH_ICON_PNG, FAVICON_PNG, FAVICON_SVG, THEME_JS, assets_version,
