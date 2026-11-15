@@ -386,4 +386,38 @@ mod tests {
         assert!(!is_session_id(&format!("{}z", "0".repeat(31))));
         assert!(!is_session_id(&format!("{}.1700000000", "0".repeat(32))));
     }
+
+    /// The policy in the doc comments: three days idle, seven days absolute.
+    #[test]
+    fn the_default_lifetimes_are_three_and_seven_days() {
+        assert_eq!(3 * 24 * 60 * 60, DEFAULT_IDLE_TTL.as_secs());
+        assert_eq!(7 * 24 * 60 * 60, DEFAULT_ABSOLUTE_TTL.as_secs());
+    }
+
+    #[test]
+    fn expiry_reasons_have_stable_audit_names() {
+        assert_eq!("idle", Expiry::Idle.as_str());
+        assert_eq!("absolute", Expiry::Absolute.as_str());
+    }
+
+    #[test]
+    fn a_store_is_empty_only_until_a_session_is_created() {
+        let store = store();
+        assert!(store.is_empty());
+        store.create(UA);
+        assert!(!store.is_empty());
+    }
+
+    /// Idle time is measured on the store's own clock, so the session must
+    /// really expire once that clock passes the idle window.
+    #[test]
+    fn a_session_unused_for_longer_than_the_idle_window_expires() {
+        let store = SessionStore::new(Duration::from_secs(1), DEFAULT_ABSOLUTE_TTL);
+        let id = store.create(UA);
+        assert!(valid(&store, &id));
+
+        std::thread::sleep(Duration::from_millis(2100));
+
+        assert_eq!(Validation::Expired(Expiry::Idle), store.validate(&id, UA));
+    }
 }

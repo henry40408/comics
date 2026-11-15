@@ -515,4 +515,11 @@ mod tests {
         headers.insert(header::USER_AGENT, "curl/8.0".parse().unwrap());
         assert_eq!("curl/8.0", user_agent(&headers));
     }
+
+    #[test]
+    fn urlencode_keeps_unreserved_characters_and_escapes_the_rest() {
+        assert_eq!("Az09-_.~", urlencode("Az09-_.~"));
+        assert_eq!("%2Fa%20b%3Fx%3D1%26y%3D%C3%A9", urlencode("/a b?x=1&y=é"));
+        assert_eq!("", urlencode(""));
+    }
 }
