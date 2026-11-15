@@ -16,6 +16,7 @@ Run from the repository root.
 - Run: `cargo run` (serves `./data` on `127.0.0.1:8080`)
 - Tests: `cargo nextest run` (never `cargo test`); single test: `cargo nextest run <substring>`, `cargo nextest run -E 'test(initial_scan_finished)'`, or `cargo nextest run --test integration_test`
 - Coverage (as CI): `cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info`
+- Mutation tests (optional; CI runs the changed lines of a PR, non-blocking): `cargo mutants --in-diff changes.diff`, with `git diff main -- src > changes.diff`. A full run takes about 17 minutes. Config: `.cargo/mutants.toml`
 - Lint (CI-enforced): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`
 - Format before committing: `cargo fmt`
 

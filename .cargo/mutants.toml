@@ -1,0 +1,11 @@
+# Every exclusion needs a reason; revisit when the behaviour changes.
+test_tool = "nextest"
+
+exclude_re = [
+  # Logging set-up: nothing observable to assert.
+  'init_tracing',
+  # Warns once on stderr; a test would only pin the log line.
+  'warn_once_about_ignored_forwarding',
+  # `<` vs `<=` on the session clock is a one-second tie that cannot be tested stably.
+  'replace < with <= in SessionStore::drop_expired',
+]
