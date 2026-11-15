@@ -747,4 +747,9 @@ mod tests {
             assert_eq!(safe_next(target), target, "{target} was rejected");
         }
     }
+
+    #[test]
+    fn without_a_next_parameter_login_returns_to_the_front_page() {
+        assert_eq!("/", default_next());
+    }
 }

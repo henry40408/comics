@@ -696,4 +696,12 @@ mod tests {
             rate_limit_key(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)), &headers, &trusted)
         );
     }
+
+    #[test]
+    fn retry_after_counts_down_from_the_window_and_is_never_zero() {
+        let window = Window::empty();
+        assert_eq!(60, window.seconds_until_reset(60));
+        // A window already over still says one second, not zero.
+        assert_eq!(1, window.seconds_until_reset(0));
+    }
 }
