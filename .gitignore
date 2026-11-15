@@ -4,3 +4,6 @@
 # `cargo llvm-cov` drops these in the repository root as it runs.
 *.profraw
 lcov.info
+
+# `cargo mutants` output.
+/mutants.out*

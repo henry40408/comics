@@ -1,0 +1,55 @@
+name: Mutants
+
+# Do the tests notice a bug in the lines a pull request changed? Only the diff
+# is mutated, so the run stays short. It reports and does not gate.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/mutants.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutants:
+    name: mutants (changed lines)
+    runs-on: ubuntu-latest
+    # A missed mutant is a hint to read, not a failure: some are equivalent.
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The checked-out merge commit needs its first parent for the diff.
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.87
+      # HEAD is the merge of the pull request into its base; parent 1 is the base.
+      - name: Diff of the pull request
+        run: git diff HEAD^1 HEAD -- src > pr.diff
+      - name: Mutate the changed lines
+        run: cargo mutants --in-diff pr.diff --test-tool nextest --jobs 2
+      - name: Summarize missed mutants
+        if: always()
+        run: |
+          {
+            echo "### Missed mutants"
+            echo
+            if [ -s mutants.out/missed.txt ]; then
+              echo '```'
+              cat mutants.out/missed.txt
+              echo '```'
+            else
+              echo "None."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
