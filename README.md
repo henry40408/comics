@@ -6,7 +6,7 @@
 [![codecov](https://codecov.io/gh/henry40408/comics/graph/badge.svg?token=26VSHOGXLN)](https://codecov.io/gh/henry40408/comics)
 [![Release](https://img.shields.io/github/v/release/henry40408/comics)](https://github.com/henry40408/comics/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/comics)](LICENSE.txt)
-[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/comics/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
+[![Go version](https://img.shields.io/github/go-mod/go-version/henry40408/comics?logo=go)](https://go.dev/)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/comics)
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
 [![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
@@ -50,11 +50,11 @@ Then run the Docker image:
 docker run -p 8080:8080 -v "$PWD/data:/data" -e COMICS_DATA_DIR=/data ghcr.io/henry40408/comics
 ```
 
-or build from source (`cargo build --release`) and run `./comics` next to `data/`. Open http://localhost:8080/.
+or build from source (`go build -o comics ./cmd/comics`) and run `./comics` next to `data/`. Open http://localhost:8080/.
 
 ## Configuration
 
-Every option can also be passed as a flag; see `comics --help`.
+Every option except `COMICS_LOG_LEVEL` can also be passed as a flag; see `comics --help`.
 
 | Variable | Description | Default |
 | --- | --- | --- |
@@ -68,8 +68,8 @@ Every option can also be passed as a flag; see `comics --help`.
 | `COMICS_BIND` | Bind address (the Docker image sets `0.0.0.0:8080`) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Thumbnail cache directory | `comics-thumbs` under the system temp dir |
-| `COMICS_LOG_FORMAT` | `full`, `compact`, `pretty` or `json` | `full` |
-| `NO_COLOR` | Disable colored output ([no-color.org](https://no-color.org/)) | _(off)_ |
+| `COMICS_LOG_FORMAT` | `full` or `json` | `full` |
+| `COMICS_LOG_LEVEL` | `debug`, `info`, `warn` or `error` (environment only, no flag) | `info` |
 
 ### Notes
 
@@ -81,8 +81,8 @@ Every option can also be passed as a flag; see `comics --help`.
 - **`COMICS_HSTS_MAX_AGE`**: prefer setting HSTS on your TLS-terminating proxy. Once a browser has seen the header it refuses plain HTTP to this host for the whole `max-age`. `includeSubDomains` and `preload` are deliberately not offered.
 - **`COMICS_DISABLE_CSRF_GUARD`**: state-changing requests are checked with `Sec-Fetch-Site`, falling back to `Origin`. Browsers omit `Sec-Fetch-Site` on plain-HTTP non-localhost hosts (e.g. `http://nas.local`), and if they also send `Origin: null` the login form returns `403` with no way in. This flag is the escape hatch for that case; serving over HTTPS or through an SSH tunnel to `localhost` fixes it without giving anything up. `SameSite=Strict` still protects you with the flag on. Accepts `true`/`false` only.
 - **Security headers**: every response carries a strict `Content-Security-Policy` (`default-src 'none'`) and the usual hardening headers; they are not configurable. Make sure your reverse proxy does not add its own CSP — two policies are intersected, usually yielding a blank page.
-- **Audit logging**: logins, logouts, expiries, failures and throttling are logged at `INFO`/`WARN` with client IP and `User-Agent` (never the session ID, username or password). Worth alerting on: `session_rejected` with `reason=bad_signature` or `reason=malformed` (a cookie this server never issued), and `login_lockout` (the account-wide budget is spent). Per-client throttling logs `login_rate_limited` with a `scope` of `per_ip` or `shared`. To stop logging IPs and user agents, set `RUST_LOG=comics=warn`.
-- **Upgrading**: the server refuses to start while a retired variable is set (`COMICS_SEED`, `COMICS_SESSION_KEY`, or the old unprefixed `BIND`, `SEED`, `AUTH_USERNAME`, …) and names its replacement. Moving to `COMICS_SECRET` logs everyone out and changes every book/page URL once. A bcrypt `COMICS_AUTH_PASSWORD_HASH` is also refused at startup: re-run `comics hash-password` with the same password.
+- **Audit logging**: logins, logouts, expiries, failures and throttling are logged at `INFO`/`WARN` with client IP and `User-Agent` (never the session ID, username or password). Worth alerting on: `session_rejected` with `reason=bad_signature` or `reason=malformed` (a cookie this server never issued), and `login_lockout` (the account-wide budget is spent). Per-client throttling logs `login_rate_limited` with a `scope` of `per_ip` or `shared`. Setting `COMICS_LOG_LEVEL=warn` stops most of this logging, but `session_rejected` (`bad_signature`/`malformed`) still logs at `WARN` with the client IP and `User-Agent`.
+- **Upgrading**: the server refuses to start while a retired variable is set (`COMICS_SEED`, `COMICS_SESSION_KEY`, `RUST_LOG` (use `COMICS_LOG_LEVEL`), or the old unprefixed `BIND`, `SEED`, `AUTH_USERNAME`, …) and names its replacement. Moving to `COMICS_SECRET` logs everyone out and changes every book/page URL once. A bcrypt `COMICS_AUTH_PASSWORD_HASH` is also refused at startup: re-run `comics hash-password` with the same password.
 
 ## Commands
 

@@ -11,36 +11,29 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "cargo"
+  # Runs `go mod vendor` itself because `vendor/` exists.
+  - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      cargo:
+      gomod:
         patterns:
           - "*"
 
-  # `e2e/` is a separate workspace the entry above cannot reach. Grouped apart
-  # because a different CI job verifies it.
-  - package-ecosystem: "cargo"
+  # `e2e/` is its own Go module with its own vendor directory.
+  - package-ecosystem: "gomod"
     directory: "/e2e"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      cargo-e2e:
+      gomod-e2e:
         patterns:
           - "*"
-
-  - package-ecosystem: "rust-toolchain"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
 
   - package-ecosystem: "docker"
     directory: "/"

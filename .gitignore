@@ -1,9 +1,7 @@
-/target
 /data
+/bin/
 
-# `cargo llvm-cov` drops these in the repository root as it runs.
-*.profraw
-lcov.info
-
-# `cargo mutants` output.
-/mutants.out*
+# `go test -coverprofile` output.
+coverage.out
+coverage-bin.out
+/covdata/
