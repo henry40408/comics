@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -64,6 +65,7 @@ func TestE2E(t *testing.T) {
 // preflight opens and closes one browser, so a missing Chromium gives one
 // clear error rather than one per scenario.
 func preflight() error {
+	fmt.Fprintf(os.Stderr, "e2e: browser: %s\n", harness.BrowserChoice())
 	browser, err := harness.Open(harness.ScriptingEnabled)
 	if err != nil {
 		return err
@@ -77,7 +79,9 @@ func run(p pass) int {
 		Name:                p.name,
 		ScenarioInitializer: initializeScenario,
 		Options: &godog.Options{
-			Format:      "pretty",
+			Format: "pretty",
+			// ANSI codes make CI logs unreadable.
+			NoColors:    os.Getenv("CI") != "",
 			Output:      os.Stdout,
 			Paths:       featurePaths(),
 			Tags:        p.tags,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -74,19 +75,36 @@ func Open(scripting Scripting) (*Browser, error) {
 	return browser, nil
 }
 
+// ChromeEnv names the variable that pins the browser binary.
+const ChromeEnv = "E2E_CHROME"
+
+// BrowserChoice says which browser Open will start, for the run's log.
+func BrowserChoice() string {
+	if path := os.Getenv(ChromeEnv); path != "" {
+		return ChromeEnv + "=" + path
+	}
+	return "chromedp's default search (" + ChromeEnv + " is unset)"
+}
+
 func allocatorOptions() []chromedp.ExecAllocatorOption {
 	// The defaults already carry what the suite needs: headless,
 	// no /dev/shm use, and no throttling of a backgrounded renderer (which
 	// starves input while CDP script keeps answering, the shape of the clicks
 	// CI drops).
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	return append(options, chromedp.WindowSize(windowWidth, windowHeight))
+	options = append(options, chromedp.WindowSize(windowWidth, windowHeight))
+	// chromedp's own search prefers a chromium on PATH over google-chrome, so
+	// CI pins the binary it reports.
+	if path := os.Getenv(ChromeEnv); path != "" {
+		options = append(options, chromedp.ExecPath(path))
+	}
+	return options
 }
 
 func (b *Browser) start(scripting Scripting) error {
 	if err := chromedp.Do(b.ctx); err != nil {
-		return fmt.Errorf("could not start a browser: a local Chromium or Chrome is required "+
-			"(`brew install --cask ungoogled-chromium`, or google-chrome on CI): %w", err)
+		return fmt.Errorf("could not start a browser (%s): a local Chromium or Chrome is required "+
+			"(`brew install --cask ungoogled-chromium`), or set %s to its path: %w", BrowserChoice(), ChromeEnv, err)
 	}
 	if err := b.ResetViewport(); err != nil {
 		return err
@@ -109,7 +127,7 @@ func (b *Browser) Close() {
 //
 // It takes effect on the next document, so it runs before the first
 // navigation, which is why browsers are per scenario rather than shared.
-// Evaluating from CDP still works, as WebDriver's Execute Script did.
+// Evaluating from CDP still works while scripting is disabled.
 func (b *Browser) disableScripting() error {
 	return send(b, emulation.SetScriptExecutionDisabled, emulation.SetScriptExecutionDisabledParams{Value: true})
 }
@@ -167,14 +185,20 @@ func (b *Browser) Reload() error {
 
 // WaitForLoad waits for document.readyState to be "complete".
 //
-// WebDriver waited for page loads before every command; CDP does not, so
-// every action that follows a navigation (a click, a key press) waits first.
-// Without it, a key press can run before app.js has loaded.
+// CDP does not wait for a page load after a click, so every read or action
+// that follows a navigation waits first. Without it, a key press can run
+// before app.js has loaded, and a lookup can run against the old document.
 func (b *Browser) WaitForLoad() error {
 	return Eventually("the page to finish loading", func() (bool, error) {
 		state, err := Eval[string](b, "document.readyState")
 		return state == "complete", err
 	})
+}
+
+// DocumentID identifies the current document: it differs after any
+// navigation, even one back to the same URL.
+func (b *Browser) DocumentID() (float64, error) {
+	return Eval[float64](b, "performance.timeOrigin")
 }
 
 // URL is the page's current URL.

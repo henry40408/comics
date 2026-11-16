@@ -152,31 +152,44 @@ func (p LibraryPage) ScanTimes() ([]string, error) {
 	return texts, nil
 }
 
-// Rescan presses "Re-scan", and confirms the redirect back to the library.
+// Rescan presses "Re-scan", and confirms the redirect back to the library
+// loaded a new document. The library is already at "/" before the click, so
+// the path alone would pass with a dead button.
 func (p LibraryPage) Rescan() error {
-	return p.pressFormButton("the Re-scan button", "/rescan", func(path string) bool {
-		return path == "/"
+	b := p.browser
+	before, err := b.DocumentID()
+	if err != nil {
+		return err
+	}
+	err = p.pressFormButton("the Re-scan button", "/rescan", func() (bool, error) {
+		path, err := b.Path()
+		if err != nil || path != "/" {
+			return false, err
+		}
+		now, err := b.DocumentID()
+		return now != before, err
 	})
+	if err != nil {
+		return err
+	}
+	return b.WaitForLoad()
 }
 
 // Shuffle presses "Shuffle", and confirms it opened a book.
 func (p LibraryPage) Shuffle() error {
-	return p.pressFormButton("the Shuffle button", "/shuffle", func(path string) bool {
-		return strings.HasPrefix(path, "/book/")
+	return p.pressFormButton("the Shuffle button", "/shuffle", func() (bool, error) {
+		return pathStartsWith(p.browser, "/book/")
 	})
 }
 
-func (p LibraryPage) pressFormButton(what, action string, landed func(path string) bool) error {
+func (p LibraryPage) pressFormButton(what, action string, tookEffect func() (bool, error)) error {
 	b := p.browser
 	return clickUntil(b, clickSpec{
 		what: what,
 		locate: func() (*Element, error) {
 			return b.Query("form[action=" + jsLiteral(action) + "] button")
 		},
-		tookEffect: func() (bool, error) {
-			path, err := b.Path()
-			return landed(path), err
-		},
+		tookEffect: tookEffect,
 	})
 }
 

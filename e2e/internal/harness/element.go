@@ -9,7 +9,7 @@ import (
 
 // Element is a handle on a DOM node: the remote object id the browser gave
 // it. Once the document it belongs to is gone, every call on it fails; that
-// failure is the WebDriver "stale element".
+// failure means the node is stale.
 type Element struct {
 	browser *Browser
 	id      runtime.RemoteObjectID
@@ -138,8 +138,7 @@ func callOn[T any](e *Element, function string, args ...any) (T, error) {
 }
 
 // Displayed reports whether the browser renders the element. Comics hides
-// things with display:none, so this is enough where WebDriver needed its
-// isDisplayed atom.
+// things with display:none, so checkVisibility is enough.
 func (e *Element) Displayed() (bool, error) {
 	return callOn[bool](e, "function() { return this.checkVisibility({ opacityProperty: true, visibilityProperty: true }); }")
 }
@@ -190,7 +189,7 @@ type clickPoint struct {
 	Y       float64 `json:"y"`
 }
 
-// Click is a native click, as WebDriver's Element Click was: the element is
+// Click is a native click: the element is
 // scrolled into view, then a real mouse press and release go to the centre of
 // its box. Whatever covers that point receives them.
 func (e *Element) Click() error {

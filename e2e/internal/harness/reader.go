@@ -20,6 +20,9 @@ func (b *Browser) Reader() ReaderPage {
 // CurrentPage is the topbar's live page number: script-written, and hidden
 // without one. Nil when the page has none.
 func (p ReaderPage) CurrentPage() (*Element, error) {
+	if err := p.browser.WaitForLoad(); err != nil {
+		return nil, err
+	}
 	return p.browser.Optional(TestID("reader-current"))
 }
 
@@ -175,6 +178,9 @@ func (p ReaderPage) IsShowing() (bool, error) {
 
 // Mode is what the reader stores on <body data-mode="…">.
 func (p ReaderPage) Mode() (string, error) {
+	if err := p.browser.WaitForLoad(); err != nil {
+		return "", err
+	}
 	body, err := p.browser.Query("body")
 	if err != nil {
 		return "", err
@@ -330,6 +336,9 @@ func (p ReaderPage) CounterText() (string, error) {
 // ThemeToggle is the theme toggle, which only a script can operate. Nil when
 // absent.
 func (p ReaderPage) ThemeToggle() (*Element, error) {
+	if err := p.browser.WaitForLoad(); err != nil {
+		return nil, err
+	}
 	return p.browser.Optional("#theme")
 }
 
@@ -337,6 +346,9 @@ func (p ReaderPage) ThemeToggle() (*Element, error) {
 // place across a script-less mode switch and so is hidden without a script.
 // Nil when absent.
 func (p ReaderPage) SharedModeControl() (*Element, error) {
+	if err := p.browser.WaitForLoad(); err != nil {
+		return nil, err
+	}
 	return p.browser.Optional("#seg")
 }
 

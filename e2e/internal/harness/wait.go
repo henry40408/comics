@@ -17,12 +17,14 @@ const WaitInterval = 100 * time.Millisecond
 // poll calls probe until it reports done or the timeout passes. An error from
 // probe means "not yet", never a failure: during a navigation the page
 // evaluates nothing ("Execution context was destroyed"), and the next poll
-// succeeds. The last error is returned so a timeout still names its cause.
+// succeeds. A probe that reports done together with an error is not done: its
+// value is a zero value read from a page that was not there. The last error is
+// returned so a timeout still names its cause.
 func poll(timeout time.Duration, probe func() (bool, error)) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for {
 		done, err := probe()
-		if done {
+		if done && err == nil {
 			return true, nil
 		}
 		if time.Now().After(deadline) {

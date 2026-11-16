@@ -105,9 +105,13 @@ jobs:
       # timeout.
       - run: go build -mod=vendor -o bin/comics ./cmd/comics
       # The runner ships Chrome; chromedp starts it itself, so no driver is needed.
+      # Pinned, because chromedp's own search would pick the runner's Chromium
+      # snapshot ahead of google-chrome.
       - run: google-chrome --version
       - run: go test -count=1 -v -timeout 15m ./...
         working-directory: e2e
+        env:
+          E2E_CHROME: /usr/bin/google-chrome
 
   lint-workflow:
     name: lint-workflow

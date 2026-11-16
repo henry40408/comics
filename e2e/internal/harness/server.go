@@ -36,6 +36,8 @@ const startupTimeout = time.Minute
 // listening before the suite started: then it is left alone.
 type Server struct {
 	cmd *exec.Cmd
+	// exited receives the result of cmd.Wait once the child is gone.
+	exited chan error
 }
 
 // Start starts the server, or adopts one already listening on Port.
@@ -69,10 +71,10 @@ func Start() (*Server, error) {
 		return nil, fmt.Errorf("spawning the comics server at %s: %w", binary, err)
 	}
 
-	// Returned with the error, so a server that never answers is still stopped.
-	server := &Server{cmd: cmd}
-	if err := waitUntilListening(); err != nil {
-		server.Stop()
+	server := &Server{cmd: cmd, exited: make(chan error, 1)}
+	go func() { server.exited <- cmd.Wait() }()
+
+	if err := server.waitUntilListening(); err != nil {
 		return nil, err
 	}
 	return server, nil
@@ -84,7 +86,7 @@ func (s *Server) Stop() {
 		return
 	}
 	_ = s.cmd.Process.Kill()
-	_ = s.cmd.Wait()
+	<-s.exited
 	s.cmd = nil
 }
 
@@ -118,15 +120,24 @@ func isFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func waitUntilListening() error {
-	deadline := time.Now().Add(startupTimeout)
-	for time.Now().Before(deadline) {
-		if portIsOpen() {
-			return nil
+// waitUntilListening polls the port until the child answers. It gives up as
+// soon as the child exits, so a startup failure shows its exit status at once
+// rather than after the timeout.
+func (s *Server) waitUntilListening() error {
+	deadline := time.After(startupTimeout)
+	for {
+		select {
+		case err := <-s.exited:
+			return fmt.Errorf("comics server exited before listening on 127.0.0.1:%d: %v", Port, err)
+		case <-deadline:
+			s.Stop()
+			return fmt.Errorf("comics server did not start listening on 127.0.0.1:%d within %v", Port, startupTimeout)
+		case <-time.After(100 * time.Millisecond):
+			if portIsOpen() {
+				return nil
+			}
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("comics server did not start listening on 127.0.0.1:%d within %v", Port, startupTimeout)
 }
 
 func portIsOpen() bool {
@@ -138,7 +149,7 @@ func portIsOpen() bool {
 	return true
 }
 
-// repoRoot is the repository root, two levels above e2e/internal/harness.
+// repoRoot is the repository root, three levels above e2e/internal/harness.
 // It comes from this file's compile-time path, so the suite works from any
 // working directory.
 func repoRoot() string {

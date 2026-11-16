@@ -3,3 +3,5 @@
 
 # `go test -coverprofile` output.
 coverage.out
+coverage-bin.out
+/covdata/
