@@ -59,6 +59,152 @@ func (p LibraryPage) Logout() error {
 	})
 }
 
+// CardSummary is what a library card shows.
+type CardSummary struct {
+	Title    string
+	Pages    string
+	Index    string
+	CoverAlt string
+}
+
+// CardSummaries reads title, page count, index and cover alt text of every
+// card.
+func (p LibraryPage) CardSummaries() ([]CardSummary, error) {
+	cards, err := p.Cards()
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]CardSummary, 0, len(cards))
+	for _, card := range cards {
+		summary, err := summarise(card)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+func summarise(card *Element) (CardSummary, error) {
+	title, err := textOf(card, TestID("book-title"))
+	if err != nil {
+		return CardSummary{}, err
+	}
+	pages, err := textOf(card, ".p")
+	if err != nil {
+		return CardSummary{}, err
+	}
+	index, err := textOf(card, ".idx")
+	if err != nil {
+		return CardSummary{}, err
+	}
+	cover, err := card.Find("img")
+	if err != nil {
+		return CardSummary{}, err
+	}
+	alt, _, err := cover.Attr("alt")
+	if err != nil {
+		return CardSummary{}, err
+	}
+	return CardSummary{Title: title, Pages: pages, Index: index, CoverAlt: alt}, nil
+}
+
+func textOf(scope *Element, selector string) (string, error) {
+	found, err := scope.Find(selector)
+	if err != nil {
+		return "", err
+	}
+	return found.Text()
+}
+
+// VolumeCounts is the header's volume count and the note beside the buttons.
+func (p LibraryPage) VolumeCounts() (header, note string, err error) {
+	header, err = pageText(p.browser, ".stat b")
+	if err != nil {
+		return "", "", err
+	}
+	note, err = pageText(p.browser, ".note")
+	return header, note, err
+}
+
+func pageText(b *Browser, selector string) (string, error) {
+	found, err := b.Query(selector)
+	if err != nil {
+		return "", err
+	}
+	return found.Text()
+}
+
+// ScanTimes is the text of the <time> elements in the header.
+func (p LibraryPage) ScanTimes() ([]string, error) {
+	times, err := p.browser.QueryAll(".stat time")
+	if err != nil {
+		return nil, err
+	}
+	texts := make([]string, 0, len(times))
+	for _, element := range times {
+		text, err := element.Text()
+		if err != nil {
+			return nil, err
+		}
+		texts = append(texts, text)
+	}
+	return texts, nil
+}
+
+// Rescan presses "Re-scan", and confirms the redirect back to the library.
+func (p LibraryPage) Rescan() error {
+	return p.pressFormButton("the Re-scan button", "/rescan", func(path string) bool {
+		return path == "/"
+	})
+}
+
+// Shuffle presses "Shuffle", and confirms it opened a book.
+func (p LibraryPage) Shuffle() error {
+	return p.pressFormButton("the Shuffle button", "/shuffle", func(path string) bool {
+		return strings.HasPrefix(path, "/book/")
+	})
+}
+
+func (p LibraryPage) pressFormButton(what, action string, landed func(path string) bool) error {
+	b := p.browser
+	return clickUntil(b, clickSpec{
+		what: what,
+		locate: func() (*Element, error) {
+			return b.Query("form[action=" + jsLiteral(action) + "] button")
+		},
+		tookEffect: func() (bool, error) {
+			path, err := b.Path()
+			return landed(path), err
+		},
+	})
+}
+
+// ClickThemeToggle clicks the theme toggle, and confirms the theme differs
+// from before.
+func (b *Browser) ClickThemeToggle(before string) error {
+	return clickUntil(b, clickSpec{
+		what:   "the theme toggle",
+		locate: func() (*Element, error) { return b.Query("#theme") },
+		tookEffect: func() (bool, error) {
+			theme, err := b.Theme()
+			return theme != before, err
+		},
+	})
+}
+
+// Title is the document title.
+func (b *Browser) Title() (string, error) {
+	return Eval[string](b, "document.title")
+}
+
+// OnReaderBody reports whether the page is the reader's own
+// <body class="reader">.
+func (b *Browser) OnReaderBody() (bool, error) {
+	found, err := b.Optional("body.reader")
+	return found != nil, err
+}
+
 func pathStartsWith(b *Browser, prefix string) (bool, error) {
 	path, err := b.Path()
 	return strings.HasPrefix(path, prefix), err
