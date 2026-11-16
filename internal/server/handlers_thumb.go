@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -43,7 +42,7 @@ func (a *App) handleThumb(w http.ResponseWriter, r *http.Request) {
 	// The response is written only after the permit is released, so a slow
 	// client cannot starve other thumbnails.
 	jpeg, original, err := a.generateBounded(r.Context(), page.Path, limit)
-	if errors.Is(err, context.Canceled) {
+	if r.Context().Err() != nil {
 		return
 	}
 	if err != nil {
@@ -66,7 +65,7 @@ func (a *App) generateBounded(ctx context.Context, path string, limit int) (jpeg
 	case a.thumbSem <- struct{}{}:
 		defer func() { <-a.thumbSem }()
 	case <-ctx.Done():
-		return nil, nil, context.Canceled
+		return nil, nil, ctx.Err()
 	}
 	jpeg, err = generateThumb(path, limit)
 	if err == nil {

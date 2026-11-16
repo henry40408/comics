@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -194,8 +197,15 @@ func TestThumbnailServesJPEG(t *testing.T) {
 	// file, so seeing it proves the response came from disk.
 	cachePath := filepath.Join(ta.app.cfg.CacheDir, "md", id+".jpg")
 	const marker = "served-from-cache"
+	generated, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("no cache file after generation: %v", err)
+	}
+	if !strings.HasPrefix(string(generated), jpegMagic) {
+		t.Fatal("cache file is not a JPEG")
+	}
 	if err := os.WriteFile(cachePath, []byte(marker), 0o644); err != nil {
-		t.Fatalf("no cache file to overwrite: %v", err)
+		t.Fatalf("cannot overwrite cache file: %v", err)
 	}
 	cached := ta.get("/thumb/md/" + id)
 	assertStatus(t, 200, cached, "cached")
@@ -205,6 +215,41 @@ func TestThumbnailServesJPEG(t *testing.T) {
 
 	assertStatus(t, 404, ta.get("/thumb/xl/"+id), "unknown size")
 	assertStatus(t, 404, ta.get("/thumb/md/deadbeef"), "unknown id")
+}
+
+func TestThumbnailPermitIsHeldOnlyWhileGenerating(t *testing.T) {
+	ta := newTestApp(t)
+	app := ta.app
+	id := ta.coverID()
+	for len(app.thumbSem) < cap(app.thumbSem) {
+		app.thumbSem <- struct{}{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/thumb/md/"+id, nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.Handler().ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler blocked on a full semaphore despite a cancelled request")
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("cancelled request wrote %d bytes", rec.Body.Len())
+	}
+
+	for len(app.thumbSem) > 0 {
+		<-app.thumbSem
+	}
+	assertStatus(t, 200, ta.get("/thumb/md/"+id), "after draining")
+	if got := len(app.thumbSem); got != 0 {
+		t.Errorf("%d permits still held after the request", got)
+	}
 }
 
 func TestUnknownThumbnailSizeIsNotFoundBeforeTheScan(t *testing.T) {
