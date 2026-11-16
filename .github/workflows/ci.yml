@@ -26,6 +26,15 @@ jobs:
           go mod vendor
           test -z "$(git status --porcelain -- vendor go.mod go.sum)"
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # `e2e/` is a separate Go module with its own vendor directory.
+      - run: go mod tidy -diff
+        working-directory: e2e
+      - run: |
+          go mod vendor
+          test -z "$(git status --porcelain -- vendor go.mod go.sum)"
+        working-directory: e2e
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        working-directory: e2e
 
   lint:
     name: lint
@@ -36,19 +45,21 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          unformatted="$(git ls-files -z '*.go' | grep -zv '^vendor/' | xargs -0 gofmt -l 2>&1)"
+          unformatted="$(git ls-files -z '*.go' | grep -zvE '(^|/)vendor/' | xargs -0 gofmt -l 2>&1)"
           echo "$unformatted"
           test -z "$unformatted"
       - run: go vet -mod=vendor ./...
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
-      # `e2e` is the only Rust left, so it is the only crate linted.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: e2e
-      - run: cargo fmt --check
+      - run: go vet -mod=vendor ./...
         working-directory: e2e
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
         working-directory: e2e
+      # CI and the Dockerfile read the Go version from the root go.mod only, so
+      # the nested module must not drift from it.
+      - run: |
+          root="$(grep -E '^(go|toolchain) ' go.mod)"
+          nested="$(grep -E '^(go|toolchain) ' e2e/go.mod)"
+          test "$root" = "$nested" || { echo "e2e/go.mod differs from go.mod:"; echo "$root"; echo "--"; echo "$nested"; exit 1; }
 
   test:
     name: test
@@ -82,6 +93,7 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,15 +101,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          # `e2e` is a separate workspace, so it must be named to be cached.
-          workspaces: e2e
       # Prebuild the server the suite launches, keeping the compile off its
       # timeout.
       - run: go build -mod=vendor -o bin/comics ./cmd/comics
-      # The runner ships Chrome; chromedriver is downloaded on demand.
-      - run: cargo test --test e2e
+      # The runner ships Chrome; chromedp starts it itself, so no driver is needed.
+      - run: google-chrome --version
+      - run: go test -count=1 -v -timeout 15m ./...
         working-directory: e2e
 
   lint-workflow:

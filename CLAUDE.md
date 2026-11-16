@@ -29,15 +29,17 @@ Subcommands:
 
 ### E2E (`e2e/`)
 
-The only Rust left in the repository; it drives the Go binary through a browser.
+Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go binary in a real browser via chromedp (Chrome DevTools Protocol; there is no driver to download).
 
-- A **separate workspace** with its own `rust-toolchain.toml` (rustup finds it when run from `e2e/`). Run from `e2e/`: `cargo test --test e2e`; regenerate `docs/screenshots/` with `cargo run --bin screenshots`. `go test ./...` at the root does not run it.
+- A **separate Go module** with its own `go.mod` and committed `vendor/`; `go test ./...` at the root does not run it. `e2e/go.mod` mirrors the root `go`/`toolchain` lines (CI checks it). Update its dependencies the same way as the root ones, inside `e2e/` (`go get`, `go mod tidy`, `go mod vendor`).
+- Run from `e2e/`: `go test -count=1 -v ./...` (`-count=1` because the test cache cannot see a rebuilt `bin/comics`). One or more features: `E2E_FEATURES=features/reader.feature` (comma-separated). Regenerate `docs/screenshots/` with `go run ./cmd/screenshots`.
+- godog runs two passes: `shared` (everything except `@logout`/`@rescan`, up to `ConcurrencyCeiling` (4) scenarios in parallel, one Chrome each) and `exclusive` (`@logout`, `@rescan`, one at a time, since they disturb every other live session). Undefined or pending steps fail.
 - Regenerate the screenshots in the same change for visual edits (CSS, template layout, front-end JS); copy-only or logic-only edits do not need it.
-- Run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` inside `e2e/` before committing. CI does (the `lint` job).
-- Needs a local Chrome/Chromium; `WebDriver::managed` fetches chromedriver but not the browser.
+- Run `gofmt -l`, `go vet ./...` and staticcheck inside `e2e/` before committing (the CI `lint` job does; the `deps` job runs the tidy/vendor/govulncheck checks there too).
+- Needs a local Chromium or Chrome (chromedp starts it headless; CI uses the runner's `google-chrome`). On macOS `/Applications/Chromium.app` is found (`brew install --cask ungoogled-chromium`). A missing browser fails with one clear error, not one per scenario.
 - Starts the server binary `bin/comics` itself (running `go build -mod=vendor -o bin/comics ./cmd/comics` if it is missing), or adopts one already listening on `127.0.0.1:3030`. An existing binary is not rebuilt, so rebuild it after changing server code before E2E.
-- Up to `CONCURRENCY_CEILING` (4) scenarios in parallel. `Browser::prepare` opens one throwaway session first so concurrent sessions do not race the cold driver download (that wedges the run).
-- Every click goes through `click_until` (`pages.rs`). On CI, Chrome sometimes accepts a click but delivers no mouse event, for the rest of the session. When a click does not take, `click_until` probes the page (`elementFromPoint`, a capture-phase event recorder, a `requestAnimationFrame` count); if the point hit the element (`hitIsTarget`) and no event arrived, it dispatches a scripted `HTMLElement.click()` and logs a `WARNING`. A covered control or a broken handler still fails. `@nojs` scenarios cannot run the recorder, so they rely on `hitIsTarget` alone.
+- Every click goes through `clickUntil` (`e2e/internal/harness/click.go`). On CI, Chrome sometimes accepts a click but delivers no mouse event, for the rest of the session. When a click does not take, `clickUntil` probes the page (`elementFromPoint`, a capture-phase event recorder, a `requestAnimationFrame` count); if the point hit the element (`hitIsTarget`) and no event arrived, it dispatches a scripted `HTMLElement.click()` and logs a `WARNING`. A covered control or a broken handler still fails. `@nojs` scenarios cannot run the recorder, so they rely on `hitIsTarget` alone.
+- `@nojs` scenarios open a browser with scripting disabled (`Emulation.setScriptExecutionDisabled`, which applies to the next document). Scrolling is instant, not smooth, so positions are stable when read.
 
 ### Integration tests
 
@@ -135,7 +137,7 @@ The version is never stored in a manifest: `internal/version.Version()` returns 
 
 ## Conventions
 
-- `go.mod` is the only source of the Go version (`go` and `toolchain` lines): CI and the Dockerfile install nothing version-specific (the Docker image's Go is used when it is at least the `toolchain` line; `GOTOOLCHAIN=auto` only moves up). `e2e/rust-toolchain.toml` pins Rust for `e2e/` only.
+- `go.mod` is the only source of the Go version (`go` and `toolchain` lines): CI and the Dockerfile install nothing version-specific (the Docker image's Go is used when it is at least the `toolchain` line; `GOTOOLCHAIN=auto` only moves up). `e2e/go.mod` mirrors those two lines (CI checks it).
 - Fixtures: `fixtures/data/`. Their book IDs derive from `testSecret` in `internal/server/harness_test.go` and are hard-coded as `dataIDs`; changing the secret or derivation means recomputing them (run the binary with that secret on `fixtures/data`, read `/book/…` hrefs from the index).
 - User-facing template/login strings are Traditional Chinese (e.g. `帳號或密碼錯誤`).
 - Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `full` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, default `info`) is env-only, with no flag. `RUST_LOG` is a retired variable and fails startup.

@@ -6,7 +6,7 @@ data
 .git
 .github
 
-# Browser tests: a separate Rust workspace that never ships in the image.
+# Browser tests: a separate Go module that never ships in the image.
 e2e
 
 # Local build output.

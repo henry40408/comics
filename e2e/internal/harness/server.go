@@ -139,8 +139,8 @@ func portIsOpen() bool {
 }
 
 // repoRoot is the repository root, two levels above e2e/internal/harness.
-// It comes from this file's compile-time path, the Go version of
-// CARGO_MANIFEST_DIR, so the suite works from any working directory.
+// It comes from this file's compile-time path, so the suite works from any
+// working directory.
 func repoRoot() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(file), "..", "..", "..")

@@ -23,24 +23,17 @@ updates:
         patterns:
           - "*"
 
-  # `e2e/` is the only Rust left; its own workspace and CI job.
-  - package-ecosystem: "cargo"
+  # `e2e/` is its own Go module with its own vendor directory.
+  - package-ecosystem: "gomod"
     directory: "/e2e"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      cargo-e2e:
+      gomod-e2e:
         patterns:
           - "*"
-
-  - package-ecosystem: "rust-toolchain"
-    directory: "/e2e"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
 
   - package-ecosystem: "docker"
     directory: "/"

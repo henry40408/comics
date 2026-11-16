@@ -75,7 +75,7 @@ func Open(scripting Scripting) (*Browser, error) {
 }
 
 func allocatorOptions() []chromedp.ExecAllocatorOption {
-	// The defaults already carry what the Rust harness passed by hand: headless,
+	// The defaults already carry what the suite needs: headless,
 	// no /dev/shm use, and no throttling of a backgrounded renderer (which
 	// starves input while CDP script keeps answering, the shape of the clicks
 	// CI drops).
