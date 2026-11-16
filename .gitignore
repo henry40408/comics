@@ -1,5 +1,6 @@
 /target
 /data
+/bin/
 
 # `cargo llvm-cov` drops these in the repository root as it runs.
 *.profraw
