@@ -1,4 +1,4 @@
-# github.com/chromedp/cdproto v0.159.0
+# github.com/chromedp/cdproto v0.159.2
 ## explicit; go 1.25
 github.com/chromedp/cdproto
 github.com/chromedp/cdproto/accessibility
@@ -81,7 +81,7 @@ github.com/cucumber/godog/internal/parser
 github.com/cucumber/godog/internal/storage
 github.com/cucumber/godog/internal/tags
 github.com/cucumber/godog/internal/utils
-# github.com/cucumber/messages/go/v34 v34.2.0
+# github.com/cucumber/messages/go/v34 v34.2.1
 ## explicit; go 1.19
 github.com/cucumber/messages/go/v34
 # github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875
