@@ -37,3 +37,24 @@ func (p LoginPage) typeInto(selector, text string) error {
 	}
 	return field.Type(text)
 }
+
+// Error is the "wrong credentials" banner, nil when the page shows none.
+func (p LoginPage) Error() (*Element, error) {
+	return p.browser.Optional(TestID("login-error"))
+}
+
+// NextTarget is where the form sends you after signing in: the hidden next
+// field.
+func (p LoginPage) NextTarget() (string, error) {
+	field, err := p.browser.Query("input[name=next]")
+	if err != nil {
+		return "", err
+	}
+	return field.Value()
+}
+
+// FocusedTestID is the data-testid of the focused element, empty when nothing
+// is focused.
+func (p LoginPage) FocusedTestID() (string, error) {
+	return Eval[string](p.browser, "document.activeElement?.getAttribute('data-testid') ?? ''")
+}
