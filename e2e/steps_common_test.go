@@ -25,6 +25,7 @@ func registerSteps(sc *godog.ScenarioContext, w *world) {
 	registerCommonSteps(sc, w)
 	registerLoginSteps(sc, w)
 	registerLibrarySteps(sc, w)
+	registerReaderSteps(sc, w)
 }
 
 func registerCommonSteps(sc *godog.ScenarioContext, w *world) {

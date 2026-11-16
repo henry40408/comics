@@ -212,7 +212,9 @@ func (e *Element) scrollToCentre() (clickPoint, error) {
 		if (!this.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
 			return { visible: false, x: 0, y: 0 };
 		}
-		this.scrollIntoView({ block: 'end', inline: 'nearest' });
+		// Instant: the thumbnail rail has scroll-behavior: smooth, and an
+		// animated scroll is still moving when the box is measured.
+		this.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' });
 		const r = this.getBoundingClientRect();
 		return { visible: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
 	}`)

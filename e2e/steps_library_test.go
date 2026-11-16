@@ -69,7 +69,7 @@ func (w *world) shouldBeInTheReader() error {
 	if err != nil {
 		return err
 	}
-	return harness.Eventually("the reader body is showing", b.OnReaderBody)
+	return harness.Eventually("the reader body is showing", b.Reader().IsShowing)
 }
 
 func (w *world) libraryLists(title, pages string) error {

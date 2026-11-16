@@ -198,13 +198,6 @@ func (b *Browser) Title() (string, error) {
 	return Eval[string](b, "document.title")
 }
 
-// OnReaderBody reports whether the page is the reader's own
-// <body class="reader">.
-func (b *Browser) OnReaderBody() (bool, error) {
-	found, err := b.Optional("body.reader")
-	return found != nil, err
-}
-
 func pathStartsWith(b *Browser, prefix string) (bool, error) {
 	path, err := b.Path()
 	return strings.HasPrefix(path, prefix), err
