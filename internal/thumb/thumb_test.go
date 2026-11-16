@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -134,6 +135,44 @@ func TestGenerateRefusesAHeaderDeclaringHugeDimensions(t *testing.T) {
 	}
 	if _, err := Generate(path, 120); err == nil {
 		t.Fatal("a 30000x30000 image was decoded")
+	}
+}
+
+func TestContentTypeOfADotfileNamedAfterAnExtension(t *testing.T) {
+	// A leading dot is still the extension separator.
+	if got := ContentTypeFromPath(".png"); got != "image/png" {
+		t.Errorf("ContentTypeFromPath(%q) = %q, want image/png", ".png", got)
+	}
+}
+
+func TestDecodeLimitIsInclusiveAtExactlyMaxDecodeBytes(t *testing.T) {
+	const atLimitWidth = 16384 // 16384 x 8192 x 4 bytes == maxDecodeBytes
+	for name, c := range map[string]struct {
+		width, height uint32
+		wantRefused   bool
+	}{
+		"exactly at the limit": {atLimitWidth, 8192, false},
+		"one row over":         {atLimitWidth, 8193, true},
+		"far over":             {30000, 30000, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := binary.BigEndian.AppendUint32(nil, c.width)
+			header = binary.BigEndian.AppendUint32(header, c.height)
+			header = append(header, 8, 6, 0, 0, 0) // 8-bit RGBA
+			data := append([]byte("\x89PNG\r\n\x1a\n"), pngChunk("IHDR", header)...)
+			path := filepath.Join(t.TempDir(), "header-only.png")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := decode(path)
+			if err == nil {
+				t.Fatal("a header-only PNG decoded")
+			}
+			refused := strings.Contains(err.Error(), "decode limit")
+			if refused != c.wantRefused {
+				t.Fatalf("refused by the size limit = %v, want %v (error: %v)", refused, c.wantRefused, err)
+			}
+		})
 	}
 }
 
