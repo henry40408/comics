@@ -11,19 +11,19 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "cargo"
+  # Runs `go mod vendor` itself because `vendor/` exists.
+  - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      cargo:
+      gomod:
         patterns:
           - "*"
 
-  # `e2e/` is a separate workspace the entry above cannot reach. Grouped apart
-  # because a different CI job verifies it.
+  # `e2e/` is the only Rust left; its own workspace and CI job.
   - package-ecosystem: "cargo"
     directory: "/e2e"
     schedule:
@@ -36,7 +36,7 @@ updates:
           - "*"
 
   - package-ecosystem: "rust-toolchain"
-    directory: "/"
+    directory: "/e2e"
     schedule:
       interval: "weekly"
     cooldown:

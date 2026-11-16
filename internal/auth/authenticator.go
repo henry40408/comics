@@ -238,8 +238,8 @@ func isLocalPath(next string) bool {
 }
 
 // isValidHeaderValue allows no control byte and no DEL; bytes of 0x80 and above
-// are allowed. Stricter than http::HeaderValue::from_str, which allows tab:
-// URL parsing strips tabs, so a Location of "/\t/evil.example" would become
+// are allowed. A tab is rejected too, although
+// header values may contain one: URL parsing strips tabs, so a Location of "/\t/evil.example" would become
 // "//evil.example", an open redirect.
 func isValidHeaderValue(value string) bool {
 	for i := range len(value) {

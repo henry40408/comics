@@ -80,26 +80,26 @@ impl Drop for Server {
 
 /// Path to the server binary, building it first when it is not there.
 ///
-/// The **dev** profile, deliberately: the release profile's LTO buys nothing
-/// for eight fixture pages, dependencies still build at `opt-level = 3`, and
-/// the artefacts are shared with `cargo nextest run`. CI builds it beforehand.
+/// A plain `go build`, deliberately: it is incremental and fast enough that
+/// the suite needs no profile choice. CI builds it beforehand. An existing
+/// binary is never rebuilt, so rebuild by hand after changing server code.
 fn ensure_binary() -> Result<PathBuf> {
-    let binary = repo_root().join("target/debug/comics");
+    let binary = repo_root().join("bin/comics");
     if binary.is_file() {
         return Ok(binary);
     }
 
     eprintln!("e2e: {} is missing — building it", binary.display());
-    let status = Command::new("cargo")
+    let status = Command::new("go")
         .current_dir(repo_root())
-        .arg("build")
+        .args(["build", "-mod=vendor", "-o", "bin/comics", "./cmd/comics"])
         .status()
-        .context("running `cargo build`")?;
+        .context("running `go build`")?;
     if !status.success() {
-        bail!("`cargo build` failed with {status}");
+        bail!("`go build` failed with {status}");
     }
     if !binary.is_file() {
-        bail!("`cargo build` did not produce {}", binary.display());
+        bail!("`go build` did not produce {}", binary.display());
     }
     Ok(binary)
 }

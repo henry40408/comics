@@ -11,33 +11,40 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  deny:
-    name: deny
+  # Replaces `cargo deny`: every module is BSD or MIT licensed, so there is no
+  # licence allow-list to enforce.
+  deps:
+    name: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          tool: cargo-deny@0.18.9
-      - run: cargo deny check
+          go-version-file: go.mod
+      - run: go mod tidy -diff
+      - run: |
+          go mod vendor
+          test -z "$(git status --porcelain -- vendor go.mod go.sum)"
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-  # Not a gate for coverage/e2e: a gate cannot share its build cache with
-  # downstream jobs, so it would only serialize a second compile.
   lint:
     name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: |
+          unformatted="$(git ls-files -z '*.go' | grep -zv '^vendor/' | xargs -0 gofmt -l 2>&1)"
+          echo "$unformatted"
+          test -z "$unformatted"
+      - run: go vet -mod=vendor ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      # `e2e` is the only Rust left, so it is the only crate linted.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # `e2e` is a separate workspace, so it must be named to be cached.
-          workspaces: |
-            .
-            e2e
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      # Not under `cargo deny`: the browser stack's licences are outside the
-      # allow-list, and none of it ships in the image.
+          workspaces: e2e
       - run: cargo fmt --check
         working-directory: e2e
       - run: cargo clippy --all-targets -- -D warnings
@@ -48,25 +55,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          tool: cargo-nextest@0.9.87
-      - run: cargo nextest run
+          go-version-file: go.mod
+      - run: go test -mod=vendor -race ./...
 
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          tool: cargo-llvm-cov@0.6.14,cargo-nextest@0.9.87
-      - run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
+          go-version-file: go.mod
+      # `-coverprofile` ignores the binary cmd/comics's TestMain execs; with
+      # COMICS_COVERDIR set it builds that binary with `-cover`.
+      - run: |
+          COMICS_COVERDIR="$PWD/covdata" go test -mod=vendor -coverprofile=coverage.out ./...
+          go tool covdata textfmt -i=covdata -o coverage-bin.out
+          tail -n +2 coverage-bin.out >> coverage.out
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
 
   e2e:
     name: e2e
@@ -74,19 +85,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # full history so build.rs `git describe` resolves a tagged version
+          fetch-depth: 0 # full history so the VCS-stamped version resolves
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # `e2e` is a separate workspace, so it must be named to be cached.
-          workspaces: |
-            .
-            e2e
-          # Own key: the only dev-profile build here, and an exact cache hit is
-          # never re-saved, so a shared key could stay pinned to another profile.
-          key: dev
+          workspaces: e2e
       # Prebuild the server the suite launches, keeping the compile off its
-      # timeout. Dev profile: release is tuned for size, not test speed.
-      - run: cargo build
+      # timeout.
+      - run: go build -mod=vendor -o bin/comics ./cmd/comics
       # The runner ships Chrome; chromedriver is downloaded on demand.
       - run: cargo test --test e2e
         working-directory: e2e

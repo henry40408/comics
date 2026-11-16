@@ -24,6 +24,10 @@ const fixturesDir = "../../fixtures/data"
 
 var comicsBinary string
 
+// coverDir is where a `-cover` binary writes its profile; empty means the
+// binary is built plain. `go test -coverprofile` does not see the exec'd binary.
+var coverDir = os.Getenv("COMICS_COVERDIR")
+
 func TestMain(m *testing.M) {
 	os.Exit(buildAndRun(m))
 }
@@ -37,7 +41,15 @@ func buildAndRun(m *testing.M) int {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	comicsBinary = filepath.Join(dir, "comics")
-	build := exec.Command("go", "build", "-mod=vendor", "-o", comicsBinary, ".")
+	buildArgs := []string{"build", "-mod=vendor"}
+	if coverDir != "" {
+		if err := os.MkdirAll(coverDir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		buildArgs = append(buildArgs, "-cover", "-coverpkg=github.com/henry40408/comics/...")
+	}
+	build := exec.Command("go", append(buildArgs, "-o", comicsBinary, ".")...)
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s", err, out)
 		return 1
@@ -53,6 +65,9 @@ func cleanEnv() []string {
 func command(ctx context.Context, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, comicsBinary, args...)
 	cmd.Env = env
+	if coverDir != "" {
+		cmd.Env = append(append([]string(nil), env...), "GOCOVERDIR="+coverDir)
+	}
 	return cmd
 }
 
