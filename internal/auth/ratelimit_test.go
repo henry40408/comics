@@ -56,7 +56,9 @@ func TestAllowsUpToMaxAttempts(t *testing.T) {
 func TestWindowExpiryResetsTheCounter(t *testing.T) {
 	// A zero-second window is elapsed the moment it is recorded.
 	limiter := newLimiter(1, 0)
-	if !allowed(limiter, testIP(2)) || !allowed(limiter, testIP(2)) {
+	firstAllowed := allowed(limiter, testIP(2))
+	secondAllowed := allowed(limiter, testIP(2))
+	if !firstAllowed || !secondAllowed {
 		t.Fatal("an expired window did not reset")
 	}
 }
@@ -139,7 +141,9 @@ func TestOverflowDoesNotSpendATrackedSourceBudget(t *testing.T) {
 	countAllowed(limiter, ipRange(10, 40))
 
 	// Two of the tracked source's three attempts are still there.
-	if !allowed(limiter, tracked) || !allowed(limiter, tracked) {
+	firstTracked := allowed(limiter, tracked)
+	secondTracked := allowed(limiter, tracked)
+	if !firstTracked || !secondTracked {
 		t.Fatal("the tracked source lost budget to the overflow spray")
 	}
 	if allowed(limiter, tracked) {

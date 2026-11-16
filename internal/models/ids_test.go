@@ -6,7 +6,8 @@ import (
 )
 
 func TestHashStringDeterministic(t *testing.T) {
-	if HashString(42, "test") != HashString(42, "test") {
+	first, second := HashString(42, "test"), HashString(42, "test")
+	if first != second {
 		t.Fatal("same input hashed differently")
 	}
 }

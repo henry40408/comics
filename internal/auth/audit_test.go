@@ -9,7 +9,8 @@ const auditNonce = "0123456789abcdef0123456789abcdef"
 
 func TestFingerprintIsStableForTheSameNonce(t *testing.T) {
 	salt := NewAuditSalt()
-	if salt.Fingerprint(auditNonce) != salt.Fingerprint(auditNonce) {
+	first, second := salt.Fingerprint(auditNonce), salt.Fingerprint(auditNonce)
+	if first != second {
 		t.Fatal("fingerprint changed between calls")
 	}
 	if got := len(salt.Fingerprint(auditNonce)); got != fingerprintBytes*2 {

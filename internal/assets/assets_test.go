@@ -6,7 +6,8 @@ import (
 )
 
 func TestVersionIsStableAndHex(t *testing.T) {
-	if Version() != Version() {
+	first, second := Version(), Version()
+	if first != second {
 		t.Fatal("version changed between calls")
 	}
 	if Version() == "" || strings.Trim(Version(), "0123456789abcdef") != "" {

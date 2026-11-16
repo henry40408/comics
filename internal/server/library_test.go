@@ -108,8 +108,7 @@ func TestIndexScanTimeHasAValidDatetimeAttribute(t *testing.T) {
 	}
 	// HTML and ECMAScript's own format take at most three fractional digits.
 	_, fraction, _ := strings.Cut(datetime, ".")
-	digits := len(fraction) - len(strings.TrimLeft(fraction, "0123456789"))
-	if digits = len(fraction) - len(strings.TrimLeft(fraction, "0123456789")); digits > 3 {
+	if digits := len(fraction) - len(strings.TrimLeft(fraction, "0123456789")); digits > 3 {
 		t.Errorf("more than three fractional digits: %s", datetime)
 	}
 }

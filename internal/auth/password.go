@@ -59,9 +59,11 @@ var DefaultPasswordParams = PasswordParams{Memory: 19456, Time: 2, Threads: 1}
 // verifies. Merely short passwords are the caller's advice, not a refusal.
 func EnsurePasswordFits(password string) error {
 	if password == "" {
+		//lint:ignore ST1005 printed verbatim to the user, not wrapped into another error
 		return errors.New("Password is empty.")
 	}
 	if len(password) > MaxPasswordBytes {
+		//lint:ignore ST1005 printed verbatim to the user, not wrapped into another error
 		return fmt.Errorf("Password is %d bytes, and comics accepts at most %d. "+
 			"Shorten it — note that non-ASCII characters cost several bytes each.",
 			len(password), MaxPasswordBytes)
@@ -289,6 +291,7 @@ func VerifyCredentials(creds *Credentials, username, password string) bool {
 func EnsurePasswordHashUsable(hash string) error {
 	for _, prefix := range bcryptPrefixes {
 		if strings.HasPrefix(hash, prefix) {
+			//lint:ignore ST1005 printed verbatim to the user, not wrapped into another error
 			return errors.New("COMICS_AUTH_PASSWORD_HASH is a bcrypt hash, which comics no longer accepts — " +
 				"it now hashes passwords with Argon2id. Your password itself is unchanged: " +
 				"run `comics hash-password`, enter it again, and replace the value of " +
