@@ -2,7 +2,7 @@ module github.com/henry40408/comics/e2e
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/chromedp/cdproto v0.159.0
