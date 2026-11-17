@@ -11,11 +11,16 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  # Replaces `cargo deny`: every module is BSD or MIT licensed, so there is no
-  # licence allow-list to enforce.
+  # Replaces `cargo deny`: the licence allow-list below is enforced with
+  # go-licenses.
   deps:
     name: deps
     runs-on: ubuntu-latest
+    env:
+      # The root module allows only these. `e2e/` additionally allows MPL-2.0
+      # (godog pulls in go-immutable-radix, go-memdb and golang-lru); MPL-2.0
+      # must not reach the root module, which ships in the image.
+      ALLOWED_LICENSES: Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MIT,MIT-0,Zlib,Unlicense,CC0-1.0,Unicode-3.0,BSL-1.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -26,6 +31,13 @@ jobs:
           go mod vendor
           test -z "$(git status --porcelain -- vendor go.mod go.sum)"
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # go-licenses needs GOROOT set explicitly, else it fails on the standard
+      # library with "does not have module info". The module's own LICENSE is
+      # not a dependency, so it is ignored.
+      - run: |
+          GOROOT="$(go env GOROOT)" go run github.com/google/go-licenses/v2@v2.0.1 check ./... \
+            --include_tests --ignore github.com/henry40408/comics \
+            --allowed_licenses="$ALLOWED_LICENSES"
       # `e2e/` is a separate Go module with its own vendor directory.
       - run: go mod tidy -diff
         working-directory: e2e
@@ -34,6 +46,13 @@ jobs:
           test -z "$(git status --porcelain -- vendor go.mod go.sum)"
         working-directory: e2e
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        working-directory: e2e
+      # `--include_tests` because the Gherkin and browser libraries are test
+      # dependencies of this module.
+      - run: |
+          GOROOT="$(go env GOROOT)" go run github.com/google/go-licenses/v2@v2.0.1 check ./... \
+            --include_tests --ignore github.com/henry40408/comics/e2e \
+            --allowed_licenses="$ALLOWED_LICENSES,MPL-2.0"
         working-directory: e2e
 
   lint:
