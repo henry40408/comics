@@ -1,0 +1,12 @@
+# gremlins v0.6.0 ignores `--threshold-efficacy` on the command line: viper
+# returns a float64 flag as a string, which gremlins reads as 0 ("no
+# threshold"), so the run always exits 0. The same value from this file is read
+# as an integer and works. Keep the threshold here, not on the command line.
+unleash:
+  threshold:
+    efficacy: 95
+  # `e2e/` is a separate module with no coverage profile, so gremlins would
+  # count its mutants as "not covered".
+  exclude-files:
+    - '^e2e/'
+    - '^vendor/'
