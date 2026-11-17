@@ -71,14 +71,19 @@ jobs:
           go-version-file: go.mod
       - run: go test -mod=vendor -race ./...
 
-  # Whole-module run, about a minute locally. `e2e/` is a separate module with
-  # no coverage profile, so gremlins would count its mutants as "not covered".
+  # Pushes to main mutate the whole module (about a minute locally); pull
+  # requests mutate only the lines changed against the base branch. `e2e/` is a
+  # separate module with no coverage profile, so gremlins would count its
+  # mutants as "not covered".
   mutation:
     name: mutation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `--diff` needs the base branch's history, not a shallow clone.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -87,8 +92,18 @@ jobs:
       # "times out", which the efficacy score ignores: the job would pass
       # without testing anything.
       - run: go clean -testcache
-      - run: |
+      - name: Mutate the whole module (push)
+        if: github.event_name != 'pull_request'
+        run: |
           go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
+            -E '^e2e/' -E '^vendor/' --threshold-efficacy 95 .
+      - name: Mutate the changed lines (pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
+            --diff "origin/$BASE_REF" \
             -E '^e2e/' -E '^vendor/' --threshold-efficacy 95 .
 
   coverage:
