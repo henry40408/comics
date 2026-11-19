@@ -1,4 +1,4 @@
-# github.com/chromedp/cdproto v0.159.2
+# github.com/chromedp/cdproto v0.159.3
 ## explicit; go 1.25
 github.com/chromedp/cdproto
 github.com/chromedp/cdproto/accessibility
