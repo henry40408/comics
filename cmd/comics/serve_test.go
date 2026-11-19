@@ -16,12 +16,11 @@ func warningsFor(opts options) string {
 }
 
 func TestConfigurationWarnings(t *testing.T) {
-	yes, hsts := true, uint64(3600)
-	username, hash := "user", "hash"
-	authed := options{authUsername: &username, authPasswordHash: &hash}
+	hsts := uint64(3600)
+	authed := options{authUsername: "user", authPasswordHash: "hash"}
 
 	secureAuthed := authed
-	secureAuthed.cookieSecure = &yes
+	secureAuthed.cookieSecure = true
 
 	insecureHSTS := authed
 	insecureHSTS.hstsMaxAge = &hsts
@@ -29,7 +28,7 @@ func TestConfigurationWarnings(t *testing.T) {
 	noCSRF := secureAuthed
 	noCSRF.disableCSRFGuard = true
 
-	halfAuth := options{authUsername: &username, cookieSecure: &yes}
+	halfAuth := options{authUsername: "user", cookieSecure: true}
 
 	cases := []struct {
 		name string
@@ -38,7 +37,7 @@ func TestConfigurationWarnings(t *testing.T) {
 	}{
 		{"everything secure is quiet", secureAuthed, nil},
 		{"CSRF guard disabled", noCSRF, []string{"CSRF origin guard disabled"}},
-		{"no authorization", options{cookieSecure: &yes}, []string{"no authorization enabled"}},
+		{"no authorization", options{cookieSecure: true}, []string{"no authorization enabled"}},
 		{"only a username is not authorization", halfAuth, []string{"no authorization enabled"}},
 		{"insecure cookie with auth", authed, []string{"without the Secure attribute"}},
 		{"HSTS with an insecure cookie", insecureHSTS,
@@ -84,8 +83,7 @@ func TestServerConfigCarriesTheGivenSecretAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	username, hash, yes := "user", "hash", true
-	opts := options{secret: &given, authUsername: &username, authPasswordHash: &hash, cookieSecure: &yes}
+	opts := options{secret: &given, authUsername: "user", authPasswordHash: "hash", cookieSecure: true}
 
 	config := serverConfig(opts, logger)
 

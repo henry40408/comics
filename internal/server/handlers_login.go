@@ -145,10 +145,10 @@ func (a *App) respondThrottled(w http.ResponseWriter, throttle auth.Throttle, ip
 			"ip", ip, "user_agent", userAgent)
 	} else {
 		a.logger.Warn("login rate limited",
-			"event", "login_rate_limited", "scope", throttle.Scope.String(),
+			"event", "login_rate_limited", "scope", string(throttle.Scope),
 			"retry_after_secs", throttle.RetryAfterSecs, "ip", ip, "user_agent", userAgent)
 	}
-	w.Header().Set("Retry-After", strconv.FormatUint(throttle.RetryAfterSecs, 10))
+	w.Header().Set("Retry-After", strconv.Itoa(throttle.RetryAfterSecs))
 	w.WriteHeader(http.StatusTooManyRequests)
 }
 

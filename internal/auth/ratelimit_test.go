@@ -15,7 +15,7 @@ import (
 func testIP(last uint8) netip.Addr { return netip.AddrFrom4([4]byte{203, 0, 113, last}) }
 
 // newLimiter returns a limiter whose global window never refuses.
-func newLimiter(maxAttempts uint32, windowSecs uint64) *RateLimiter {
+func newLimiter(maxAttempts, windowSecs int) *RateLimiter {
 	return NewRateLimiter(maxAttempts, math.MaxUint32, windowSecs, nil)
 }
 
@@ -189,16 +189,6 @@ func TestARefusalNamesTheWindowThatSaidNo(t *testing.T) {
 	allowed(global, testIP(1))
 	if got := global.TryAcquire(testIP(2)); got.Allowed || got.Scope != ScopeGlobal {
 		t.Fatalf("global refusal = %+v", got)
-	}
-}
-
-func TestScopesHaveStableAuditNames(t *testing.T) {
-	for scope, want := range map[Scope]string{
-		ScopePerIP: "per_ip", ScopeShared: "shared", ScopeGlobal: "global",
-	} {
-		if got := scope.String(); got != want {
-			t.Errorf("scope %d = %q, want %q", scope, got, want)
-		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 )
 
 var logFormats = []string{"full", "json"}
@@ -11,10 +12,8 @@ var logFormats = []string{"full", "json"}
 // parseLogFormat validates a --log-format value. slog has no compact or pretty
 // layouts, so those names are rejected rather than silently ignored.
 func parseLogFormat(text string) (string, error) {
-	for _, format := range logFormats {
-		if text == format {
-			return text, nil
-		}
+	if slices.Contains(logFormats, text) {
+		return text, nil
 	}
 	return "", fmt.Errorf("unknown log format %q (want full or json)", text)
 }

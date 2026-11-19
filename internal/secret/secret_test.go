@@ -2,6 +2,7 @@ package secret
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestAccepts64HexCharsAndLonger(t *testing.T) {
 // Pins the decoding, which a nil-error check alone does not.
 func TestDecodesEveryHexPairInOrder(t *testing.T) {
 	for _, raw := range []string{valid, longer, strings.ToUpper(valid)} {
-		if got := HexLower(mustParse(t, raw).raw); got != strings.ToLower(raw) {
+		if got := hex.EncodeToString(mustParse(t, raw).raw); got != strings.ToLower(raw) {
 			t.Errorf("decoded %q, want %q", got, strings.ToLower(raw))
 		}
 	}
@@ -128,14 +129,5 @@ func TestZeroValueSecretPanics(t *testing.T) {
 			}()
 			derive()
 		}()
-	}
-}
-
-func TestHexLowerPadsEachByte(t *testing.T) {
-	if got := HexLower([]byte{0x00, 0x0f, 0xff}); got != "000fff" {
-		t.Errorf("got %q", got)
-	}
-	if got := HexLower(nil); got != "" {
-		t.Errorf("got %q", got)
 	}
 }

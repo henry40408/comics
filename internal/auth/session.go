@@ -38,54 +38,17 @@ const DefaultAbsoluteTTL = 7 * 24 * time.Hour
 // session is evicted; refusing would be a login lockout.
 const defaultMaxSessions = 1000
 
-// Expiry says which deadline ended a session.
-type Expiry int
-
-const (
-	ExpiryNone Expiry = iota
-	// ExpiryIdle: unused for longer than the idle window.
-	ExpiryIdle
-	// ExpiryAbsolute: outlived the ceiling, however active it was.
-	ExpiryAbsolute
-)
-
-// String is the stable identifier for the reason field of an audit event.
-func (e Expiry) String() string {
-	switch e {
-	case ExpiryIdle:
-		return "idle"
-	case ExpiryAbsolute:
-		return "absolute"
-	default:
-		return "none"
-	}
-}
-
-// ValidationResult is the outcome class of SessionStore.Validate.
-type ValidationResult int
-
-const (
-	// ValidationUnknown: names no live session (destroyed, or issued by a
-	// previous process).
-	ValidationUnknown ValidationResult = iota
-	ValidationValid
-	// ValidationExpired: the session existed and has just been destroyed.
-	ValidationExpired
-)
-
-// Validation is what SessionStore.Validate decided.
+// Validation is what SessionStore.Validate decided. The zero value is not
+// valid, so a forgotten field fails closed.
 type Validation struct {
-	Result ValidationResult
+	Valid bool
 	// UserAgentChanged is set on a valid session whose User-Agent differs from
 	// the last one seen. Reported, never enforced: browsers change it every
 	// major version, and an attacker need only copy the header.
 	UserAgentChanged bool
-	// Expiry is set when Result is ValidationExpired.
-	Expiry Expiry
+	// Rejection is why the session is not valid.
+	Rejection Rejection
 }
-
-// IsValid reports whether the session was live.
-func (v Validation) IsValid() bool { return v.Result == ValidationValid }
 
 type sessionRecord struct {
 	createdAt time.Duration
@@ -165,23 +128,23 @@ func (s *SessionStore) Validate(id, userAgent string) Validation {
 	record := s.sessions[id]
 	s.mu.RUnlock()
 	if record == nil {
-		return Validation{Result: ValidationUnknown}
+		return Validation{Rejection: RejectionUnknown}
 	}
 
 	if s.clock()-record.createdAt >= s.absoluteTTL {
 		s.Destroy(id)
-		return Validation{Result: ValidationExpired, Expiry: ExpiryAbsolute}
+		return Validation{Rejection: RejectionExpiredAbsolute}
 	}
 	now := s.nowSecs()
 	if s.isIdle(record, now) {
 		s.Destroy(id)
-		return Validation{Result: ValidationExpired, Expiry: ExpiryIdle}
+		return Validation{Rejection: RejectionExpiredIdle}
 	}
 
 	record.lastSeen.Store(now)
 	digest := userAgentDigest(userAgent)
 	return Validation{
-		Result:           ValidationValid,
+		Valid:            true,
 		UserAgentChanged: record.userAgent.Swap(digest) != digest,
 	}
 }
