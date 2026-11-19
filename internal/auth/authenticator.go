@@ -147,7 +147,7 @@ func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
 		}
 		logger.Info("session expired",
 			"event", "session_expired", "session", a.SessionFingerprint(r),
-			"reason", reason.String(), "user_agent", userAgent)
+			"reason", string(reason), "user_agent", userAgent)
 	case RejectionBadSignature:
 		logger.Warn("session cookie was not signed by this key",
 			"event", "session_rejected", "reason", "bad_signature", "user_agent", userAgent)

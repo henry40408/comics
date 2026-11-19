@@ -39,7 +39,7 @@ type options struct {
 	secret           *secret.Secret
 	authUsername     *string
 	authPasswordHash *string
-	cookieSecure     *bool
+	cookieSecure     bool
 	hstsMaxAge       *uint64
 	trustedProxies   auth.TrustedProxies
 	disableCSRFGuard bool
@@ -70,30 +70,30 @@ func newOptions() options {
 
 func (o *options) specs() []flagSpec {
 	return []flagSpec{
-		{names: []string{"bind", "b"}, env: "COMICS_BIND", set: o.setBind,
+		{names: []string{"bind", "b"}, env: "COMICS_BIND", set: setString(&o.bind),
 			usage: "bind host and port, loopback by default (default " + defaultBind + ")"},
 		{names: []string{"data-dir"}, env: "COMICS_DATA_DIR", set: setString(&o.dataDir),
 			usage: "data directory (default " + defaultDataDir + ")"},
 		{names: []string{"cache-dir"}, env: "COMICS_CACHE_DIR", set: setString(&o.cacheDir),
 			usage: "directory for cached thumbnails (default comics-thumbs under the system temp dir)"},
-		{names: []string{"log-format"}, env: "COMICS_LOG_FORMAT", set: o.setLogFormat,
+		{names: []string{"log-format"}, env: "COMICS_LOG_FORMAT", set: setParsed(&o.logFormat, parseLogFormat),
 			usage: "log format: full or json (default " + defaultLogFormat + ")"},
-		{env: logLevelEnv, set: o.setLogLevel},
+		{env: logLevelEnv, set: setParsed(&o.logLevel, parseLogLevel)},
 		{names: []string{"secret"}, env: "COMICS_SECRET", set: o.setSecret,
 			usage: "at least 64 hex characters (`openssl rand -hex 32`); unset means a random secret per start"},
 		{names: []string{"auth-username"}, env: "COMICS_AUTH_USERNAME", set: setStringPointer(&o.authUsername),
 			usage: "username for the login form"},
 		{names: []string{"auth-password-hash"}, env: "COMICS_AUTH_PASSWORD_HASH", set: setStringPointer(&o.authPasswordHash),
 			usage: "Argon2id hash of the password for the login form (see hash-password)"},
-		{names: []string{"cookie-secure"}, env: "COMICS_COOKIE_SECURE", boolean: true, set: o.setCookieSecure,
+		{names: []string{"cookie-secure"}, env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, parseStrictBool),
 			usage: "send the session cookie with the Secure attribute (HTTPS only)"},
 		{names: []string{"hsts-max-age"}, env: "COMICS_HSTS_MAX_AGE", set: o.setHSTSMaxAge,
 			usage: "send Strict-Transport-Security with this max-age in seconds"},
-		{names: []string{"trusted-proxies"}, env: "COMICS_TRUSTED_PROXIES", set: o.setTrustedProxies,
+		{names: []string{"trusted-proxies"}, env: "COMICS_TRUSTED_PROXIES", set: setParsed(&o.trustedProxies, auth.ParseTrustedProxies),
 			usage: "comma-separated IPs and CIDR prefixes whose X-Forwarded-For is trusted"},
-		{names: []string{"disable-csrf-guard"}, env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: o.setDisableCSRFGuard,
+		{names: []string{"disable-csrf-guard"}, env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: setParsed(&o.disableCSRFGuard, parseStrictBool),
 			usage: "turn off the CSRF origin guard (plain-HTTP LAN hosts only)"},
-		{names: []string{"version"}, boolean: true, set: o.setShowVersion,
+		{names: []string{"version"}, boolean: true, set: setParsed(&o.showVersion, parseStrictBool),
 			usage: "print the version and exit"},
 	}
 }
@@ -197,6 +197,18 @@ func setString(target *string) func(string) error {
 	}
 }
 
+// setParsed stores what parse returns, so a setting needs no method of its own.
+func setParsed[T any](target *T, parse func(string) (T, error)) func(string) error {
+	return func(value string) error {
+		parsed, err := parse(value)
+		if err != nil {
+			return err
+		}
+		*target = parsed
+		return nil
+	}
+}
+
 func setStringPointer(target **string) func(string) error {
 	return func(value string) error {
 		*target = &value
@@ -215,44 +227,12 @@ func parseStrictBool(value string) (bool, error) {
 	return false, errors.New("must be true or false")
 }
 
-func (o *options) setBind(value string) error {
-	o.bind = value
-	return nil
-}
-
-func (o *options) setLogFormat(value string) error {
-	format, err := parseLogFormat(value)
-	if err != nil {
-		return err
-	}
-	o.logFormat = format
-	return nil
-}
-
-func (o *options) setLogLevel(value string) error {
-	level, err := parseLogLevel(value)
-	if err != nil {
-		return err
-	}
-	o.logLevel = level
-	return nil
-}
-
 func (o *options) setSecret(value string) error {
 	parsed, err := secret.Parse(value)
 	if err != nil {
 		return err
 	}
 	o.secret = &parsed
-	return nil
-}
-
-func (o *options) setCookieSecure(value string) error {
-	parsed, err := parseStrictBool(value)
-	if err != nil {
-		return err
-	}
-	o.cookieSecure = &parsed
 	return nil
 }
 
@@ -263,37 +243,4 @@ func (o *options) setHSTSMaxAge(value string) error {
 	}
 	o.hstsMaxAge = &seconds
 	return nil
-}
-
-func (o *options) setTrustedProxies(value string) error {
-	proxies, err := auth.ParseTrustedProxies(value)
-	if err != nil {
-		return err
-	}
-	o.trustedProxies = proxies
-	return nil
-}
-
-func (o *options) setDisableCSRFGuard(value string) error {
-	parsed, err := parseStrictBool(value)
-	if err != nil {
-		return err
-	}
-	o.disableCSRFGuard = parsed
-	return nil
-}
-
-func (o *options) setShowVersion(value string) error {
-	parsed, err := parseStrictBool(value)
-	if err != nil {
-		return err
-	}
-	o.showVersion = parsed
-	return nil
-}
-
-// resolveCookieSecure reports whether the session cookie carries Secure.
-// comics never terminates TLS, so the explicit flag is the only input.
-func resolveCookieSecure(override *bool) bool {
-	return override != nil && *override
 }

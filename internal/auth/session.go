@@ -39,27 +39,14 @@ const DefaultAbsoluteTTL = 7 * 24 * time.Hour
 const defaultMaxSessions = 1000
 
 // Expiry says which deadline ended a session.
-type Expiry int
+type Expiry string
 
 const (
-	ExpiryNone Expiry = iota
 	// ExpiryIdle: unused for longer than the idle window.
-	ExpiryIdle
+	ExpiryIdle Expiry = "idle"
 	// ExpiryAbsolute: outlived the ceiling, however active it was.
-	ExpiryAbsolute
+	ExpiryAbsolute Expiry = "absolute"
 )
-
-// String is the stable identifier for the reason field of an audit event.
-func (e Expiry) String() string {
-	switch e {
-	case ExpiryIdle:
-		return "idle"
-	case ExpiryAbsolute:
-		return "absolute"
-	default:
-		return "none"
-	}
-}
 
 // ValidationResult is the outcome class of SessionStore.Validate.
 type ValidationResult int

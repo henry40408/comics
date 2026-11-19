@@ -30,16 +30,6 @@ func mustParse(t *testing.T, args []string, env map[string]string) options {
 	return opts
 }
 
-func TestCookieSecureDefaultsToOff(t *testing.T) {
-	no, yes := false, true
-	if resolveCookieSecure(nil) || resolveCookieSecure(&no) {
-		t.Fatal("cookie secure defaulted to on")
-	}
-	if !resolveCookieSecure(&yes) {
-		t.Fatal("explicit true was ignored")
-	}
-}
-
 func TestDefaults(t *testing.T) {
 	opts := mustParse(t, nil, nil)
 	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != "full" ||
@@ -68,16 +58,16 @@ func TestFlagBeatsEnvBeatsDefault(t *testing.T) {
 
 func TestAnEmptyEnvVarIsUnset(t *testing.T) {
 	opts := mustParse(t, nil, map[string]string{"COMICS_TRUSTED_PROXIES": "", "COMICS_COOKIE_SECURE": ""})
-	if !opts.trustedProxies.IsEmpty() || opts.cookieSecure != nil {
+	if !opts.trustedProxies.IsEmpty() || opts.cookieSecure {
 		t.Fatalf("empty variables took effect: %+v", opts)
 	}
 }
 
 func TestBooleansAcceptOnlyTrueAndFalse(t *testing.T) {
-	if opts := mustParse(t, []string{"--cookie-secure"}, nil); !resolveCookieSecure(opts.cookieSecure) {
+	if opts := mustParse(t, []string{"--cookie-secure"}, nil); !opts.cookieSecure {
 		t.Error("a bare flag did not mean true")
 	}
-	if opts := mustParse(t, []string{"--cookie-secure=false"}, nil); resolveCookieSecure(opts.cookieSecure) {
+	if opts := mustParse(t, []string{"--cookie-secure=false"}, nil); opts.cookieSecure {
 		t.Error("=false was ignored")
 	}
 	if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": "true"}); !opts.disableCSRFGuard {

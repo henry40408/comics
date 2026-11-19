@@ -192,16 +192,6 @@ func TestARefusalNamesTheWindowThatSaidNo(t *testing.T) {
 	}
 }
 
-func TestScopesHaveStableAuditNames(t *testing.T) {
-	for scope, want := range map[Scope]string{
-		ScopePerIP: "per_ip", ScopeShared: "shared", ScopeGlobal: "global",
-	} {
-		if got := scope.String(); got != want {
-			t.Errorf("scope %d = %q, want %q", scope, got, want)
-		}
-	}
-}
-
 func TestARefusalSaysWhenTheWindowResets(t *testing.T) {
 	for _, limiter := range []*RateLimiter{
 		NewRateLimiter(1, 100, 60, nil),

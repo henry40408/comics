@@ -40,7 +40,7 @@ func serverConfig(opts options, logger *slog.Logger) server.Config {
 		DataDir:          opts.dataDir,
 		CacheDir:         opts.cacheDir,
 		Secret:           secretValue,
-		CookieSecure:     resolveCookieSecure(opts.cookieSecure),
+		CookieSecure:     opts.cookieSecure,
 		DisableCSRFGuard: opts.disableCSRFGuard,
 		HSTSMaxAge:       opts.hstsMaxAge,
 		TrustedProxies:   opts.trustedProxies,
@@ -65,7 +65,7 @@ func ensurePasswordHashIsUsable(opts options) error {
 }
 
 func logConfigurationWarnings(opts options, logger *slog.Logger) {
-	secure := resolveCookieSecure(opts.cookieSecure)
+	secure := opts.cookieSecure
 	if opts.disableCSRFGuard {
 		logger.Warn("CSRF origin guard disabled by --disable-csrf-guard; every " +
 			"state-changing request is accepted whatever its origin. The " +

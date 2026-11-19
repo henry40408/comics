@@ -55,29 +55,17 @@ func elapsedSecs(now, started time.Duration) uint64 {
 
 // Scope names the window that refused an attempt; the three mean very
 // different things in the log.
-type Scope int
+type Scope string
 
 const (
 	// ScopePerIP is this client's own window: one person mistyping.
-	ScopePerIP Scope = iota
+	ScopePerIP Scope = "per_ip"
 	// ScopeShared is the overflow window shared once the per-IP map is full.
-	ScopeShared
+	ScopeShared Scope = "shared"
 	// ScopeGlobal is every address together: distributed guessing, and the
 	// reader is locked out too.
-	ScopeGlobal
+	ScopeGlobal Scope = "global"
 )
-
-// String is the stable identifier for the scope field of an audit event.
-func (s Scope) String() string {
-	switch s {
-	case ScopeShared:
-		return "shared"
-	case ScopeGlobal:
-		return "global"
-	default:
-		return "per_ip"
-	}
-}
 
 // Throttle is what RateLimiter.TryAcquire decided.
 type Throttle struct {

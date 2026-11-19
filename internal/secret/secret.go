@@ -91,5 +91,4 @@ func (Secret) String() string { return "Secret([redacted])" }
 // GoString redacts the secret for %#v.
 func (Secret) GoString() string { return "Secret([redacted])" }
 
-// HexLower encodes bytes as lowercase hex, two characters per byte.
 func HexLower(data []byte) string { return hex.EncodeToString(data) }

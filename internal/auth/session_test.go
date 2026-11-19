@@ -247,15 +247,6 @@ func TestTheDefaultLifetimesAreThreeAndSevenDays(t *testing.T) {
 	}
 }
 
-func TestExpiryReasonsHaveStableAuditNames(t *testing.T) {
-	if got := ExpiryIdle.String(); got != "idle" {
-		t.Errorf("idle = %q", got)
-	}
-	if got := ExpiryAbsolute.String(); got != "absolute" {
-		t.Errorf("absolute = %q", got)
-	}
-}
-
 func TestAStoreIsEmptyOnlyUntilASessionIsCreated(t *testing.T) {
 	store := newTestStore()
 	if !store.IsEmpty() {
