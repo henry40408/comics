@@ -3,6 +3,7 @@ package server
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -142,4 +143,15 @@ func (a *App) currentScan() *models.BookScan {
 	a.scanMu.RLock()
 	defer a.scanMu.RUnlock()
 	return a.scan
+}
+
+// readyScan is currentScan for the non-HTML content routes: until the first
+// scan lands it answers a bare 503 and reports false.
+func (a *App) readyScan(w http.ResponseWriter) (*models.BookScan, bool) {
+	scan := a.currentScan()
+	if scan == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return nil, false
+	}
+	return scan, true
 }

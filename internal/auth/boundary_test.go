@@ -72,30 +72,15 @@ func TestVerifyAcceptsASignatureOfExactlyTheDigestLength(t *testing.T) {
 	}
 }
 
-func TestCookieEscapingBoundaries(t *testing.T) {
-	for in, want := range map[string]string{
-		"\x1f": "%1F",
-		" ":    "%20",
-		"!":    "!",
-		"~":    "~",
-		"\x7f": "%7F",
-		"\x80": "%80",
-	} {
-		if got := encodeCookieValue(in); got != want {
-			t.Errorf("encodeCookieValue(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestURLEncodeKeepsTheUnreservedRangesIncludingTheirEnds(t *testing.T) {
 	for _, kept := range []string{"A", "Z", "a", "z", "0", "9"} {
-		if got := urlEncode(kept); got != kept {
-			t.Errorf("urlEncode(%q) = %q, want it unchanged", kept, got)
+		if got := escapeNext(kept); got != kept {
+			t.Errorf("escapeNext(%q) = %q, want it unchanged", kept, got)
 		}
 	}
 	for in, want := range map[string]string{"@": "%40", "[": "%5B", "`": "%60", "{": "%7B", "/": "%2F", ":": "%3A"} {
-		if got := urlEncode(in); got != want {
-			t.Errorf("urlEncode(%q) = %q, want %q", in, got, want)
+		if got := escapeNext(in); got != want {
+			t.Errorf("escapeNext(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

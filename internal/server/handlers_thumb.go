@@ -19,9 +19,8 @@ func (a *App) handleThumb(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	scan := a.currentScan()
-	if scan == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	scan, ready := a.readyScan(w)
+	if !ready {
 		return
 	}
 	id := r.PathValue("id")

@@ -1,12 +1,13 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 
 	"github.com/henry40408/comics/internal/models"
@@ -60,9 +61,8 @@ func (a *App) handleBook(w http.ResponseWriter, r *http.Request) {
 // handlePage serves a page image. The scan is read through a pointer to an
 // immutable value, so no lock is held during the file read.
 func (a *App) handlePage(w http.ResponseWriter, r *http.Request) {
-	scan := a.currentScan()
-	if scan == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	scan, ready := a.readyScan(w)
+	if !ready {
 		return
 	}
 	page, found := scan.PageByID(r.PathValue("id"))
@@ -106,27 +106,18 @@ func (a *App) handleShuffleFrom(w http.ResponseWriter, r *http.Request) {
 // redirectToRandomBook picks any book but excluded, or goes home when none is
 // left.
 func (a *App) redirectToRandomBook(w http.ResponseWriter, excluded string) {
-	scan := a.currentScan()
-	if scan == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	scan, ready := a.readyScan(w)
+	if !ready {
 		return
 	}
-	candidates := booksExcept(scan.Books, excluded)
+	candidates := slices.DeleteFunc(slices.Clone(scan.Books), func(book models.Book) bool {
+		return book.ID == excluded
+	})
 	if len(candidates) == 0 {
 		seeOther(w, "/")
 		return
 	}
 	seeOther(w, "/book/"+candidates[rand.IntN(len(candidates))].ID)
-}
-
-func booksExcept(books []models.Book, excluded string) []models.Book {
-	candidates := make([]models.Book, 0, len(books))
-	for _, book := range books {
-		if book.ID != excluded {
-			candidates = append(candidates, book)
-		}
-	}
-	return candidates
 }
 
 // handleRescan rescans synchronously and always goes home; a failed scan keeps
@@ -151,12 +142,5 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("null"))
 		return
 	}
-	body, err := json.Marshal(struct {
-		ScannedAt int64 `json:"scanned_at"`
-	}{ScannedAt: scan.ScannedAt.UnixMilli()})
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, _ = w.Write(body)
+	_, _ = fmt.Fprintf(w, `{"scanned_at":%d}`, scan.ScannedAt.UnixMilli())
 }

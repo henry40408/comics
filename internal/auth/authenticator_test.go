@@ -219,8 +219,8 @@ func TestURLEncodeKeepsUnreservedCharactersAndEscapesTheRest(t *testing.T) {
 		"":             "",
 	}
 	for input, want := range cases {
-		if got := urlEncode(input); got != want {
-			t.Errorf("urlEncode(%q) = %q, want %q", input, got, want)
+		if got := escapeNext(input); got != want {
+			t.Errorf("escapeNext(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
