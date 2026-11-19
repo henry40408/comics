@@ -26,19 +26,19 @@ const (
 const loopbackFallbackAddress = "127.0.0.1"
 
 type window struct {
-	count   uint32
+	count   int
 	started time.Duration
 }
 
 // isExpired is a fixed window: measured from when it opened, not from the last
 // attempt.
-func (w window) isExpired(now time.Duration, windowSecs uint64) bool {
+func (w window) isExpired(now time.Duration, windowSecs int) bool {
 	return elapsedSecs(now, w.started) >= windowSecs
 }
 
 // secondsUntilReset is for Retry-After. Never zero: a client told zero retries
 // at once and is refused again.
-func (w window) secondsUntilReset(now time.Duration, windowSecs uint64) uint64 {
+func (w window) secondsUntilReset(now time.Duration, windowSecs int) int {
 	elapsed := elapsedSecs(now, w.started)
 	if elapsed >= windowSecs {
 		return 1
@@ -46,11 +46,11 @@ func (w window) secondsUntilReset(now time.Duration, windowSecs uint64) uint64 {
 	return max(windowSecs-elapsed, 1)
 }
 
-func elapsedSecs(now, started time.Duration) uint64 {
+func elapsedSecs(now, started time.Duration) int {
 	if now <= started {
 		return 0
 	}
-	return uint64((now - started) / time.Second)
+	return int((now - started) / time.Second)
 }
 
 // Scope names the window that refused an attempt; the three mean very
@@ -74,7 +74,7 @@ type Throttle struct {
 	Scope Scope
 	// RetryAfterSecs is the time until the refusing window rolls over;
 	// meaningful only when not Allowed.
-	RetryAfterSecs uint64
+	RetryAfterSecs int
 }
 
 // buckets holds all windows behind one lock: check-and-charge must be a single
@@ -110,16 +110,16 @@ type RateLimiter struct {
 	mu                sync.Mutex
 	buckets           buckets
 	clock             func() time.Duration
-	maxAttempts       uint32
-	globalMaxAttempts uint32
-	windowSecs        uint64
+	maxAttempts       int
+	globalMaxAttempts int
+	windowSecs        int
 	maxEntries        int
 }
 
 // NewRateLimiter builds a limiter. globalMaxAttempts should sit well above
 // maxAttempts; see the type docs. clock reports elapsed time from a fixed
 // origin; nil means real monotonic time.
-func NewRateLimiter(maxAttempts, globalMaxAttempts uint32, windowSecs uint64, clock func() time.Duration) *RateLimiter {
+func NewRateLimiter(maxAttempts, globalMaxAttempts, windowSecs int, clock func() time.Duration) *RateLimiter {
 	if clock == nil {
 		clock = monotonicClock()
 	}
@@ -164,7 +164,7 @@ func (l *RateLimiter) TryAcquire(ip netip.Addr) Throttle {
 	return Throttle{Allowed: true}
 }
 
-func refused(scope Scope, retryAfterSecs uint64) Throttle {
+func refused(scope Scope, retryAfterSecs int) Throttle {
 	return Throttle{Scope: scope, RetryAfterSecs: retryAfterSecs}
 }
 
@@ -196,7 +196,7 @@ func (l *RateLimiter) pruneExpired(now time.Duration) {
 }
 
 // hasRoom treats an expired window as having room: charge rolls it over.
-func (l *RateLimiter) hasRoom(w *window, now time.Duration, maxAttempts uint32) bool {
+func (l *RateLimiter) hasRoom(w *window, now time.Duration, maxAttempts int) bool {
 	return w.isExpired(now, l.windowSecs) || w.count < maxAttempts
 }
 
@@ -230,12 +230,7 @@ func (l *RateLimiter) Release(ip netip.Addr) {
 	}
 }
 
-func decrement(count uint32) uint32 {
-	if count == 0 {
-		return 0
-	}
-	return count - 1
-}
+func decrement(count int) int { return max(count-1, 0) }
 
 // ClientKeys derives the rate-limit key of a request.
 type ClientKeys struct {

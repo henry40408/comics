@@ -34,7 +34,7 @@ func TestDefaults(t *testing.T) {
 	opts := mustParse(t, nil, nil)
 	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != "full" ||
 		opts.logLevel != slog.LevelInfo || opts.command != "" || opts.secret != nil ||
-		opts.authUsername != nil || opts.hstsMaxAge != nil || opts.disableCSRFGuard {
+		opts.authUsername != "" || opts.hstsMaxAge != nil || opts.disableCSRFGuard {
 		t.Fatalf("unexpected defaults: %+v", opts)
 	}
 	if !strings.HasSuffix(opts.cacheDir, "comics-thumbs") {
@@ -139,7 +139,7 @@ func TestOptionsAreParsedIntoTheirTypes(t *testing.T) {
 		"--hsts-max-age", "0",
 		"--trusted-proxies", "10.0.0.0/8,192.168.0.1",
 		"--auth-username", "user",
-		"--auth-password-hash", "",
+		"--auth-password-hash", "x",
 		"--log-format", "json",
 		"ls",
 	}, map[string]string{logLevelEnv: "warn"})
@@ -149,8 +149,8 @@ func TestOptionsAreParsedIntoTheirTypes(t *testing.T) {
 	if opts.trustedProxies.IsEmpty() {
 		t.Error("trusted proxies were dropped")
 	}
-	if opts.authUsername == nil || opts.authPasswordHash == nil || *opts.authPasswordHash != "" {
-		t.Errorf("an explicitly empty hash must stay set: %+v", opts)
+	if opts.authUsername != "user" {
+		t.Errorf("auth username = %q", opts.authUsername)
 	}
 	if opts.logFormat != "json" || opts.logLevel != slog.LevelWarn || opts.command != "list" {
 		t.Errorf("unexpected: %+v", opts)
@@ -208,7 +208,7 @@ func TestAUsablePasswordHashStartsTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ensurePasswordHashIsUsable(options{authPasswordHash: &hash}); err != nil {
+	if err := ensurePasswordHashIsUsable(options{authPasswordHash: hash}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ensurePasswordHashIsUsable(options{}); err != nil {
@@ -218,24 +218,30 @@ func TestAUsablePasswordHashStartsTheServer(t *testing.T) {
 
 func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 	cases := []string{
-		"",
 		"not-a-hash",
 		"password",
 		"$argon2id$v=19$m=19456$nope",
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
 	}
 	for _, hash := range cases {
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: &hash})
+		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
 		if err == nil || !strings.Contains(err.Error(), "hash-password") {
 			t.Errorf("%q: err = %v", hash, err)
 		}
 	}
 }
 
+func TestAnExplicitlyEmptyCredentialIsRefused(t *testing.T) {
+	for _, flagName := range []string{"--auth-username", "--auth-password-hash"} {
+		_, err := parseOptions([]string{flagName, ""}, envOf(nil), io.Discard)
+		assertUsageError(t, err)
+	}
+}
+
 func TestABcryptHashNamesTheMigration(t *testing.T) {
 	for _, version := range []string{"2a", "2b", "2x", "2y"} {
 		hash := "$" + version + "$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu"
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: &hash})
+		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
 		if err == nil {
 			t.Fatalf("%s accepted", version)
 		}

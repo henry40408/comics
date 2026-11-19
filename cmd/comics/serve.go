@@ -36,8 +36,10 @@ func serverConfig(opts options, logger *slog.Logger) server.Config {
 			"Generate a persistent secret with `openssl rand -hex 32` and set " +
 			"COMICS_SECRET.")
 	}
-	config := server.Config{
+	return server.Config{
 		DataDir:          opts.dataDir,
+		AuthUsername:     opts.authUsername,
+		AuthPasswordHash: opts.authPasswordHash,
 		CacheDir:         opts.cacheDir,
 		Secret:           secretValue,
 		CookieSecure:     opts.cookieSecure,
@@ -46,22 +48,15 @@ func serverConfig(opts options, logger *slog.Logger) server.Config {
 		TrustedProxies:   opts.trustedProxies,
 		Logger:           logger,
 	}
-	if opts.authUsername != nil {
-		config.AuthUsername = *opts.authUsername
-	}
-	if opts.authPasswordHash != nil {
-		config.AuthPasswordHash = *opts.authPasswordHash
-	}
-	return config
 }
 
 // ensurePasswordHashIsUsable runs before the server is built, and never before
 // hash-password, which is how an operator fixes a bad hash.
 func ensurePasswordHashIsUsable(opts options) error {
-	if opts.authPasswordHash == nil {
+	if opts.authPasswordHash == "" {
 		return nil
 	}
-	return auth.EnsurePasswordHashUsable(*opts.authPasswordHash)
+	return auth.EnsurePasswordHashUsable(opts.authPasswordHash)
 }
 
 func logConfigurationWarnings(opts options, logger *slog.Logger) {
@@ -72,7 +67,7 @@ func logConfigurationWarnings(opts options, logger *slog.Logger) {
 			"session cookie's SameSite=Strict is the only cross-site defence " +
 			"left. Serving over HTTPS is the way to undo this.")
 	}
-	if opts.authUsername == nil || opts.authPasswordHash == nil {
+	if opts.authUsername == "" || opts.authPasswordHash == "" {
 		logger.Warn("no authorization enabled, server is publicly accessible")
 	} else if !secure {
 		logger.Warn("session cookie is issued without the Secure attribute; " +

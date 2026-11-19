@@ -17,8 +17,7 @@ func warningsFor(opts options) string {
 
 func TestConfigurationWarnings(t *testing.T) {
 	hsts := uint64(3600)
-	username, hash := "user", "hash"
-	authed := options{authUsername: &username, authPasswordHash: &hash}
+	authed := options{authUsername: "user", authPasswordHash: "hash"}
 
 	secureAuthed := authed
 	secureAuthed.cookieSecure = true
@@ -29,7 +28,7 @@ func TestConfigurationWarnings(t *testing.T) {
 	noCSRF := secureAuthed
 	noCSRF.disableCSRFGuard = true
 
-	halfAuth := options{authUsername: &username, cookieSecure: true}
+	halfAuth := options{authUsername: "user", cookieSecure: true}
 
 	cases := []struct {
 		name string
@@ -84,8 +83,7 @@ func TestServerConfigCarriesTheGivenSecretAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	username, hash := "user", "hash"
-	opts := options{secret: &given, authUsername: &username, authPasswordHash: &hash, cookieSecure: true}
+	opts := options{secret: &given, authUsername: "user", authPasswordHash: "hash", cookieSecure: true}
 
 	config := serverConfig(opts, logger)
 

@@ -70,16 +70,9 @@ func (a *Authenticator) Authenticate(r *http.Request) AuthState {
 	if !a.Enabled {
 		return AuthState{Kind: AuthPublic}
 	}
-	signed, found := cookieValue(r, SessionCookieName(a.CookieSecure))
-	if !found {
-		return unauthenticated(RejectionAbsent)
-	}
-	id, verified := a.Signer.Verify(signed)
-	if !verified {
-		return unauthenticated(RejectionBadSignature)
-	}
-	if !IsSessionID(id) {
-		return unauthenticated(RejectionMalformed)
+	id, why, ok := a.cookieSessionID(r)
+	if !ok {
+		return unauthenticated(why)
 	}
 	return a.validate(id, UserAgent(r))
 }
@@ -99,16 +92,25 @@ func unauthenticated(why Rejection) AuthState {
 // SessionID is the verified session identifier from the request's cookie.
 // Never log it directly: hash it with AuditSalt.
 func (a *Authenticator) SessionID(r *http.Request) (string, bool) {
-	name := SessionCookieName(a.CookieSecure)
-	signed, found := cookieValue(r, name)
+	id, _, ok := a.cookieSessionID(r)
+	return id, ok
+}
+
+// cookieSessionID is the shared prefix of both lookups: it never touches the
+// store, and names the first gate that refused.
+func (a *Authenticator) cookieSessionID(r *http.Request) (id string, why Rejection, ok bool) {
+	signed, found := cookieValue(r, SessionCookieName(a.CookieSecure))
 	if !found {
-		return "", false
+		return "", RejectionAbsent, false
 	}
 	id, verified := a.Signer.Verify(signed)
-	if !verified || !IsSessionID(id) {
-		return "", false
+	if !verified {
+		return "", RejectionBadSignature, false
 	}
-	return id, true
+	if !IsSessionID(id) {
+		return "", RejectionMalformed, false
+	}
+	return id, 0, true
 }
 
 // SessionFingerprint is the audit-log form of the request's session: a salted

@@ -15,7 +15,7 @@ import (
 func testIP(last uint8) netip.Addr { return netip.AddrFrom4([4]byte{203, 0, 113, last}) }
 
 // newLimiter returns a limiter whose global window never refuses.
-func newLimiter(maxAttempts uint32, windowSecs uint64) *RateLimiter {
+func newLimiter(maxAttempts, windowSecs int) *RateLimiter {
 	return NewRateLimiter(maxAttempts, math.MaxUint32, windowSecs, nil)
 }
 

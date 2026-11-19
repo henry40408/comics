@@ -37,8 +37,8 @@ type options struct {
 	logFormat        string
 	logLevel         slog.Level
 	secret           *secret.Secret
-	authUsername     *string
-	authPasswordHash *string
+	authUsername     string
+	authPasswordHash string
 	cookieSecure     bool
 	hstsMaxAge       *uint64
 	trustedProxies   auth.TrustedProxies
@@ -81,9 +81,9 @@ func (o *options) specs() []flagSpec {
 		{env: logLevelEnv, set: setParsed(&o.logLevel, parseLogLevel)},
 		{names: []string{"secret"}, env: "COMICS_SECRET", set: o.setSecret,
 			usage: "at least 64 hex characters (`openssl rand -hex 32`); unset means a random secret per start"},
-		{names: []string{"auth-username"}, env: "COMICS_AUTH_USERNAME", set: setStringPointer(&o.authUsername),
+		{names: []string{"auth-username"}, env: "COMICS_AUTH_USERNAME", set: setNonEmpty(&o.authUsername),
 			usage: "username for the login form"},
-		{names: []string{"auth-password-hash"}, env: "COMICS_AUTH_PASSWORD_HASH", set: setStringPointer(&o.authPasswordHash),
+		{names: []string{"auth-password-hash"}, env: "COMICS_AUTH_PASSWORD_HASH", set: setNonEmpty(&o.authPasswordHash),
 			usage: "Argon2id hash of the password for the login form (see hash-password)"},
 		{names: []string{"cookie-secure"}, env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, parseStrictBool),
 			usage: "send the session cookie with the Secure attribute (HTTPS only)"},
@@ -101,10 +101,18 @@ func (o *options) specs() []flagSpec {
 // parseOptions reads the environment, then args. The caller prints the returned
 // error; errw receives only the usage text.
 func parseOptions(args []string, lookupEnv func(string) (string, bool), errw io.Writer) (options, error) {
+	opts, err := parseOptionValues(args, lookupEnv, errw)
+	if err != nil {
+		return options{}, usageError{err}
+	}
+	return opts, nil
+}
+
+func parseOptionValues(args []string, lookupEnv func(string) (string, bool), errw io.Writer) (options, error) {
 	opts := newOptions()
 	specs := opts.specs()
 	if err := applyEnv(specs, lookupEnv); err != nil {
-		return options{}, usageError{err}
+		return options{}, err
 	}
 	flags := newFlagSet(specs)
 	if err := flags.Parse(args); err != nil {
@@ -114,13 +122,13 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool), errw io.
 			flags.SetOutput(errw)
 			flags.Usage()
 		}
-		return options{}, usageError{err}
+		return options{}, err
 	}
 	if err := opts.setCommand(flags.Args()); err != nil {
-		return options{}, usageError{err}
+		return options{}, err
 	}
 	if err := opts.validateBindForServer(); err != nil {
-		return options{}, usageError{err}
+		return options{}, err
 	}
 	return opts, nil
 }
@@ -209,9 +217,15 @@ func setParsed[T any](target *T, parse func(string) (T, error)) func(string) err
 	}
 }
 
-func setStringPointer(target **string) func(string) error {
+// setNonEmpty refuses an explicit empty value: an empty credential would
+// silently turn authorization off, so it is an error, never "unset". An empty
+// environment variable never reaches here; applyEnv treats it as unset.
+func setNonEmpty(target *string) func(string) error {
 	return func(value string) error {
-		*target = &value
+		if value == "" {
+			return errors.New("must not be empty")
+		}
+		*target = value
 		return nil
 	}
 }
