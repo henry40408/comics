@@ -153,6 +153,11 @@ func TestParsePasswordHashBoundaries(t *testing.T) {
 		"memory one under 8 per lane (p=2)": {"$argon2id$v=19$m=15,t=1,p=2$" + saltOf8Bytes + "$" + digestOf4, true},
 		"memory exactly 8 per lane (p=3)":   {"$argon2id$v=19$m=24,t=1,p=3$" + saltOf8Bytes + "$" + digestOf4, false},
 		"memory one under 8 per lane (p=3)": {"$argon2id$v=19$m=23,t=1,p=3$" + saltOf8Bytes + "$" + digestOf4, true},
+		"memory exactly at the cap":         {"$argon2id$v=19$m=262144,t=1,p=1$" + saltOf8Bytes + "$" + digestOf4, false},
+		"memory one over the cap":           {"$argon2id$v=19$m=262145,t=1,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
+		"memory of 4 TiB":                   {"$argon2id$v=19$m=4294967295,t=1,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
+		"time exactly at the cap":           {"$argon2id$v=19$m=8,t=16,p=1$" + saltOf8Bytes + "$" + digestOf4, false},
+		"time one over the cap":             {"$argon2id$v=19$m=8,t=17,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
 		"time of zero":                      {"$argon2id$v=19$m=8,t=0,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
 		"threads of zero":                   {"$argon2id$v=19$m=8,t=1,p=0$" + saltOf8Bytes + "$" + digestOf4, true},
 	} {

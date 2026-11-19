@@ -35,6 +35,12 @@ const (
 	digestBytes    = 32
 	minDigestBytes = 4
 	minSaltBytes   = 8
+	// maxMemoryKiB and maxTime bound what a stored hash may demand. Argon2
+	// touches all of m, so an unbounded m (up to 4 TiB) would exhaust memory on
+	// the first login, and the startup check would not have caught it.
+	// 256 MiB times MaxConcurrentVerifications is about 1 GiB at worst.
+	maxMemoryKiB = 256 * 1024
+	maxTime      = 16
 )
 
 // bcryptPrefixes are matched only to name the migration: a bare parse error is
@@ -180,9 +186,11 @@ func parseParams(raw string) (PasswordParams, error) {
 	return params, nil
 }
 
-// validateParams rejects what argon2.IDKey would panic on.
+// validateParams rejects what argon2.IDKey would panic on, and costs beyond
+// maxMemoryKiB and maxTime.
 func validateParams(params PasswordParams) error {
-	if params.Time < 1 || params.Threads < 1 || params.Memory < 8*uint32(params.Threads) {
+	if params.Time < 1 || params.Threads < 1 || params.Memory < 8*uint32(params.Threads) ||
+		params.Memory > maxMemoryKiB || params.Time > maxTime {
 		return fmt.Errorf("parameters m=%d,t=%d,p=%d are out of range",
 			params.Memory, params.Time, params.Threads)
 	}
