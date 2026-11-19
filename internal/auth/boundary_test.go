@@ -17,7 +17,7 @@ func TestASessionIsExpiredExactlyWhenItsAbsoluteLifetimeIsReached(t *testing.T) 
 		t.Fatal("session expired one nanosecond before its absolute lifetime")
 	}
 	clock.advance(time.Nanosecond)
-	want := Validation{Result: ValidationExpired, Expiry: ExpiryAbsolute}
+	want := Validation{Rejection: RejectionExpiredAbsolute}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}

@@ -20,7 +20,7 @@ func newTestStore() *SessionStore {
 }
 
 func isLive(store *SessionStore, id string) bool {
-	return store.Validate(id, testUA).IsValid()
+	return store.Validate(id, testUA).Valid
 }
 
 func TestACreatedSessionValidates(t *testing.T) {
@@ -60,7 +60,7 @@ func TestDestroyMakesTheIdentifierUseless(t *testing.T) {
 	if !store.Destroy(id) {
 		t.Fatal("Destroy reported the session missing")
 	}
-	if got := store.Validate(id, testUA); got.Result != ValidationUnknown {
+	if got := store.Validate(id, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("Validate = %+v, want Unknown", got)
 	}
 	if !store.IsEmpty() {
@@ -81,7 +81,7 @@ func TestDestroyAllEndsEverySession(t *testing.T) {
 		t.Fatalf("DestroyAll = %d, want 3", got)
 	}
 	for _, id := range []string{desktop, stolen} {
-		if got := store.Validate(id, testUA); got.Result != ValidationUnknown {
+		if got := store.Validate(id, testUA); got.Rejection != RejectionUnknown {
 			t.Fatalf("Validate = %+v, want Unknown", got)
 		}
 	}
@@ -105,7 +105,7 @@ func TestDestroyAllIgnoresAnIdentifierItNeverIssued(t *testing.T) {
 
 func TestAnUnissuedIdentifierIsUnknown(t *testing.T) {
 	store := newTestStore()
-	if got := store.Validate(strings.Repeat("0", 32), testUA); got.Result != ValidationUnknown {
+	if got := store.Validate(strings.Repeat("0", 32), testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("Validate = %+v, want Unknown", got)
 	}
 }
@@ -114,7 +114,7 @@ func TestIdleExpiryDestroysTheSession(t *testing.T) {
 	store := NewSessionStore(0, DefaultAbsoluteTTL, nil)
 	id := store.Create(testUA)
 
-	want := Validation{Result: ValidationExpired, Expiry: ExpiryIdle}
+	want := Validation{Rejection: RejectionExpiredIdle}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}
@@ -122,7 +122,7 @@ func TestIdleExpiryDestroysTheSession(t *testing.T) {
 	if !store.IsEmpty() {
 		t.Fatal("expired session still stored")
 	}
-	if got := store.Validate(id, testUA); got.Result != ValidationUnknown {
+	if got := store.Validate(id, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("Validate = %+v, want Unknown", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestAbsoluteExpiryBeatsActivity(t *testing.T) {
 	store := NewSessionStore(DefaultIdleTTL, 0, nil)
 	id := store.Create(testUA)
 
-	want := Validation{Result: ValidationExpired, Expiry: ExpiryAbsolute}
+	want := Validation{Rejection: RejectionExpiredAbsolute}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}
@@ -144,10 +144,10 @@ func TestAChangedUserAgentIsReportedButStillValid(t *testing.T) {
 	store := newTestStore()
 	id := store.Create(testUA)
 
-	if got := store.Validate(id, testUA); !got.IsValid() || got.UserAgentChanged {
+	if got := store.Validate(id, testUA); !got.Valid || got.UserAgentChanged {
 		t.Fatalf("same UA: %+v", got)
 	}
-	if got := store.Validate(id, "curl/8.0"); !got.IsValid() || !got.UserAgentChanged {
+	if got := store.Validate(id, "curl/8.0"); !got.Valid || !got.UserAgentChanged {
 		t.Fatalf("changed UA: %+v", got)
 	}
 	if !isLive(store, id) {
@@ -163,7 +163,7 @@ func TestAChangedUserAgentIsReportedOnlyOnce(t *testing.T) {
 		t.Fatalf("first change not reported: %+v", got)
 	}
 	for range 5 {
-		if got := store.Validate(id, "curl/8.0"); !got.IsValid() || got.UserAgentChanged {
+		if got := store.Validate(id, "curl/8.0"); !got.Valid || got.UserAgentChanged {
 			t.Fatalf("repeat reported again: %+v", got)
 		}
 	}
@@ -181,7 +181,7 @@ func TestAtCapacityASessionIsEvictedRatherThanTheLoginRefused(t *testing.T) {
 	if store.Len() != 1 {
 		t.Fatalf("Len = %d, want 1", store.Len())
 	}
-	if got := store.Validate(first, testUA); got.Result != ValidationUnknown {
+	if got := store.Validate(first, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("first: %+v, want Unknown", got)
 	}
 	if !isLive(store, second) {
@@ -200,7 +200,7 @@ func TestEvictionTakesTheLeastRecentlyUsed(t *testing.T) {
 	clock.advance(10 * time.Second)
 	store.Create(testUA)
 
-	if got := store.Validate(older, testUA); got.Result != ValidationUnknown {
+	if got := store.Validate(older, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("older: %+v, want evicted", got)
 	}
 	if !isLive(store, newer) {
@@ -271,7 +271,7 @@ func TestASessionUnusedForLongerThanTheIdleWindowExpires(t *testing.T) {
 
 	clock.advance(2100 * time.Millisecond)
 
-	want := Validation{Result: ValidationExpired, Expiry: ExpiryIdle}
+	want := Validation{Rejection: RejectionExpiredIdle}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}
@@ -290,7 +290,7 @@ func TestActivityKeepsASessionAliveUntilTheAbsoluteDeadline(t *testing.T) {
 		}
 	}
 	clock.advance(50 * time.Minute)
-	want := Validation{Result: ValidationExpired, Expiry: ExpiryAbsolute}
+	want := Validation{Rejection: RejectionExpiredAbsolute}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}

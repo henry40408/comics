@@ -86,21 +86,10 @@ func (a *Authenticator) Authenticate(r *http.Request) AuthState {
 
 func (a *Authenticator) validate(id, userAgent string) AuthState {
 	validation := a.Sessions.Validate(id, userAgent)
-	switch validation.Result {
-	case ValidationValid:
-		return AuthState{Kind: AuthAuthenticated, UserAgentChanged: validation.UserAgentChanged}
-	case ValidationExpired:
-		return unauthenticated(expiredRejection(validation.Expiry))
-	default:
-		return unauthenticated(RejectionUnknown)
+	if !validation.Valid {
+		return unauthenticated(validation.Rejection)
 	}
-}
-
-func expiredRejection(expiry Expiry) Rejection {
-	if expiry == ExpiryAbsolute {
-		return RejectionExpiredAbsolute
-	}
-	return RejectionExpiredIdle
+	return AuthState{Kind: AuthAuthenticated, UserAgentChanged: validation.UserAgentChanged}
 }
 
 func unauthenticated(why Rejection) AuthState {
@@ -140,14 +129,10 @@ func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
 	logger := a.logger()
 	userAgent := UserAgent(r)
 	switch why {
-	case RejectionExpiredIdle, RejectionExpiredAbsolute:
-		reason := ExpiryIdle
-		if why == RejectionExpiredAbsolute {
-			reason = ExpiryAbsolute
-		}
-		logger.Info("session expired",
-			"event", "session_expired", "session", a.SessionFingerprint(r),
-			"reason", string(reason), "user_agent", userAgent)
+	case RejectionExpiredIdle:
+		a.logExpired(logger, r, "idle")
+	case RejectionExpiredAbsolute:
+		a.logExpired(logger, r, "absolute")
 	case RejectionBadSignature:
 		logger.Warn("session cookie was not signed by this key",
 			"event", "session_rejected", "reason", "bad_signature", "user_agent", userAgent)
@@ -159,6 +144,12 @@ func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
 			"event", "session_rejected", "session", a.SessionFingerprint(r),
 			"reason", "unknown", "user_agent", userAgent)
 	}
+}
+
+func (a *Authenticator) logExpired(logger *slog.Logger, r *http.Request, reason string) {
+	logger.Info("session expired",
+		"event", "session_expired", "session", a.SessionFingerprint(r),
+		"reason", reason, "user_agent", UserAgent(r))
 }
 
 // LogUserAgentChanged records a User-Agent change mid-session. Reported, never

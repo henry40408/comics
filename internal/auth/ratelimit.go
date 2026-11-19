@@ -80,7 +80,7 @@ type Throttle struct {
 // buckets holds all windows behind one lock: check-and-charge must be a single
 // critical section, or concurrent requests all observe the pre-attack count.
 type buckets struct {
-	perIP map[netip.Addr]window
+	perIP map[netip.Addr]*window
 	// overflow is shared by every new source once perIP is full.
 	overflow window
 	// global counts every attempt, whatever its source.
@@ -126,7 +126,7 @@ func NewRateLimiter(maxAttempts, globalMaxAttempts uint32, windowSecs uint64, cl
 	now := clock()
 	return &RateLimiter{
 		buckets: buckets{
-			perIP:    make(map[netip.Addr]window),
+			perIP:    make(map[netip.Addr]*window),
 			overflow: window{started: now},
 			global:   window{started: now},
 		},
@@ -150,18 +150,17 @@ func (l *RateLimiter) TryAcquire(ip netip.Addr) Throttle {
 	defer l.mu.Unlock()
 	now := l.clock()
 
-	key, scope := l.windowKeyFor(now, ip)
-	own := l.lookup(key)
+	own, scope := l.windowFor(now, ip)
 
 	// Check both before charging either, so a refusal spends from neither.
 	if !l.hasRoom(own, now, l.maxAttempts) {
 		return refused(scope, own.secondsUntilReset(now, l.windowSecs))
 	}
-	if !l.hasRoom(l.buckets.global, now, l.globalMaxAttempts) {
+	if !l.hasRoom(&l.buckets.global, now, l.globalMaxAttempts) {
 		return refused(ScopeGlobal, l.buckets.global.secondsUntilReset(now, l.windowSecs))
 	}
-	l.store(key, l.charge(own, now))
-	l.buckets.global = l.charge(l.buckets.global, now)
+	l.charge(own, now)
+	l.charge(&l.buckets.global, now)
 	return Throttle{Allowed: true}
 }
 
@@ -169,27 +168,23 @@ func refused(scope Scope, retryAfterSecs uint64) Throttle {
 	return Throttle{Scope: scope, RetryAfterSecs: retryAfterSecs}
 }
 
-// windowKey identifies which stored window an attempt is charged to.
-type windowKey struct {
-	ip       netip.Addr
-	overflow bool
-}
-
-// windowKeyFor picks ip's own window, or the overflow window if the map is
-// full even after pruning. A missing own window is created empty, as the Rust
-// original does, so a refused attempt still leaves its (empty) entry behind.
-func (l *RateLimiter) windowKeyFor(now time.Duration, ip netip.Addr) (windowKey, Scope) {
+// windowFor picks ip's own window, or the overflow window if the map is full
+// even after pruning. A missing own window is created empty, so a refused
+// attempt still leaves its (empty) entry behind.
+func (l *RateLimiter) windowFor(now time.Duration, ip netip.Addr) (*window, Scope) {
 	perIP := l.buckets.perIP
-	if _, tracked := perIP[ip]; !tracked && len(perIP) >= l.maxEntries {
+	if own, tracked := perIP[ip]; tracked {
+		return own, ScopePerIP
+	}
+	if len(perIP) >= l.maxEntries {
 		l.pruneExpired(now)
-		if len(perIP) >= l.maxEntries {
-			return windowKey{overflow: true}, ScopeShared
-		}
 	}
-	if _, tracked := perIP[ip]; !tracked {
-		perIP[ip] = window{started: now}
+	if len(perIP) >= l.maxEntries {
+		return &l.buckets.overflow, ScopeShared
 	}
-	return windowKey{ip: ip}, ScopePerIP
+	own := &window{started: now}
+	perIP[ip] = own
+	return own, ScopePerIP
 }
 
 func (l *RateLimiter) pruneExpired(now time.Duration) {
@@ -200,33 +195,18 @@ func (l *RateLimiter) pruneExpired(now time.Duration) {
 	}
 }
 
-func (l *RateLimiter) lookup(key windowKey) window {
-	if key.overflow {
-		return l.buckets.overflow
-	}
-	return l.buckets.perIP[key.ip]
-}
-
-func (l *RateLimiter) store(key windowKey, w window) {
-	if key.overflow {
-		l.buckets.overflow = w
-		return
-	}
-	l.buckets.perIP[key.ip] = w
-}
-
 // hasRoom treats an expired window as having room: charge rolls it over.
-func (l *RateLimiter) hasRoom(w window, now time.Duration, maxAttempts uint32) bool {
+func (l *RateLimiter) hasRoom(w *window, now time.Duration, maxAttempts uint32) bool {
 	return w.isExpired(now, l.windowSecs) || w.count < maxAttempts
 }
 
 // charge is only called after hasRoom, so the ceiling is not re-checked.
-func (l *RateLimiter) charge(w window, now time.Duration) window {
+func (l *RateLimiter) charge(w *window, now time.Duration) {
 	if w.isExpired(now, l.windowSecs) {
-		return window{count: 1, started: now}
+		*w = window{count: 1, started: now}
+		return
 	}
 	w.count++
-	return w
 }
 
 // Release refunds the attempt reserved by TryAcquire after a successful login,
@@ -247,9 +227,7 @@ func (l *RateLimiter) Release(ip netip.Addr) {
 	own.count = decrement(own.count)
 	if own.count == 0 {
 		delete(l.buckets.perIP, ip)
-		return
 	}
-	l.buckets.perIP[ip] = own
 }
 
 func decrement(count uint32) uint32 {
@@ -282,10 +260,8 @@ func (c *ClientKeys) Key(r *http.Request) netip.Addr {
 	return c.keyFor(peer, ok, r.Header)
 }
 
-// PeerAddr is the request's TCP peer, canonicalised; ok is false when
+// peerAddr is the request's TCP peer, canonicalised; ok is false when
 // RemoteAddr does not parse.
-func PeerAddr(r *http.Request) (netip.Addr, bool) { return peerAddr(r) }
-
 func peerAddr(r *http.Request) (netip.Addr, bool) {
 	addrPort, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
