@@ -79,8 +79,13 @@ func writeImage(t *testing.T, name string, encode func(*os.File) error) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
 	if err := encode(file); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	// Close reports a delayed write error; ignoring it would leave a truncated
+	// fixture that fails later with a confusing decode error.
+	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return path

@@ -1,0 +1,4 @@
+version: "2"
+
+# Only the defaults (errcheck, govet, ineffassign, staticcheck, unused). Keep
+# this file identical across the projects that share it.

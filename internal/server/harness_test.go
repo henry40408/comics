@@ -230,7 +230,7 @@ func (ta *testApp) do(method, path string, mods ...requestMod) *response {
 	if err != nil {
 		ta.t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		ta.t.Fatal(err)
