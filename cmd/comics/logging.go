@@ -33,8 +33,7 @@ func parseLogLevel(text string) (slog.Level, error) {
 	return 0, fmt.Errorf("unknown log level %q (want debug, info, warn or error)", text)
 }
 
-// newLogger writes to w, which is stdout in server mode. There is no colour
-// to turn off, so NO_COLOR needs no handling.
+// newLogger writes to w, which is stdout in server mode.
 func newLogger(w io.Writer, format string, level slog.Level) *slog.Logger {
 	handlerOptions := &slog.HandlerOptions{Level: level}
 	if format == "json" {
