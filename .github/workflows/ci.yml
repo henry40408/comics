@@ -147,7 +147,7 @@ jobs:
       # `-coverprofile` ignores the binary cmd/comics's TestMain execs; with
       # COMICS_COVERDIR set it builds that binary with `-cover`.
       - run: |
-          COMICS_COVERDIR="$PWD/covdata" go test -mod=vendor -coverprofile=coverage.out ./...
+          COMICS_COVERDIR="$PWD/covdata" go test -count=1 -mod=vendor -coverprofile=coverage.out ./...
           go tool covdata textfmt -i=covdata -o coverage-bin.out
           tail -n +2 coverage-bin.out >> coverage.out
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
