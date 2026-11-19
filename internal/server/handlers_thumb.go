@@ -105,7 +105,7 @@ func writeFileAtomically(path string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
+	defer func() { _ = os.Remove(staged.Name()) }()
 	if _, err := staged.Write(content); err != nil {
 		_ = staged.Close()
 		return err

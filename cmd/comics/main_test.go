@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -182,7 +183,13 @@ func (s *runningServer) wait(t *testing.T) int {
 	done := make(chan error, 1)
 	go func() { done <- s.cmd.Wait() }()
 	select {
-	case <-done:
+	case err := <-done:
+		// A non-zero exit is expected here (ExitCode is read below); anything else
+		// means Wait itself failed.
+		var exited *exec.ExitError
+		if err != nil && !errors.As(err, &exited) {
+			t.Fatalf("waiting for the server: %v", err)
+		}
 	case <-time.After(logWait):
 		t.Fatalf("the server never exited; logs:\n%s", s.joined())
 	}

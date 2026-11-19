@@ -19,7 +19,7 @@ func (a *App) Handler() http.Handler {
 	a.registerProtected(mux)
 	a.registerPublic(mux)
 
-	var handler http.Handler = a.requestLog(mux)
+	handler := a.requestLog(mux)
 	// Stateless fetch-metadata CSRF check. Global so it also covers the public
 	// /login and /logout POSTs; inert for GET/HEAD/OPTIONS.
 	//

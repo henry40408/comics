@@ -80,7 +80,7 @@ func decode(filePath string) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	config, _, err := image.DecodeConfig(file)
 	if err != nil {
 		return nil, fmt.Errorf("decode %s: %w", filePath, err)

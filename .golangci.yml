@@ -1,0 +1,7 @@
+version: "2"
+
+# Only the defaults (errcheck, govet, ineffassign, staticcheck, unused), plus the
+# gofmt formatter. Keep this file identical across the projects that share it.
+formatters:
+  enable:
+    - gofmt

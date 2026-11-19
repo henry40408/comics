@@ -86,7 +86,7 @@ func (s *Server) Stop() {
 		return
 	}
 	_ = s.cmd.Process.Kill()
-	<-s.exited
+	<-s.exited //nolint:errcheck // killed on purpose, so Wait's error carries nothing
 	s.cmd = nil
 }
 
