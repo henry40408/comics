@@ -41,7 +41,7 @@ func TestVerifyCredentialsPublicWhenUnconfigured(t *testing.T) {
 
 // The route must not depend on EnsurePasswordHashUsable having run.
 func TestAnUnusableStoredHashRefusesEveryPassword(t *testing.T) {
-	for _, stored := range []string{"", "not-a-hash", "$argon2id$v=19$m=19456$MTIzNDU2Nzg"} {
+	for _, stored := range []string{"", "not-a-hash", "$argon2id$v=19$m=19456,t=2,p=1$MTIzNDU2Nzg"} {
 		creds := &Credentials{Username: "alice", PasswordHash: stored}
 		if VerifyCredentials(creds, "alice", "s3cret") || VerifyCredentials(creds, "alice", "") {
 			t.Errorf("%q verified a password", stored)
@@ -145,8 +145,8 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		"",
 		"not-a-hash",
 		"password",
-		// Parses, but has no digest.
-		"$argon2id$v=19$m=19456$MTIzNDU2Nzg",
+		// Has a salt but no digest.
+		"$argon2id$v=19$m=19456,t=2,p=1$MTIzNDU2Nzg",
 		// Another algorithm's hash.
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
 	}
@@ -159,13 +159,6 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		if !strings.Contains(err.Error(), "hash-password") {
 			t.Errorf("%q: %q does not name hash-password", hash, err)
 		}
-	}
-}
-
-func TestADigestlessHashHasItsOwnMessage(t *testing.T) {
-	err := usable("$argon2id$v=19$m=19456$MTIzNDU2Nzg")
-	if err == nil || !strings.Contains(err.Error(), "carries no digest") {
-		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -208,8 +201,8 @@ func TestHashPasswordRecordsTheOWASPParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if parsed.Algorithm != "argon2id" || parsed.Version != 19 {
-		t.Errorf("algorithm %q version %d", parsed.Algorithm, parsed.Version)
+	if parsed.Algorithm != "argon2id" {
+		t.Errorf("algorithm %q", parsed.Algorithm)
 	}
 	if want := (PasswordParams{Memory: 19456, Time: 2, Threads: 1}); parsed.Params != want {
 		t.Errorf("params = %+v, want %+v", parsed.Params, want)
@@ -276,42 +269,22 @@ func TestVerifyReadsParametersFromTheStoredHash(t *testing.T) {
 	}
 }
 
-func TestParsePasswordHashFillsMissingParametersWithDefaults(t *testing.T) {
+func TestParsePasswordHashRefusesMissingFields(t *testing.T) {
 	salt := base64.RawStdEncoding.EncodeToString([]byte("0123456789abcdef"))
 	digest := base64.RawStdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 
-	parsed, err := ParsePasswordHash("$argon2id$v=19$m=1024$" + salt + "$" + digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := (PasswordParams{Memory: 1024, Time: 2, Threads: 1}); parsed.Params != want {
-		t.Errorf("params = %+v, want %+v", parsed.Params, want)
-	}
-
-	bare, err := ParsePasswordHash("$argon2id$v=19$" + salt + "$" + digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bare.Params != DefaultPasswordParams {
-		t.Errorf("params = %+v, want the defaults", bare.Params)
-	}
-}
-
-func TestParsePasswordHashTellsNoDigestApartFromMalformed(t *testing.T) {
-	parsed, err := ParsePasswordHash("$argon2id$v=19$m=19456$MTIzNDU2Nzg")
-	if err != nil {
-		t.Fatalf("a digest-less hash should parse: %v", err)
-	}
-	if parsed.HasDigest() {
-		t.Fatal("HasDigest = true")
-	}
-	if parsed.Matches("anything") {
-		t.Fatal("a digest-less hash matched")
-	}
-
-	for _, malformed := range []string{"", "x", "$argon2id", "argon2id$v=19$m=1$c2FsdA$aGFzaGhhc2g"} {
-		if _, err := ParsePasswordHash(malformed); err == nil {
-			t.Errorf("%q parsed", malformed)
+	for name, hash := range map[string]string{
+		"no version":          "$argon2id$m=1024,t=1,p=1$" + salt + "$" + digest,
+		"missing t and p":     "$argon2id$v=19$m=1024$" + salt + "$" + digest,
+		"no parameters":       "$argon2id$v=19$" + salt + "$" + digest,
+		"parameters shuffled": "$argon2id$v=19$t=1,m=1024,p=1$" + salt + "$" + digest,
+		"no digest":           "$argon2id$v=19$m=1024,t=1,p=1$" + salt,
+		"empty":               "",
+		"not a hash":          "x",
+		"no leading dollar":   "argon2id$v=19$m=1,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2g",
+	} {
+		if _, err := ParsePasswordHash(hash); err == nil {
+			t.Errorf("%s parsed", name)
 		}
 	}
 }

@@ -136,24 +136,25 @@ const (
 )
 
 func TestParsePasswordHashBoundaries(t *testing.T) {
+	const ok = "$argon2id$v=19$m=19456,t=2,p=1$"
 	for name, tc := range map[string]struct {
 		phc     string
 		wantErr bool
 	}{
-		"three fields: algorithm and salt only": {"$argon2id$" + saltOf8Bytes, false},
-		"version only, no salt":                 {"$argon2id$v=19", true},
-		"salt of exactly the minimum":           {"$argon2id$v=19$m=19456,t=2,p=1$" + saltOf8Bytes, false},
-		"salt one byte short":                   {"$argon2id$v=19$m=19456,t=2,p=1$" + saltOf7Bytes, true},
-		"digest of exactly the minimum":         {"$argon2id$v=19$m=19456,t=2,p=1$" + saltOf8Bytes + "$" + digestOf4, false},
-		"digest one byte short":                 {"$argon2id$v=19$m=19456,t=2,p=1$" + saltOf8Bytes + "$" + digestOf3, true},
-		"memory exactly 8 per lane (p=1)":       {"$argon2id$v=19$m=8,t=1,p=1$" + saltOf8Bytes, false},
-		"memory one under 8 per lane (p=1)":     {"$argon2id$v=19$m=7,t=1,p=1$" + saltOf8Bytes, true},
-		"memory exactly 8 per lane (p=2)":       {"$argon2id$v=19$m=16,t=1,p=2$" + saltOf8Bytes, false},
-		"memory one under 8 per lane (p=2)":     {"$argon2id$v=19$m=15,t=1,p=2$" + saltOf8Bytes, true},
-		"memory exactly 8 per lane (p=3)":       {"$argon2id$v=19$m=24,t=1,p=3$" + saltOf8Bytes, false},
-		"memory one under 8 per lane (p=3)":     {"$argon2id$v=19$m=23,t=1,p=3$" + saltOf8Bytes, true},
-		"time of zero":                          {"$argon2id$v=19$m=8,t=0,p=1$" + saltOf8Bytes, true},
-		"threads of zero":                       {"$argon2id$v=19$m=8,t=1,p=0$" + saltOf8Bytes, true},
+		"algorithm and salt only":           {"$argon2id$" + saltOf8Bytes, true},
+		"version only, no salt":             {"$argon2id$v=19", true},
+		"salt and no digest":                {ok + saltOf8Bytes, true},
+		"salt of exactly the minimum":       {ok + saltOf8Bytes + "$" + digestOf4, false},
+		"salt one byte short":               {ok + saltOf7Bytes + "$" + digestOf4, true},
+		"digest one byte short":             {ok + saltOf8Bytes + "$" + digestOf3, true},
+		"memory exactly 8 per lane (p=1)":   {"$argon2id$v=19$m=8,t=1,p=1$" + saltOf8Bytes + "$" + digestOf4, false},
+		"memory one under 8 per lane (p=1)": {"$argon2id$v=19$m=7,t=1,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
+		"memory exactly 8 per lane (p=2)":   {"$argon2id$v=19$m=16,t=1,p=2$" + saltOf8Bytes + "$" + digestOf4, false},
+		"memory one under 8 per lane (p=2)": {"$argon2id$v=19$m=15,t=1,p=2$" + saltOf8Bytes + "$" + digestOf4, true},
+		"memory exactly 8 per lane (p=3)":   {"$argon2id$v=19$m=24,t=1,p=3$" + saltOf8Bytes + "$" + digestOf4, false},
+		"memory one under 8 per lane (p=3)": {"$argon2id$v=19$m=23,t=1,p=3$" + saltOf8Bytes + "$" + digestOf4, true},
+		"time of zero":                      {"$argon2id$v=19$m=8,t=0,p=1$" + saltOf8Bytes + "$" + digestOf4, true},
+		"threads of zero":                   {"$argon2id$v=19$m=8,t=1,p=0$" + saltOf8Bytes + "$" + digestOf4, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := ParsePasswordHash(tc.phc)

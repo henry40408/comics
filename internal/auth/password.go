@@ -100,115 +100,84 @@ func formatPHC(params PasswordParams, salt, digest []byte) string {
 		base64.RawStdEncoding.EncodeToString(digest))
 }
 
-// ParsedPasswordHash is a PHC string taken apart. Digest is empty when the
-// string carried a salt but no hash after it.
+// ParsedPasswordHash is a PHC string taken apart.
 type ParsedPasswordHash struct {
 	Algorithm string
-	Version   int
 	Params    PasswordParams
 	Salt      []byte
 	Digest    []byte
 }
 
-// HasDigest reports whether the hash can ever match a password.
-func (p ParsedPasswordHash) HasDigest() bool { return len(p.Digest) > 0 }
-
-// ParsePasswordHash reads $argon2id$v=19$m=..,t=..,p=..$<salt>$<hash>. Salt and
-// hash use standard base64 without padding. A field missing from the
-// parameters takes the default. Only argon2id and argon2i at version 19 are
-// supported; that is stricter than Rust's password-hash for argon2d, v=16 and
-// p>255. Salts under 8 bytes are refused, as in Rust.
+// ParsePasswordHash reads exactly what HashPassword writes,
+// $argon2id$v=19$m=..,t=..,p=..$<salt>$<hash>, with every field present and the
+// parameters in that order. Salt and hash use standard base64 without padding.
+// Only argon2id and argon2i at version 19 are supported. Salts under 8 bytes
+// and digests under 4 bytes are refused.
 //
-// A string with a salt but no digest (such as "$argon2id$v=19$m=19456$nope")
-// parses; check HasDigest. A digest-less hash verifies as a wrong password, so
-// the parse alone would let a useless hash through.
+// A missing field is an error, not a default: a hash that silently took the
+// default cost would parse and then never verify.
 func ParsePasswordHash(phc string) (ParsedPasswordHash, error) {
 	fields := strings.Split(phc, "$")
-	if len(fields) < 3 || fields[0] != "" {
-		return ParsedPasswordHash{}, errors.New("password hash string missing the `$` prefix")
+	if len(fields) != 6 || fields[0] != "" {
+		return ParsedPasswordHash{}, errors.New("password hash must look like " +
+			"$argon2id$v=19$m=<memory>,t=<time>,p=<threads>$<salt>$<hash>")
 	}
-	hash := ParsedPasswordHash{Algorithm: fields[1], Version: argon2Version, Params: DefaultPasswordParams}
+	hash := ParsedPasswordHash{Algorithm: fields[1]}
 	if hash.Algorithm != "argon2id" && hash.Algorithm != "argon2i" {
 		return ParsedPasswordHash{}, fmt.Errorf("unsupported algorithm %q", hash.Algorithm)
 	}
-	return parsePHCBody(hash, fields[2:])
-}
-
-func parsePHCBody(hash ParsedPasswordHash, fields []string) (ParsedPasswordHash, error) {
-	if len(fields) > 0 && strings.HasPrefix(fields[0], "v=") {
-		version, err := strconv.Atoi(fields[0][2:])
-		if err != nil || version != argon2Version {
-			return ParsedPasswordHash{}, fmt.Errorf("unsupported version %q", fields[0][2:])
-		}
-		fields = fields[1:]
+	if fields[2] != "v="+strconv.Itoa(argon2Version) {
+		return ParsedPasswordHash{}, fmt.Errorf("unsupported version %q", fields[2])
 	}
-	if len(fields) > 0 && strings.Contains(fields[0], "=") {
-		params, err := parseParams(fields[0])
-		if err != nil {
-			return ParsedPasswordHash{}, err
-		}
-		hash.Params = params
-		fields = fields[1:]
+	params, err := parseParams(fields[3])
+	if err != nil {
+		return ParsedPasswordHash{}, err
 	}
-	if len(fields) == 0 || len(fields) > 2 {
-		return ParsedPasswordHash{}, errors.New("password hash has no salt, or trailing fields")
+	hash.Params = params
+	if hash.Salt, err = decodeBase64(fields[4], minSaltBytes, "salt"); err != nil {
+		return ParsedPasswordHash{}, err
 	}
-	return decodeSaltAndDigest(hash, fields)
-}
-
-func decodeSaltAndDigest(hash ParsedPasswordHash, fields []string) (ParsedPasswordHash, error) {
-	salt, err := base64.RawStdEncoding.DecodeString(fields[0])
-	if err != nil || len(salt) < minSaltBytes {
-		return ParsedPasswordHash{}, errors.New("salt invalid")
-	}
-	hash.Salt = salt
-	if len(fields) == 2 {
-		digest, err := base64.RawStdEncoding.DecodeString(fields[1])
-		if err != nil || len(digest) < minDigestBytes {
-			return ParsedPasswordHash{}, errors.New("hash output invalid")
-		}
-		hash.Digest = digest
-	}
-	if err := validateParams(hash.Params); err != nil {
+	if hash.Digest, err = decodeBase64(fields[5], minDigestBytes, "hash output"); err != nil {
 		return ParsedPasswordHash{}, err
 	}
 	return hash, nil
 }
 
-func parseParams(raw string) (PasswordParams, error) {
-	params := DefaultPasswordParams
-	for pair := range strings.SplitSeq(raw, ",") {
-		name, value, ok := strings.Cut(pair, "=")
-		if !ok {
-			return PasswordParams{}, fmt.Errorf("parameter %q has no value", pair)
-		}
-		if err := setParam(&params, name, value); err != nil {
-			return PasswordParams{}, err
-		}
+func decodeBase64(text string, minBytes int, what string) ([]byte, error) {
+	decoded, err := base64.RawStdEncoding.DecodeString(text)
+	if err != nil || len(decoded) < minBytes {
+		return nil, fmt.Errorf("%s invalid", what)
 	}
-	return params, nil
+	return decoded, nil
 }
 
-func setParam(params *PasswordParams, name, value string) error {
-	bits := 32
-	if name == "p" {
-		bits = 8
+// parseParams reads m=<memory>,t=<time>,p=<threads>, in that order.
+func parseParams(raw string) (PasswordParams, error) {
+	parts := strings.Split(raw, ",")
+	if len(parts) != 3 {
+		return PasswordParams{}, fmt.Errorf("parameters %q must be m=..,t=..,p=..", raw)
 	}
-	number, err := strconv.ParseUint(value, 10, bits)
-	if err != nil {
-		return fmt.Errorf("parameter %s=%q invalid", name, value)
+	var numbers [3]uint64
+	for i, key := range []string{"m", "t", "p"} {
+		text, ok := strings.CutPrefix(parts[i], key+"=")
+		if !ok {
+			return PasswordParams{}, fmt.Errorf("parameters %q must be m=..,t=..,p=..", raw)
+		}
+		bits := 32
+		if key == "p" {
+			bits = 8
+		}
+		number, err := strconv.ParseUint(text, 10, bits)
+		if err != nil {
+			return PasswordParams{}, fmt.Errorf("parameter %s=%q invalid", key, text)
+		}
+		numbers[i] = number
 	}
-	switch name {
-	case "m":
-		params.Memory = uint32(number)
-	case "t":
-		params.Time = uint32(number)
-	case "p":
-		params.Threads = uint8(number)
-	default:
-		return fmt.Errorf("unsupported parameter %q", name)
+	params := PasswordParams{Memory: uint32(numbers[0]), Time: uint32(numbers[1]), Threads: uint8(numbers[2])}
+	if err := validateParams(params); err != nil {
+		return PasswordParams{}, err
 	}
-	return nil
+	return params, nil
 }
 
 // validateParams rejects what argon2.IDKey would panic on.
@@ -221,12 +190,8 @@ func validateParams(params PasswordParams) error {
 }
 
 // Matches reports whether password produces this hash's digest, reading cost,
-// algorithm and output length from the parsed string. A hash with no digest
-// matches nothing.
+// algorithm and output length from the parsed string.
 func (p ParsedPasswordHash) Matches(password string) bool {
-	if !p.HasDigest() {
-		return false
-	}
 	derive := argon2.IDKey
 	if p.Algorithm == "argon2i" {
 		derive = argon2.Key
@@ -236,7 +201,7 @@ func (p ParsedPasswordHash) Matches(password string) bool {
 }
 
 // VerifyPassword checks password against a stored PHC string. An unparseable
-// or digest-less hash refuses; EnsurePasswordHashUsable should have rejected
+// hash refuses; EnsurePasswordHashUsable should have rejected
 // it at startup.
 func VerifyPassword(password, stored string) bool {
 	parsed, err := ParsePasswordHash(stored)
@@ -285,9 +250,6 @@ func VerifyCredentials(creds *Credentials, username, password string) bool {
 // could not use. Otherwise the server starts with auth enabled and refuses the
 // correct password exactly as it refuses a typo. Deliberately not run before
 // the hash-password subcommand, which is how the operator fixes a bad hash.
-//
-// A parse is not enough: a salt with no digest parses, then verifies as a
-// wrong password, hence the HasDigest check.
 func EnsurePasswordHashUsable(hash string) error {
 	for _, prefix := range bcryptPrefixes {
 		if strings.HasPrefix(hash, prefix) {
@@ -298,15 +260,9 @@ func EnsurePasswordHashUsable(hash string) error {
 				"COMICS_AUTH_PASSWORD_HASH with the new hash.")
 		}
 	}
-	parsed, err := ParsePasswordHash(hash)
-	if err != nil {
+	if _, err := ParsePasswordHash(hash); err != nil {
 		return fmt.Errorf("COMICS_AUTH_PASSWORD_HASH is not an Argon2 hash (%w); "+
 			"generate one with `comics hash-password`", err)
-	}
-	if !parsed.HasDigest() {
-		return errors.New("COMICS_AUTH_PASSWORD_HASH carries no digest — it is a salt without a " +
-			"hash after it, which can never match any password; " +
-			"generate a complete one with `comics hash-password`")
 	}
 	return nil
 }
