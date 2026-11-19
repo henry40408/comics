@@ -161,13 +161,13 @@ func decodeBase64(text string, minBytes int, what string) ([]byte, error) {
 func parseParams(raw string) (PasswordParams, error) {
 	parts := strings.Split(raw, ",")
 	if len(parts) != 3 {
-		return PasswordParams{}, fmt.Errorf("parameters %q must be m=..,t=..,p=..", raw)
+		return PasswordParams{}, fmt.Errorf("parameters %q must look like m=<memory>,t=<time>,p=<threads>", raw)
 	}
 	var numbers [3]uint64
 	for i, key := range []string{"m", "t", "p"} {
 		text, ok := strings.CutPrefix(parts[i], key+"=")
 		if !ok {
-			return PasswordParams{}, fmt.Errorf("parameters %q must be m=..,t=..,p=..", raw)
+			return PasswordParams{}, fmt.Errorf("parameters %q must look like m=<memory>,t=<time>,p=<threads>", raw)
 		}
 		bits := 32
 		if key == "p" {
