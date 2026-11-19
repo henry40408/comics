@@ -183,29 +183,14 @@ func UserAgent(r *http.Request) string {
 // LoginRedirectTarget is where an unauthenticated GET is sent: the login form,
 // remembering the requested path and query.
 func LoginRedirectTarget(requested *url.URL) string {
-	return "/login?next=" + urlEncode(requested.RequestURI())
+	return "/login?next=" + escapeNext(requested.RequestURI())
 }
 
-// urlEncode is minimal percent-encoding for the next query parameter: it keeps
-// A-Za-z0-9-_.~ and writes every other byte as %XX.
-func urlEncode(input string) string {
-	var out strings.Builder
-	for i := range len(input) {
-		b := input[i]
-		if isUnreserved(b) {
-			out.WriteByte(b)
-			continue
-		}
-		out.WriteByte('%')
-		out.WriteByte(upperHex[b>>4])
-		out.WriteByte(upperHex[b&0x0f])
-	}
-	return out.String()
-}
-
-func isUnreserved(b byte) bool {
-	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' ||
-		b == '-' || b == '_' || b == '.' || b == '~'
+// escapeNext percent-encodes everything but A-Za-z0-9-_.~. QueryEscape writes a
+// space as "+", so it becomes %20 to keep one spelling; a literal "+" is
+// already %2B, so the replacement cannot touch it.
+func escapeNext(next string) string {
+	return strings.ReplaceAll(url.QueryEscape(next), "+", "%20")
 }
 
 // SafeNext constrains a post-login redirect target to a local path.

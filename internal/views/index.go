@@ -69,7 +69,7 @@ func header(view IndexView) node {
 	)
 }
 
-// formatFloat matches Rust's f64 Display: shortest form, no exponent.
+// formatFloat is the shortest form, with no exponent.
 func formatFloat(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 
 func controls(view IndexView) node {

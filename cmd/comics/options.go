@@ -139,7 +139,7 @@ func (o *options) validateBindForServer() error {
 	if o.command != "" || o.showVersion {
 		return nil
 	}
-	// Hostnames are refused, as with Rust's SocketAddr.
+	// Hostnames are refused: the listen address must be a literal IP.
 	if _, err := netip.ParseAddrPort(o.bind); err != nil {
 		return fmt.Errorf("invalid bind %q: must be an IP address and port such as 127.0.0.1:8080: %w", o.bind, err)
 	}

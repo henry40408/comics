@@ -23,8 +23,8 @@ type Book struct {
 	Pages []Page
 }
 
-// joinPath mirrors Rust's Path::join: dir + "/" + name, with no separator
-// added when dir is empty or already ends in one. filepath.Join would clean
+// joinPath is dir + "/" + name, with no separator added when dir is empty or
+// already ends in one. filepath.Join would clean
 // "./data" to "data" and change every page ID.
 func joinPath(dir, name string) string {
 	if dir == "" || strings.HasSuffix(dir, "/") {

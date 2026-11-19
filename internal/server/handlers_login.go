@@ -12,7 +12,7 @@ import (
 	"github.com/henry40408/comics/internal/views"
 )
 
-// maxLoginBodyBytes matches the 2 MiB axum's Form extractor allowed.
+// maxLoginBodyBytes caps the login form body at 2 MiB.
 const maxLoginBodyBytes = 2 << 20
 
 // clearSiteData drops what the browser already holds (no-store only prevents
@@ -57,14 +57,12 @@ func renderLogin(w http.ResponseWriter, failed bool, next string) {
 	writeHTML(w, status, views.LoginPage(views.LoginView{Error: failed, Next: auth.SafeNext(next)}))
 }
 
-// handleLoginSubmit is POST /login. The form is read first, as the framework
-// extractor did, so a malformed request spends neither budget nor a
-// verification slot. The throttle then runs before the credential check, so a
-// throttled attempt learns nothing.
+// handleLoginSubmit is POST /login. The form is read first, so a malformed
+// request spends neither budget nor a verification slot. The throttle then runs
+// before the credential check, so a throttled attempt learns nothing.
 func (a *App) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
-	form, status := readLoginForm(w, r)
-	if status != 0 {
-		http.Error(w, http.StatusText(status), status)
+	form, ok := readLoginForm(w, r)
+	if !ok {
 		return
 	}
 	ip := a.clientKeys.Key(r)
@@ -92,26 +90,30 @@ func (a *App) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	a.startSession(w, auth.SafeNext(form.next), ip.String(), userAgent)
 }
 
-// readLoginForm returns a non-zero HTTP status when the request is not an
-// acceptable login form.
-func readLoginForm(w http.ResponseWriter, r *http.Request) (loginForm, int) {
+// readLoginForm answers the error itself and reports false when the request is
+// not an acceptable login form.
+func readLoginForm(w http.ResponseWriter, r *http.Request) (loginForm, bool) {
+	fail := func(status int) (loginForm, bool) {
+		http.Error(w, http.StatusText(status), status)
+		return loginForm{}, false
+	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-www-form-urlencoded" {
-		return loginForm{}, http.StatusUnsupportedMediaType
+		return fail(http.StatusUnsupportedMediaType)
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxLoginBodyBytes))
 	if err != nil {
-		return loginForm{}, bodyErrorStatus(err)
+		return fail(bodyErrorStatus(err))
 	}
 	values, err := url.ParseQuery(string(body))
 	if err != nil || !values.Has("username") || !values.Has("password") {
-		return loginForm{}, http.StatusUnprocessableEntity
+		return fail(http.StatusUnprocessableEntity)
 	}
 	return loginForm{
 		username: values.Get("username"),
 		password: values.Get("password"),
 		next:     queryOrDefault(values, "next", "/"),
-	}, 0
+	}, true
 }
 
 func bodyErrorStatus(err error) int {

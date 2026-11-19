@@ -70,9 +70,9 @@ func Generate(filePath string, limit int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// maxDecodeBytes bounds the RGBA buffer a decode may allocate, matching the
-// Rust image crate's default max_alloc. A header can declare far more pixels
-// than the file holds, so the size is checked before decoding.
+// maxDecodeBytes bounds the RGBA buffer a decode may allocate. A header can
+// declare far more pixels than the file holds, so the size is checked before
+// decoding.
 const maxDecodeBytes = 512 << 20
 
 func decode(filePath string) (image.Image, error) {
@@ -100,8 +100,8 @@ func decode(filePath string) (image.Image, error) {
 }
 
 // fit scales img to the largest size inside limit x limit. JPEG has no alpha
-// channel, so, like the Rust image crate's to_rgb8, alpha is dropped and a
-// transparent pixel shows whatever RGB the file stored for it.
+// channel, so alpha is dropped and a transparent pixel shows whatever RGB the
+// file stored for it.
 func fit(img image.Image, limit int) *image.RGBA {
 	opaque := dropAlpha(img)
 	width, height := scaledSize(opaque.Bounds().Dx(), opaque.Bounds().Dy(), limit)
@@ -123,9 +123,8 @@ func dropAlpha(img image.Image) *image.RGBA {
 	return out
 }
 
-// scaledSize keeps the aspect ratio, never returns a zero edge, and, like the
-// Rust image crate's resize_dimensions, rounds to the nearest pixel and also
-// enlarges an image smaller than limit.
+// scaledSize keeps the aspect ratio, never returns a zero edge, rounds to the
+// nearest pixel and also enlarges an image smaller than limit.
 func scaledSize(width, height, limit int) (int, int) {
 	if width >= height {
 		return limit, scaledEdge(height, limit, width)

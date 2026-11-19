@@ -107,9 +107,9 @@ func TestVerifyRefusesTamperedShortAndForeignValues(t *testing.T) {
 	}
 }
 
-// Pinned against the cookie crate (0.18): HMAC-SHA256 keyed by the first 32
-// bytes of the session key, over the value alone, base64 digest first.
-func TestSigningMatchesTheCookieCrateScheme(t *testing.T) {
+// Pinned: HMAC-SHA256 keyed by the first 32 bytes of the session key, over the
+// value alone, unpadded base64url digest first.
+func TestSigningScheme(t *testing.T) {
 	var key [64]byte
 	for i := range key {
 		key[i] = byte(i)
@@ -117,32 +117,28 @@ func TestSigningMatchesTheCookieCrateScheme(t *testing.T) {
 	signer := NewCookieSigner(key)
 	const id = "0123456789abcdef0123456789abcdef"
 
-	want := "Zvxm8ldaBq9fRkNFpJiFvsy3zx+SLH0SbT/jbDFoPgw=" + id
+	want := "Zvxm8ldaBq9fRkNFpJiFvsy3zx-SLH0SbT_jbDFoPgw" + id
 	if got := signer.Sign(id); got != want {
 		t.Fatalf("Sign = %q, want %q", got, want)
 	}
-
-	// What the cookie crate puts on the wire for the same cookie.
-	wire := "Zvxm8ldaBq9fRkNFpJiFvsy3zx+SLH0SbT%2FjbDFoPgw%3D" + id
-	if got := signer.SignCookie(BuildSessionCookie(false, id)).Value; got != wire {
-		t.Fatalf("SignCookie value = %q, want %q", got, wire)
+	if got := signer.SignCookie(BuildSessionCookie(false, id)).Value; got != want {
+		t.Fatalf("SignCookie value = %q, want %q", got, want)
 	}
 }
 
-func TestSignedCookiesArePercentEncodedLikeTheCookieCrate(t *testing.T) {
-	var key [64]byte
-	signer := NewCookieSigner(key)
+func TestSignedCookiesNeedNoEscaping(t *testing.T) {
+	signer := NewCookieSigner(randomSessionKey(t))
 	cookie := signer.SignCookie(BuildSessionCookie(false, strings.Repeat("a", 32)))
 
-	if strings.ContainsAny(cookie.Value, "/=") {
-		t.Fatalf("value %q has unescaped / or =", cookie.Value)
+	if strings.ContainsAny(cookie.Value, "/+=%") {
+		t.Fatalf("value %q has characters that need escaping", cookie.Value)
 	}
-	if !strings.HasSuffix(cookie.Value, "%3D"+strings.Repeat("a", 32)) {
-		t.Fatalf("value %q does not end with the escaped padding and the id", cookie.Value)
+	if !strings.HasPrefix(cookie.String(), SessionCookie+"="+cookie.Value+";") {
+		t.Fatalf("Set-Cookie %q altered the value", cookie.String())
 	}
 }
 
-func TestEncodingRoundTripsThroughARequest(t *testing.T) {
+func TestSignedCookieRoundTripsThroughARequest(t *testing.T) {
 	key := randomSessionKey(t)
 	signer := NewCookieSigner(key)
 	a := newTestAuthenticator(t, key)
@@ -155,35 +151,6 @@ func TestEncodingRoundTripsThroughARequest(t *testing.T) {
 	got, ok := a.SessionID(request)
 	if !ok || got != id {
 		t.Fatalf("SessionID = %q, %v, want %q", got, ok, id)
-	}
-}
-
-// A client that sends the value unescaped (as an earlier Go draft did) still
-// authenticates: decoding is lenient.
-func TestAnUnescapedSignedValueIsAlsoAccepted(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
-	id := a.Sessions.Create(testUA)
-
-	raw := SessionCookie + "=" + NewCookieSigner(key).Sign(id)
-	if got, ok := a.SessionID(requestWithCookie(raw)); !ok || got != id {
-		t.Fatalf("SessionID = %q, %v, want %q", got, ok, id)
-	}
-}
-
-func TestDecodeCookieValueKeepsInvalidEscapesLiteral(t *testing.T) {
-	cases := map[string]string{
-		"a%3Db":  "a=b",
-		"100%":   "100%",
-		"%zz":    "%zz",
-		"%2":     "%2",
-		"plain":  "plain",
-		"%2f%2F": "//",
-	}
-	for input, want := range cases {
-		if got := decodeCookieValue(input); got != want {
-			t.Errorf("decodeCookieValue(%q) = %q, want %q", input, got, want)
-		}
 	}
 }
 

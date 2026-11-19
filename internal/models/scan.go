@@ -108,7 +108,7 @@ func readNames(dir string) ([]string, error) {
 }
 
 // parallelMap keeps the results fn accepts, in input order, using a pool of
-// runtime.NumCPU workers (the counterpart of the Rust scan's rayon).
+// runtime.NumCPU workers.
 func parallelMap[In, Out any](inputs []In, fn func(In) (Out, bool)) []Out {
 	type slot struct {
 		value Out
