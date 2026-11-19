@@ -1,8 +1,8 @@
 module github.com/henry40408/comics
 
-go 1.26.0
+go 1.27.0
 
-toolchain go1.26.11
+toolchain go1.27.4
 
 require (
 	github.com/zeebo/xxh3 v1.1.0
