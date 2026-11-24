@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"testing"
 )
@@ -41,10 +42,13 @@ func TestDefaults(t *testing.T) {
 }
 
 func TestFlagBeatsEnvBeatsDefault(t *testing.T) {
-	env := map[string]string{"COMICS_DATA_DIR": "from-env", "COMICS_BIND": "127.0.0.1:1"}
-	opts := mustParse(t, []string{"--data-dir", "from-flag"}, env)
+	env := map[string]string{"COMICS_DATA_DIR": "from-env", "COMICS_BIND": "127.0.0.1:1", "COMICS_LOG_FORMAT": "json"}
+	opts := mustParse(t, []string{"--data-dir", "from-flag", "--log-format", "text"}, env)
 	if opts.dataDir != "from-flag" {
 		t.Errorf("dataDir = %q", opts.dataDir)
+	}
+	if opts.logFormat != "text" {
+		t.Errorf("logFormat = %q", opts.logFormat)
 	}
 	if opts.bind != "127.0.0.1:1" {
 		t.Errorf("bind = %q", opts.bind)
@@ -53,8 +57,13 @@ func TestFlagBeatsEnvBeatsDefault(t *testing.T) {
 
 func TestAnEmptyEnvVarIsUnset(t *testing.T) {
 	opts := mustParse(t, nil, map[string]string{"COMICS_TRUSTED_PROXIES": "", "COMICS_COOKIE_SECURE": ""})
-	if !opts.trustedProxies.IsEmpty() || opts.cookieSecure {
-		t.Fatalf("empty variables took effect: %+v", opts)
+	for _, ip := range []string{"127.0.0.1", "::1"} {
+		if opts.trustedProxies.Contains(netip.MustParseAddr(ip)) {
+			t.Errorf("an empty COMICS_TRUSTED_PROXIES trusts %s", ip)
+		}
+	}
+	if opts.cookieSecure {
+		t.Error("an empty COMICS_COOKIE_SECURE took effect")
 	}
 }
 
@@ -90,10 +99,13 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 		"bad proxies":      {"--trusted-proxies", "not-an-ip"},
 		"hostname bind":    {"--bind", "localhost:8080"},
 		"bad log format":   {"--log-format", "yaml"},
+		"retired format":   {"--log-format", "full"},
 		"bad hsts":         {"--hsts-max-age", "-1"},
 		"unknown flag":     {"--nope"},
 		"unknown command":  {"frobnicate"},
 		"extra argument":   {"list", "extra"},
+		"removed -b flag":  {"-b", "127.0.0.1:2"},
+		"removed ls alias": {"ls"},
 	}
 	for name, args := range cases {
 		_, err := parseOptions(args, envOf(nil), io.Discard)
@@ -103,8 +115,10 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 		}
 		assertUsageError(t, err)
 	}
-	_, err := parseOptions(nil, envOf(map[string]string{logLevelEnv: "trace"}), io.Discard)
-	assertUsageError(t, err)
+	for _, env := range []map[string]string{{logLevelEnv: "trace"}, {"COMICS_LOG_FORMAT": "full"}} {
+		_, err := parseOptions(nil, envOf(env), io.Discard)
+		assertUsageError(t, err)
+	}
 }
 
 func TestBindIsValidatedOnlyInServerMode(t *testing.T) {
@@ -139,8 +153,10 @@ func TestOptionsAreParsedIntoTheirTypes(t *testing.T) {
 	if opts.secret == nil || opts.hstsMaxAge == nil || *opts.hstsMaxAge != 0 {
 		t.Fatalf("secret/hsts: %+v", opts)
 	}
-	if opts.trustedProxies.IsEmpty() {
-		t.Error("trusted proxies were dropped")
+	for ip, want := range map[string]bool{"10.1.2.3": true, "192.168.0.1": true, "192.168.0.2": false} {
+		if got := opts.trustedProxies.Contains(netip.MustParseAddr(ip)); got != want {
+			t.Errorf("trusted proxies contain %s = %v, want %v", ip, got, want)
+		}
 	}
 	if opts.authUsername != "user" {
 		t.Errorf("auth username = %q", opts.authUsername)
@@ -168,10 +184,11 @@ func TestHelpPrintsUsageAndABadFlagDoesNot(t *testing.T) {
 
 func TestLegacyEnvVarsAreReportedInOrder(t *testing.T) {
 	err := ensureNoLegacyEnvVars(envOf(map[string]string{
-		"COMICS_SESSION_KEY": "x", "BIND": "", "RUST_LOG": "debug",
+		"COMICS_SESSION_KEY": "x", "COMICS_SEED": "x", "BIND": "", "RUST_LOG": "debug",
 	}))
 	want := "these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
+		"  BIND -> COMICS_BIND\n  COMICS_SEED -> COMICS_SECRET\n" +
+		"  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v", err)
 	}

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,8 @@ const (
 	secondBookID    = "b8799902927c8bf6"
 	testSecret      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
+
+var discardLogger = slog.New(slog.DiscardHandler)
 
 func writeFile(t *testing.T, path string) {
 	t.Helper()
@@ -51,7 +54,7 @@ func TestBookNewBuildsWithSortedPages(t *testing.T) {
 	mkdir(t, book)
 	writeFile(t, filepath.Join(book, "02.jpg"))
 	writeFile(t, filepath.Join(book, "01.jpg"))
-	got, err := newBook(1, dir, "My Book", nil)
+	got, err := newBook(1, dir, "My Book", discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +73,7 @@ func scanTwoBooks(t *testing.T) (*BookScan, string) {
 			writeFile(t, filepath.Join(dir, book, page))
 		}
 	}
-	scan, err := ScanBooks(1, dir, nil)
+	scan, err := ScanBooks(1, dir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +120,7 @@ func TestScanSkipsLooseFilesAndEmptyBooks(t *testing.T) {
 	mkdir(t, filepath.Join(dir, "empty"))
 	mkdir(t, filepath.Join(dir, "Real"))
 	writeFile(t, filepath.Join(dir, "Real", "01.jpg"))
-	scan, err := ScanBooks(1, dir, nil)
+	scan, err := ScanBooks(1, dir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +130,7 @@ func TestScanSkipsLooseFilesAndEmptyBooks(t *testing.T) {
 }
 
 func TestScanFailsWhenTheDataDirIsMissing(t *testing.T) {
-	if _, err := ScanBooks(0, filepath.Join(t.TempDir(), "nope"), nil); err == nil {
+	if _, err := ScanBooks(0, filepath.Join(t.TempDir(), "nope"), discardLogger); err == nil {
 		t.Fatal("missing data dir scanned")
 	}
 }
@@ -149,7 +152,7 @@ func TestJoinPathKeepsTheDirAsGiven(t *testing.T) {
 // A cleaned data dir would change every page ID, so the path must be kept as
 // given.
 func TestPagePathsKeepTheDataDirAsGiven(t *testing.T) {
-	scan, err := ScanBooks(0, "./"+fixtureDataDir, nil)
+	scan, err := ScanBooks(0, "./"+fixtureDataDir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +167,7 @@ func TestBookIDsAreStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scan, err := ScanBooks(parsed.IDSeed(), fixtureDataDir, nil)
+	scan, err := ScanBooks(parsed.IDSeed(), fixtureDataDir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +204,7 @@ func TestScanFollowsASymlinkedBookDirectory(t *testing.T) {
 	outside, root := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(outside, "01.jpg"))
 	symlink(t, outside, filepath.Join(root, "Linked"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +219,7 @@ func TestScanFollowsASymlinkedPageFile(t *testing.T) {
 	book := filepath.Join(root, "Book")
 	mkdir(t, book)
 	symlink(t, filepath.Join(outside, "real.jpg"), filepath.Join(book, "01.jpg"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +234,7 @@ func TestScanRejectsASymlinkToADirectoryInsideABook(t *testing.T) {
 	mkdir(t, book)
 	writeFile(t, filepath.Join(book, "01.jpg"))
 	symlink(t, outside, filepath.Join(book, "sub"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +248,7 @@ func TestNonUTF8NamesAreRejected(t *testing.T) {
 	if _, err := newPage(0, dir, "\xff.jpg"); err == nil {
 		t.Error("newPage accepted a non-UTF-8 name")
 	}
-	if _, err := newBook(0, dir, "\xff", nil); err == nil {
+	if _, err := newBook(0, dir, "\xff", discardLogger); err == nil {
 		t.Error("newBook accepted a non-UTF-8 name")
 	}
 }

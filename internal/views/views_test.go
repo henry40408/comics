@@ -3,6 +3,7 @@ package views
 import (
 	goflag "flag" // the package already has a flag() helper
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func fixtureScan(t *testing.T) *models.BookScan {
 		t.Fatal(err)
 	}
 	t.Chdir("../..")
-	scan, err := models.ScanBooks(parsed.IDSeed(), "fixtures/data", nil)
+	scan, err := models.ScanBooks(parsed.IDSeed(), "fixtures/data", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,34 +181,33 @@ func TestRenderedPagesCarryNoInlineScripts(t *testing.T) {
 }
 
 // Pins the escaping: a raw write of user-controlled text would pass every
-// other test.
+// other test. The spellings are html.EscapeString's: &#34; and &#39;.
 func TestUserControlledTextIsHTMLEscaped(t *testing.T) {
 	page := models.Page{Filename: `<u>"p".jpg`, ID: "pid"}
-	book := models.Book{Title: `<i>"b"&c`, ID: "bid", Pages: []models.Page{page}, Cover: page}
+	book := models.Book{Title: `<i>"b"&c's`, ID: "bid", Pages: []models.Page{page}, Cover: page}
 	index := IndexPage(IndexView{Books: []models.Book{book}})
 	reader := BookPage(BookView{Book: book})
-	login := LoginPage(LoginView{Next: `/"><x`})
+	login := LoginPage(LoginView{Next: `/"><x'`})
 
 	for _, c := range []struct{ what, html, raw string }{
 		{"index title", index, "<i>"},
 		{"book title", reader, "<i>"},
+		{"book title apostrophe", reader, "c's"},
 		{"page filename", reader, "<u>"},
 		{"login next", login, "<x"},
+		{"login next apostrophe", login, "x'"},
 	} {
 		if strings.Contains(c.html, c.raw) {
 			t.Errorf("%s is not escaped: %s", c.what, c.raw)
 		}
 	}
-	// Either spelling of a quote is safe; accept both so the escaper may change.
-	reader = strings.ReplaceAll(reader, "&#34;", "&quot;")
-	login = strings.ReplaceAll(login, "&#34;", "&quot;")
-	if !strings.Contains(reader, "&lt;i&gt;&quot;b&quot;&amp;c") {
+	if !strings.Contains(reader, "&lt;i&gt;&#34;b&#34;&amp;c&#39;s") {
 		t.Errorf("book title escape missing: %s", reader)
 	}
-	if !strings.Contains(reader, "&lt;u&gt;&quot;p&quot;.jpg") {
+	if !strings.Contains(reader, "&lt;u&gt;&#34;p&#34;.jpg") {
 		t.Errorf("filename escape missing: %s", reader)
 	}
-	if !strings.Contains(login, "&quot;&gt;&lt;x") {
+	if !strings.Contains(login, "&#34;&gt;&lt;x&#39;") {
 		t.Errorf("next escape missing: %s", login)
 	}
 }
@@ -264,10 +264,11 @@ func TestParseModeFallsBackToPaged(t *testing.T) {
 }
 
 func TestIndexTimeFormats(t *testing.T) {
-	at := time.Date(2026, 1, 12, 3, 4, 5, 6_000_000, time.FixedZone("x", 3600))
+	// A single-digit day: the no-JS time is zero-padded (RFC 1123Z), not "Mon, 5".
+	at := time.Date(2026, 1, 5, 3, 4, 5, 6_000_000, time.FixedZone("x", 3600))
 	html := IndexPage(IndexView{ScannedAt: at, ScanDuration: 3 * time.Millisecond})
 	for _, want := range []string{
-		`datetime="2026-01-12T02:04:05.006Z">Mon, 12 Jan 2026 02:04:05 +0000</time>`,
+		`datetime="2026-01-05T02:04:05.006Z">Mon, 05 Jan 2026 02:04:05 +0000</time>`,
 		`<time datetime="PT0.003S">3ms</time>`,
 	} {
 		if !strings.Contains(html, want) {

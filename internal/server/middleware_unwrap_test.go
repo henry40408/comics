@@ -11,9 +11,6 @@ func TestWrappersExposeTheUnderlyingWriterForFlushing(t *testing.T) {
 		"statusRecorder": func(w http.ResponseWriter) http.ResponseWriter {
 			return &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		},
-		"noStoreWriter": func(w http.ResponseWriter) http.ResponseWriter {
-			return &noStoreWriter{ResponseWriter: w}
-		},
 	}
 	for name, wrap := range wrappers {
 		t.Run(name, func(t *testing.T) {

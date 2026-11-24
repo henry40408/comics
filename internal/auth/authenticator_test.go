@@ -168,13 +168,29 @@ func TestTheLastCookieOfTheNameWins(t *testing.T) {
 }
 
 func TestLoginRedirectTargetCarriesPathAndQuery(t *testing.T) {
-	requested, err := url.Parse("/book/abc?mode=scroll")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "/login?next=%2Fbook%2Fabc%3Fmode%3Dscroll"
-	if got := LoginRedirectTarget(requested); got != want {
-		t.Fatalf("target = %q, want %q", got, want)
+	for _, tc := range []struct{ requested, want string }{
+		{"/book/abc?mode=scroll", "/login?next=%2Fbook%2Fabc%3Fmode%3Dscroll"},
+		// The '&' and '=' inside next must not read as parameters of /login, a
+		// '+' must not come back as a space, and the '%' of an escape is escaped
+		// again, so one decoding gives the requested URI back.
+		{"/book/a%20b/caf%C3%A9?title=x%20y&k=a=b&p=1+1&n=漫", "/login?next=%2Fbook%2Fa%2520b%2Fcaf%25C3%25A9%3Ftitle%3Dx%2520y%26k%3Da%3Db%26p%3D1%2B1%26n%3D%E6%BC%AB"},
+	} {
+		requested, err := url.Parse(tc.requested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := LoginRedirectTarget(requested)
+		if target != tc.want {
+			t.Errorf("target for %q = %q, want %q", tc.requested, target, tc.want)
+		}
+		login, err := url.Parse(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := login.Query().Get("next")
+		if next != tc.requested || SafeNext(next) != next {
+			t.Errorf("next for %q came back as %q (SafeNext: %q)", tc.requested, next, SafeNext(next))
+		}
 	}
 }
 
