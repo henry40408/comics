@@ -246,7 +246,7 @@ func VerifyCredentials(creds *Credentials, username, password string) bool {
 // the hash-password subcommand, which is how the operator fixes a bad hash.
 func EnsurePasswordHashUsable(hash string) error {
 	if _, err := ParsePasswordHash(hash); err != nil {
-		return fmt.Errorf("COMICS_AUTH_PASSWORD_HASH is not an Argon2 hash (%w); "+
+		return fmt.Errorf("COMICS_AUTH_PASSWORD_HASH is not a usable Argon2id hash (%w); "+
 			"generate one with `comics hash-password`", err)
 	}
 	return nil
