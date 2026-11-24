@@ -2,44 +2,43 @@
 package assets
 
 import (
-	"embed"
+	_ "embed"
 	"strconv"
 
 	"github.com/zeebo/xxh3"
 )
 
-//go:embed static/app.css static/app.js static/theme.js static/favicon.svg static/favicon-32.png static/apple-touch-icon.png
-var files embed.FS
-
 var (
 	// AppCSS is the stylesheet.
-	AppCSS = readText("app.css")
+	//
+	//go:embed static/app.css
+	AppCSS string
 	// AppJS is the deferred front-end script.
-	AppJS = readText("app.js")
+	//
+	//go:embed static/app.js
+	AppJS string
 	// ThemeJS is the pre-paint snippet: it runs synchronously in <head>, unlike
 	// the deferred AppJS, and is a file rather than inline so the CSP needs no
 	// 'unsafe-inline'.
-	ThemeJS = readText("theme.js")
+	//
+	//go:embed static/theme.js
+	ThemeJS string
 	// FaviconSVG is the SVG favicon.
-	FaviconSVG = readText("favicon.svg")
+	//
+	//go:embed static/favicon.svg
+	FaviconSVG string
 	// FaviconPNG is the raster fallback for browsers that will not take the SVG.
-	FaviconPNG = read("favicon-32.png")
+	//
+	//go:embed static/favicon-32.png
+	FaviconPNG []byte
 	// AppleTouchIconPNG is separate from the favicon because iOS does not
 	// accept SVG for the home screen.
-	AppleTouchIconPNG = read("apple-touch-icon.png")
+	//
+	//go:embed static/apple-touch-icon.png
+	AppleTouchIconPNG []byte
 
 	version = computeVersion()
 )
-
-func read(name string) []byte {
-	data, err := files.ReadFile("static/" + name)
-	if err != nil {
-		panic("assets: embedded file missing: " + err.Error())
-	}
-	return data
-}
-
-func readText(name string) string { return string(read(name)) }
 
 // computeVersion hashes every embedded asset in a fixed order. It is a pure
 // function of the embedded bytes, so computing it once at init is safe.

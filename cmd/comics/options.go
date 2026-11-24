@@ -230,7 +230,7 @@ func setNonEmpty(target *string) func(string) error {
 	}
 }
 
-// parseStrictBool accepts only true and false, like clap.
+// parseStrictBool accepts only "true" and "false".
 func parseStrictBool(value string) (bool, error) {
 	switch value {
 	case "true":

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"mime"
@@ -30,20 +31,13 @@ type loginForm struct {
 // handleLoginPage renders the form, or redirects to next when auth is disabled
 // or the visitor is already signed in.
 func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	next := queryOrDefault(r.URL.Query(), "next", "/")
+	next := cmp.Or(r.URL.Query().Get("next"), "/")
 	signedIn := a.authenticator.Authenticate(r).Kind == auth.AuthAuthenticated
 	if a.creds == nil || signedIn {
 		seeOther(w, auth.SafeNext(next))
 		return
 	}
 	renderLogin(w, false, next)
-}
-
-func queryOrDefault(values url.Values, key, fallback string) string {
-	if !values.Has(key) {
-		return fallback
-	}
-	return values.Get(key)
 }
 
 // renderLogin sends the form. It is public, so noStoreHTML never sees it, yet
@@ -112,7 +106,7 @@ func readLoginForm(w http.ResponseWriter, r *http.Request) (loginForm, bool) {
 	return loginForm{
 		username: values.Get("username"),
 		password: values.Get("password"),
-		next:     queryOrDefault(values, "next", "/"),
+		next:     cmp.Or(values.Get("next"), "/"),
 	}, true
 }
 

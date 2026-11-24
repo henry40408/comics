@@ -38,9 +38,7 @@ type Secret struct {
 // Generate returns a random secret, for when none is configured.
 func Generate() Secret {
 	raw := make([]byte, minBytes)
-	if _, err := rand.Read(raw); err != nil {
-		panic("secret: system randomness unavailable: " + err.Error())
-	}
+	_, _ = rand.Read(raw) // crypto/rand.Read never returns an error
 	return Secret{raw: raw}
 }
 
@@ -90,5 +88,3 @@ func (Secret) String() string { return "Secret([redacted])" }
 
 // GoString redacts the secret for %#v.
 func (Secret) GoString() string { return "Secret([redacted])" }
-
-func HexLower(data []byte) string { return hex.EncodeToString(data) }

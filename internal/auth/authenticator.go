@@ -31,8 +31,7 @@ const (
 	// RejectionBadSignature: not signed by this key; forged, or from a
 	// different COMICS_SECRET.
 	RejectionBadSignature
-	// RejectionMalformed: correctly signed, but not the shape this version
-	// issues.
+	// RejectionMalformed: correctly signed, but not a session identifier.
 	RejectionMalformed
 	// RejectionUnknown: names no live session.
 	RejectionUnknown
@@ -216,8 +215,8 @@ func isLocalPath(next string) bool {
 }
 
 // isValidHeaderValue allows no control byte and no DEL; bytes of 0x80 and above
-// are allowed. A tab is rejected too, although
-// header values may contain one: URL parsing strips tabs, so a Location of "/\t/evil.example" would become
+// are allowed. A tab is rejected too, although header values may contain one:
+// URL parsing strips tabs, so a Location of "/\t/evil.example" would become
 // "//evil.example", an open redirect.
 func isValidHeaderValue(value string) bool {
 	for i := range len(value) {

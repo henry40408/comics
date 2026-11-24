@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -57,7 +55,6 @@ func ScanBooks(seed uint64, dataDir string, logger *slog.Logger) (*BookScan, err
 		}
 		return book, true
 	})
-	slices.SortFunc(books, func(a, b Book) int { return strings.Compare(a.Title, b.Title) })
 	scan := &BookScan{Books: books, ScannedAt: start.UTC()}
 	scan.index()
 	scan.ScanDuration = time.Since(start)
@@ -91,10 +88,11 @@ func scanPages(seed uint64, bookDir string, logger *slog.Logger) ([]Page, error)
 		}
 		pages = append(pages, page)
 	}
-	slices.SortFunc(pages, func(a, b Page) int { return strings.Compare(a.Path, b.Path) })
 	return pages, nil
 }
 
+// readNames lists the entry names of dir. os.ReadDir returns them sorted by
+// filename, and parallelMap keeps input order, so callers need no sort.
 func readNames(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -35,7 +35,6 @@ Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go 
 - A **separate Go module** with its own `go.mod` and committed `vendor/`; `go test ./...` at the root does not run it. `e2e/go.mod` mirrors the root `go`/`toolchain` lines (CI checks it). Update its dependencies the same way as the root ones, inside `e2e/` (`go get`, `go mod tidy`, `go mod vendor`).
 - Run from `e2e/`: `go test -count=1 -v ./...` (`-count=1` because the test cache cannot see a rebuilt `bin/comics`). One or more features: `E2E_FEATURES=features/reader.feature` (comma-separated). Regenerate `docs/screenshots/` with `go run ./cmd/screenshots`.
 - godog runs two passes: `shared` (everything except `@logout`/`@rescan`, up to `ConcurrencyCeiling` (4) scenarios in parallel, one Chrome each) and `exclusive` (`@logout`, `@rescan`, one at a time, since they disturb every other live session). Undefined or pending steps fail.
-- Regenerate the screenshots in the same change for visual edits (CSS, template layout, front-end JS); copy-only or logic-only edits do not need it.
 - Run golangci-lint `fmt --diff` and `run` inside `e2e/` before committing (the CI `lint` job does; the `deps` job runs the tidy/vendor/govulncheck checks there too).
 - Needs a local Chromium or Chrome (chromedp starts it headless). `E2E_CHROME` pins the binary (unset: chromedp's own search, which prefers a `chromium` on `PATH` over `google-chrome`); CI sets it to `/usr/bin/google-chrome`, and the run logs which choice it used. On macOS `/Applications/Chromium.app` is found (`brew install --cask ungoogled-chromium`). A missing browser fails with one clear error, not one per scenario.
 - Starts the server binary `bin/comics` itself (running `go build -mod=vendor -o bin/comics ./cmd/comics` if it is missing), or adopts one already listening on `127.0.0.1:3030`. An existing binary is not rebuilt, so rebuild it after changing server code before E2E.
@@ -48,7 +47,7 @@ Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go 
 
 ### Golden pages
 
-`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). They were captured from the former Rust server; `views_test.go` normalises the version, the assets hash and times before comparing. A deliberate markup change means regenerating the goldens and the e2e screenshots together.
+`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). They were captured from the former Rust server; `views_test.go` normalises the version, the assets hash and times before comparing. A deliberate markup change means regenerating the goldens and the e2e screenshots together. Visual edits (CSS, template layout, front-end JS) need the screenshots regenerated in the same change; copy-only or logic-only edits do not.
 
 ## Architecture
 
@@ -138,7 +137,6 @@ The version is never stored in a manifest: `internal/version.Version()` returns 
 
 ## Conventions
 
-- `go.mod` is the only source of the Go version (`go` and `toolchain` lines): CI and the Dockerfile install nothing version-specific (the Docker image's Go is used when it is at least the `toolchain` line; `GOTOOLCHAIN=auto` only moves up). `e2e/go.mod` mirrors those two lines (CI checks it).
 - Fixtures: `fixtures/data/`. Their book IDs derive from `testSecret` in `internal/server/harness_test.go` and are hard-coded as `dataIDs`; changing the secret or derivation means recomputing them (run the binary with that secret on `fixtures/data`, read `/book/…` hrefs from the index).
 - User-facing template/login strings are Traditional Chinese (e.g. `帳號或密碼錯誤`).
 - Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `full` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, default `info`) is env-only, with no flag. `RUST_LOG` is a retired variable and fails startup.
