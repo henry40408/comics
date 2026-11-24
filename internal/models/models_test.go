@@ -2,6 +2,7 @@ package models
 
 import (
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,15 +37,19 @@ func mkdir(t *testing.T, path string) {
 	}
 }
 
+// The ID is spelled out as book/file: it must not contain the data dir, and
+// Path must be dir + "/" + name exactly as given.
 func TestPageNewBuildsFromAFile(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "01.jpg"))
-	page, err := newPage(7, dir, "01.jpg")
+	book := filepath.Join(t.TempDir(), "My Book")
+	mkdir(t, book)
+	writeFile(t, filepath.Join(book, "01.jpg"))
+	page, err := newPage(7, book, "01.jpg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Filename != "01.jpg" || page.ID == "" || page.Path != dir+"/01.jpg" {
-		t.Fatalf("unexpected page %+v", page)
+	want := Page{Filename: "01.jpg", ID: HashString(7, "My Book/01.jpg"), Path: book + "/01.jpg"}
+	if page != want {
+		t.Fatalf("got page %+v, want %+v", page, want)
 	}
 }
 
@@ -78,6 +83,112 @@ func scanTwoBooks(t *testing.T) (*BookScan, string) {
 		t.Fatal(err)
 	}
 	return scan, dir
+}
+
+// idsByName maps each book title to its ID and each "title/filename" to its
+// page ID, so scans can be compared without looking at their paths.
+func idsByName(scan *BookScan) map[string]string {
+	ids := make(map[string]string)
+	for _, book := range scan.Books {
+		ids[book.Title] = book.ID
+		for _, page := range book.Pages {
+			ids[book.Title+"/"+page.Filename] = page.ID
+		}
+	}
+	return ids
+}
+
+func TestIDsDoNotDependOnHowTheDataDirIsSpelled(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	mkdir(t, data)
+	for _, book := range []string{"Alpha", "Beta"} {
+		mkdir(t, filepath.Join(data, book))
+		writeFile(t, filepath.Join(data, book, "01.jpg"))
+		writeFile(t, filepath.Join(data, book, "02.jpg"))
+	}
+	t.Chdir(root)
+
+	scanIDs := func(dataDir string) map[string]string {
+		scan, err := ScanBooks(3, dataDir, discardLogger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idsByName(scan)
+	}
+	want := scanIDs(data)
+	if len(want) != 6 {
+		t.Fatalf("reference scan has %d IDs, want 2 books and 4 pages: %v", len(want), want)
+	}
+	for _, spelling := range []struct{ name, dataDir string }{
+		{"absolute with a trailing slash", data + "/"},
+		{"relative", "data"},
+		{"relative with a dot", "./data"},
+		{"relative with a trailing slash", "data/"},
+	} {
+		t.Run(spelling.name, func(t *testing.T) {
+			if got := scanIDs(spelling.dataDir); !maps.Equal(got, want) {
+				t.Fatalf("scanning %q gave %v, want %v", spelling.dataDir, got, want)
+			}
+		})
+	}
+}
+
+func TestPagesWithTheSameFilenameInDifferentBooksGetDifferentIDs(t *testing.T) {
+	dir := t.TempDir()
+	for _, book := range []string{"Alpha", "Beta"} {
+		mkdir(t, filepath.Join(dir, book))
+		writeFile(t, filepath.Join(dir, book, "01.jpg"))
+	}
+	scan, err := ScanBooks(1, dir, discardLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.Books) != 2 {
+		t.Fatalf("got %d books, want 2", len(scan.Books))
+	}
+	alpha, beta := scan.Books[0].Pages[0], scan.Books[1].Pages[0]
+	if alpha.ID == beta.ID {
+		t.Fatalf("both pages are %q", alpha.ID)
+	}
+	for _, page := range []Page{alpha, beta} {
+		resolved, ok := scan.PageByID(page.ID)
+		if !ok || resolved.Path != page.Path {
+			t.Errorf("page %q resolved to %+v, want the page at %s", page.ID, resolved, page.Path)
+		}
+	}
+}
+
+// "link/../data" names root/data: link points at root/target, and the OS
+// resolves ".." from there. Cleaning the text would name cwd/data instead,
+// which holds a decoy book of the same name.
+func TestScanResolvesDotDotThroughASymlinkedDataDir(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	mkdir(t, target)
+	mkdir(t, filepath.Join(root, "data"))
+	mkdir(t, filepath.Join(root, "data", "Real"))
+	writeFile(t, filepath.Join(root, "data", "Real", "01.jpg"))
+
+	cwd := filepath.Join(root, "cwd")
+	mkdir(t, cwd)
+	symlink(t, target, filepath.Join(cwd, "link"))
+	mkdir(t, filepath.Join(cwd, "data"))
+	mkdir(t, filepath.Join(cwd, "data", "Real"))
+	writeFile(t, filepath.Join(cwd, "data", "Real", "99.jpg"))
+	t.Chdir(cwd)
+
+	scan, err := ScanBooks(0, "link/../data", discardLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.Books) != 1 || scan.Books[0].Title != "Real" || len(scan.Books[0].Pages) != 1 {
+		t.Fatalf("got %+v, want one book Real with one page", scan.Books)
+	}
+	page := scan.Books[0].Pages[0]
+	if page.Filename != "01.jpg" || page.Path != "link/../data/Real/01.jpg" {
+		t.Fatalf("got page %+v, want 01.jpg at link/../data/Real/01.jpg", page)
+	}
 }
 
 func TestPageByIDResolvesToTheOwningPage(t *testing.T) {

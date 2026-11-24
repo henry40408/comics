@@ -40,8 +40,9 @@ const (
 	sessionCookie = auth.SessionCookie
 )
 
-// TestMain runs from the repository root: page IDs hash the data path as
-// given, so the tests must scan "./fixtures/data".
+// TestMain runs from the repository root because the tests name the fixtures
+// by a path relative to it (fixtureData, and the fixture JPEG that
+// fixturePage reads), while go test starts in this package's directory.
 func TestMain(m *testing.M) {
 	if err := os.Chdir("../.."); err != nil {
 		panic(err)

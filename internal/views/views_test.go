@@ -23,28 +23,20 @@ const (
 
 var update = goflag.Bool("update", false, "rewrite testdata/*.golden.html")
 
-// testdataDir is absolute because fixtureScan changes the working directory.
-var testdataDir = func() string {
-	dir, err := filepath.Abs("testdata")
-	if err != nil {
-		panic(err)
-	}
-	return dir
-}()
+const testdataDir = "testdata"
 
 // goldenScannedAt is the scan time captured in index.golden.html.
 var goldenScannedAt = time.Date(2026, 11, 16, 13, 40, 41, 191_000_000, time.UTC)
 
-// fixtureScan scans fixtures/data by the same relative path the goldens were
-// captured with: page IDs hash the path, so ../../fixtures/data would differ.
+// fixtureScan scans fixtures/data. IDs do not depend on how the path is
+// written, so it can be given relative to this package.
 func fixtureScan(t *testing.T) *models.BookScan {
 	t.Helper()
 	parsed, err := secret.Parse(testSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir("../..")
-	scan, err := models.ScanBooks(parsed.IDSeed(), "fixtures/data", slog.New(slog.DiscardHandler))
+	scan, err := models.ScanBooks(parsed.IDSeed(), "../../fixtures/data", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
