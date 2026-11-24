@@ -149,7 +149,13 @@ func mustHash(t *testing.T, password string) string {
 }
 
 func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
+	// Argon2i is complete and well formed, so the algorithm is the only reason to refuse it.
+	argon2i := "$argon2i$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$ZGlnZXN0ZGlnZXN0ZGlnZXN0ZGlnZXN0"
+	if err := EnsurePasswordHashUsable(argon2i); err == nil || !strings.Contains(err.Error(), `unsupported algorithm "argon2i"`) {
+		t.Errorf("argon2i: err = %v, want the unsupported algorithm refusal", err)
+	}
 	cases := []string{
+		argon2i,
 		"",
 		"not-a-hash",
 		"password",
@@ -159,8 +165,6 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
 		// A bcrypt hash: refused, and the message still points at hash-password.
 		"$2b$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
-		// Argon2i is complete and well formed, but only Argon2id is accepted.
-		"$argon2i$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$ZGlnZXN0ZGlnZXN0ZGlnZXN0ZGlnZXN0",
 	}
 	for _, hash := range cases {
 		err := EnsurePasswordHashUsable(hash)

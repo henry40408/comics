@@ -97,7 +97,8 @@ func TestBooleansAcceptWhatParseBoolAccepts(t *testing.T) {
 }
 
 // --version takes the same boolean forms as the other flags, and a flag given
-// an empty value is an error rather than false.
+// an empty value is an error rather than false. An empty environment variable
+// is the opposite on purpose: it counts as unset (TestAnEmptyEnvVarIsUnset).
 func TestVersionAndEmptyFlagValuesParseLikeBooleans(t *testing.T) {
 	if opts := mustParse(t, []string{"--version"}, nil); !opts.showVersion {
 		t.Error("a bare --version did not mean true")
@@ -110,6 +111,10 @@ func TestVersionAndEmptyFlagValuesParseLikeBooleans(t *testing.T) {
 	for _, args := range [][]string{{"--version=yes"}, {"--version="}, {"--cookie-secure="}} {
 		_, err := parseOptions(args, envOf(nil), io.Discard)
 		assertUsageError(t, err)
+		// The flag package keeps only the text of the parser's error, not the error.
+		if !strings.Contains(err.Error(), "strconv.ParseBool") {
+			t.Errorf("%v: err = %v, want ParseBool to be the one refusing", args, err)
+		}
 	}
 }
 
