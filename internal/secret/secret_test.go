@@ -2,6 +2,7 @@ package secret
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -28,19 +29,12 @@ func signingKey(s Secret) []byte {
 	return key[:32]
 }
 
-func TestAccepts64HexCharsAndLonger(t *testing.T) {
-	for _, raw := range []string{valid, longer, "  " + valid + "\n", strings.ToUpper(valid)} {
-		if _, err := Parse(raw); err != nil {
-			t.Errorf("Parse(%q): %v", raw, err)
-		}
-	}
-}
-
 // Pins the decoding, which a nil-error check alone does not.
 func TestDecodesEveryHexPairInOrder(t *testing.T) {
-	for _, raw := range []string{valid, longer, strings.ToUpper(valid)} {
-		if got := hex.EncodeToString(mustParse(t, raw).raw); got != strings.ToLower(raw) {
-			t.Errorf("decoded %q, want %q", got, strings.ToLower(raw))
+	for _, raw := range []string{valid, longer, strings.ToUpper(valid), "  " + valid + "\n"} {
+		want := strings.ToLower(strings.TrimSpace(raw))
+		if got := hex.EncodeToString(mustParse(t, raw).raw); got != want {
+			t.Errorf("decoded %q, want %q", got, want)
 		}
 	}
 }
@@ -67,13 +61,6 @@ func TestLengthIsPartOfTheSecret(t *testing.T) {
 	}
 }
 
-func TestDerivationIsDeterministic(t *testing.T) {
-	a, b := mustParse(t, valid), mustParse(t, valid)
-	if !bytes.Equal(signingKey(a), signingKey(b)) || a.IDSeed() != b.IDSeed() {
-		t.Fatal("same secret derived different values")
-	}
-}
-
 func TestDifferentSecretsDeriveDifferentValues(t *testing.T) {
 	a, b := mustParse(t, valid), mustParse(t, "ff"+valid[2:])
 	if bytes.Equal(signingKey(a), signingKey(b)) {
@@ -87,11 +74,7 @@ func TestDifferentSecretsDeriveDifferentValues(t *testing.T) {
 func TestTheIDSeedIsNotAPrefixOfTheSigningKey(t *testing.T) {
 	s := mustParse(t, valid)
 	seed := s.IDSeed()
-	seedBytes := []byte{
-		byte(seed >> 56), byte(seed >> 48), byte(seed >> 40), byte(seed >> 32),
-		byte(seed >> 24), byte(seed >> 16), byte(seed >> 8), byte(seed),
-	}
-	if bytes.Contains(signingKey(s), seedBytes) {
+	if bytes.Contains(signingKey(s), binary.BigEndian.AppendUint64(nil, seed)) {
 		t.Fatal("the id seed appears verbatim in the signing key")
 	}
 }

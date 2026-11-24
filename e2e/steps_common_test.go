@@ -45,10 +45,7 @@ func registerCommonSteps(sc *godog.ScenarioContext, w *world) {
 }
 
 func (w *world) shouldSeeTheLibrary() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
+	b := w.browser
 	if err := harness.EventuallyEq("url after signing in", "/", b.Path); err != nil {
 		return err
 	}
@@ -60,61 +57,37 @@ func (w *world) shouldSeeTheLibrary() error {
 }
 
 func (w *world) shouldBeOnTheLoginPage() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
 	return harness.Eventually("url is the login page", func() (bool, error) {
-		path, err := b.Path()
+		path, err := w.browser.Path()
 		return strings.HasPrefix(path, "/login"), err
 	})
 }
 
 func (w *world) loggedIn() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	login := b.Login()
+	login := w.browser.Login()
 	if err := login.Goto(); err != nil {
 		return err
 	}
 	if err := login.Login(harness.Username, harness.Password); err != nil {
 		return err
 	}
-	return harness.EventuallyEq("url after signing in", "/", b.Path)
+	return harness.EventuallyEq("url after signing in", "/", w.browser.Path)
 }
 
 func (w *world) logOut() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Library().Logout()
+	return w.browser.Library().Logout()
 }
 
 func (w *world) visit(path string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Goto(unquote(path))
+	return w.browser.Goto(unquote(path))
 }
 
 func (w *world) reload() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Reload()
+	return w.browser.Reload()
 }
 
 func (w *world) assetsServed() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	audit, err := b.AuditResources()
+	audit, err := w.browser.AuditResources()
 	if err != nil {
 		return err
 	}
@@ -134,11 +107,7 @@ func (w *world) assetsServed() error {
 }
 
 func (w *world) pageShowsImages() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	audit, err := b.AuditResources()
+	audit, err := w.browser.AuditResources()
 	if err != nil {
 		return err
 	}
@@ -149,11 +118,7 @@ func (w *world) pageShowsImages() error {
 }
 
 func (w *world) noInlineCode() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	count, err := b.InlineCodeCount()
+	count, err := w.browser.InlineCodeCount()
 	if err != nil {
 		return err
 	}
@@ -164,12 +129,8 @@ func (w *world) noInlineCode() error {
 }
 
 func (w *world) pageHasNoElement(css string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
 	selector := unquote(css)
-	found, err := b.QueryAll(selector)
+	found, err := w.browser.QueryAll(selector)
 	if err != nil {
 		return err
 	}
@@ -180,25 +141,13 @@ func (w *world) pageHasNoElement(css string) error {
 }
 
 func (w *world) systemPrefers(scheme string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.EmulateColorScheme(unquote(scheme))
+	return w.browser.EmulateColorScheme(unquote(scheme))
 }
 
 func (w *world) themeShouldBe(theme string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the theme", unquote(theme), b.Theme)
+	return harness.EventuallyEq("the theme", unquote(theme), w.browser.Theme)
 }
 
 func (w *world) pressKey(key string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Press(unquote(key))
+	return w.browser.Press(unquote(key))
 }

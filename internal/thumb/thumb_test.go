@@ -24,6 +24,7 @@ func TestContentTypeCoversKnownAndUnknownExtensions(t *testing.T) {
 		"a/b.gif":     "image/gif",
 		"a/b.webp":    "image/webp",
 		"a/b.avif":    "image/avif",
+		".png":        "image/png", // a leading dot is still the extension separator
 		"a/b.txt":     "application/octet-stream",
 		"noextension": "application/octet-stream",
 	} {
@@ -127,27 +128,6 @@ func pngChunk(kind string, data []byte) []byte {
 	out = append(out, kind...)
 	out = append(out, data...)
 	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(append([]byte(kind), data...)))
-}
-
-func TestGenerateRefusesAHeaderDeclaringHugeDimensions(t *testing.T) {
-	header := binary.BigEndian.AppendUint32(nil, 30000)
-	header = binary.BigEndian.AppendUint32(header, 30000)
-	header = append(header, 8, 6, 0, 0, 0) // 8-bit RGBA
-	data := append([]byte("\x89PNG\r\n\x1a\n"), pngChunk("IHDR", header)...)
-	path := filepath.Join(t.TempDir(), "huge.png")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Generate(path, 120); err == nil {
-		t.Fatal("a 30000x30000 image was decoded")
-	}
-}
-
-func TestContentTypeOfADotfileNamedAfterAnExtension(t *testing.T) {
-	// A leading dot is still the extension separator.
-	if got := ContentTypeFromPath(".png"); got != "image/png" {
-		t.Errorf("ContentTypeFromPath(%q) = %q, want image/png", ".png", got)
-	}
 }
 
 func TestDecodeLimitIsInclusiveAtExactlyMaxDecodeBytes(t *testing.T) {

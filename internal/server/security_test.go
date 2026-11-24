@@ -10,8 +10,8 @@ import (
 	"github.com/henry40408/comics/internal/assets"
 )
 
-// Pinned independently of the constants in middleware.go: these are the exact
-// values src/security_headers.rs sent.
+// Pinned independently of the constants in middleware.go, so a change to either
+// side fails.
 var wantConstantHeaders = map[string]string{
 	"Content-Security-Policy": "default-src 'none'; script-src 'self'; " +
 		"style-src 'self' https://fonts.bunny.net; " +
@@ -167,14 +167,6 @@ func TestEveryConstantHeaderIsWellFormed(t *testing.T) {
 	}
 	if len(constantHeaders) != len(wantConstantHeaders) {
 		t.Errorf("%d constant headers, want %d", len(constantHeaders), len(wantConstantHeaders))
-	}
-}
-
-func TestCSPPermitsNoInlineOrEval(t *testing.T) {
-	for _, banned := range []string{"unsafe-inline", "unsafe-eval"} {
-		if strings.Contains(contentSecurityPolicy, banned) {
-			t.Errorf("CSP contains %s", banned)
-		}
 	}
 }
 

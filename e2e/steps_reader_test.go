@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/cucumber/godog"
 
@@ -41,95 +40,46 @@ func registerReaderSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^page `+quoted+` should offer no next-page link$`, w.noNextLink)
 }
 
-// readerOf is the scenario's reader page object.
-func (w *world) readerOf() (harness.ReaderPage, error) {
-	b, err := w.browserOf()
-	if err != nil {
-		return harness.ReaderPage{}, err
-	}
-	return b.Reader(), nil
-}
-
 func (w *world) readingTheFirstBook() error {
-	b, err := w.browserOf()
-	if err != nil {
+	if err := w.openTheLibrary(); err != nil {
 		return err
 	}
-	library := b.Library()
-	if err := library.Goto(); err != nil {
+	if err := w.openTheFirstBook(); err != nil {
 		return err
 	}
-	if err := library.OpenFirstBook(); err != nil {
-		return err
-	}
-	return harness.Eventually("url is a book", func() (bool, error) {
-		path, err := b.Path()
-		return strings.HasPrefix(path, "/book/"), err
-	})
+	return w.shouldBeInTheReader()
 }
 
 func (w *world) currentPageShouldBe(n string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the topbar page number", unquote(n), func() (string, error) {
-		text, err := reader.CurrentPageText()
-		if text == nil {
-			return "", err
-		}
-		return *text, err
-	})
+	return harness.EventuallyEq("the topbar page number", unquote(n), w.browser.Reader().CurrentPageText)
 }
 
 func (w *world) arrowShouldBe(direction, state string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
+	reader := w.browser.Reader()
 	return harness.EventuallyEq("the tap-zone arrow", unquote(state) == "shown", func() (bool, error) {
 		return reader.ArrowShown(unquote(direction))
 	})
 }
 
 func (w *world) advance() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.Advance()
+	return w.browser.Reader().Advance()
 }
 
 func (w *world) goBack() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.GoBack()
+	return w.browser.Reader().GoBack()
 }
 
 func (w *world) switchToScrollMode() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.SetScrollMode()
+	return w.browser.Reader().SetScrollMode()
 }
 
 func (w *world) readerShouldBeInMode(mode string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the reader mode", unquote(mode), reader.Mode)
+	return harness.EventuallyEq("the reader mode", unquote(mode), w.browser.Reader().Mode)
 }
 
 func (w *world) onlyPageShowing(n string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	err = harness.Eventually("exactly one page is showing", func() (bool, error) {
+	reader := w.browser.Reader()
+	err := harness.Eventually("exactly one page is showing", func() (bool, error) {
 		pages, err := reader.VisiblePages()
 		return len(pages) == 1, err
 	})
@@ -146,27 +96,15 @@ func (w *world) onlyPageShowing(n string) error {
 }
 
 func (w *world) followNext() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.FollowNext()
+	return w.browser.Reader().FollowNext()
 }
 
 func (w *world) followPrevious() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.FollowPrevious()
+	return w.browser.Reader().FollowPrevious()
 }
 
 func (w *world) sharedModeControlHidden() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	control, err := reader.SharedModeControl()
+	control, err := w.browser.Reader().SharedModeControl()
 	if err != nil {
 		return err
 	}
@@ -174,32 +112,20 @@ func (w *world) sharedModeControlHidden() error {
 }
 
 func (w *world) switchModeFromPage(n string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.SwitchModeFrom(unquote(n))
+	return w.browser.Reader().SwitchModeFrom(unquote(n))
 }
 
 func (w *world) pageShouldBeInView(n string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
 	number := unquote(n)
 	// In scroll mode every page is displayed, so only the viewport says where
 	// the browser landed.
 	return harness.Eventually(fmt.Sprintf("page %s is in the viewport", number), func() (bool, error) {
-		return b.IsInViewport("p" + number)
+		return w.browser.IsInViewport("p" + number)
 	})
 }
 
 func (w *world) themeToggleHidden() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	toggle, err := reader.ThemeToggle()
+	toggle, err := w.browser.Reader().ThemeToggle()
 	if err != nil {
 		return err
 	}
@@ -207,11 +133,7 @@ func (w *world) themeToggleHidden() error {
 }
 
 func (w *world) topbarPageNumberHidden() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	current, err := reader.CurrentPage()
+	current, err := w.browser.Reader().CurrentPage()
 	if err != nil {
 		return err
 	}
@@ -219,23 +141,16 @@ func (w *world) topbarPageNumberHidden() error {
 }
 
 func (w *world) topbarShouldRead(text string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
 	// Rendered text, not textContent, which keeps a hidden span's characters.
-	return harness.EventuallyEq("the topbar subtitle", unquote(text), reader.TopbarSubtitle)
+	return harness.EventuallyEq("the topbar subtitle", unquote(text), w.browser.Reader().TopbarSubtitle)
 }
 
 func (w *world) allPagesShowing(n string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
 	expected, err := strconv.Atoi(unquote(n))
 	if err != nil {
 		return err
 	}
+	reader := w.browser.Reader()
 	return harness.EventuallyEq("the number of showing pages", expected, func() (int, error) {
 		pages, err := reader.VisiblePages()
 		return len(pages), err
@@ -243,27 +158,15 @@ func (w *world) allPagesShowing(n string) error {
 }
 
 func (w *world) jumpFromRail(n string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.JumpFromRail(unquote(n))
+	return w.browser.Reader().JumpFromRail(unquote(n))
 }
 
 func (w *world) counterShouldRead(text string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the page counter", unquote(text), reader.CounterText)
+	return harness.EventuallyEq("the page counter", unquote(text), w.browser.Reader().CounterText)
 }
 
 func (w *world) hintRemembered() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	flag, err := reader.FirstVisitHint()
+	flag, err := w.browser.Reader().FirstVisitHint()
 	if err != nil {
 		return err
 	}
@@ -274,51 +177,27 @@ func (w *world) hintRemembered() error {
 }
 
 func (w *world) progressWidth(width string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the progress bar width", unquote(width), reader.ProgressWidth)
+	return harness.EventuallyEq("the progress bar width", unquote(width), w.browser.Reader().ProgressWidth)
 }
 
 func (w *world) followBackLink() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.GoHome()
+	return w.browser.Reader().GoHome()
 }
 
 func (w *world) shuffleFromReader() error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.Shuffle()
+	return w.browser.Reader().Shuffle()
 }
 
 func (w *world) readerTitle(title string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the reader title", unquote(title), reader.Title)
+	return harness.EventuallyEq("the reader title", unquote(title), w.browser.Reader().Title)
 }
 
 func (w *world) reloadReaderInMode(mode string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	return reader.ReloadInMode(unquote(mode))
+	return w.browser.Reader().ReloadInMode(unquote(mode))
 }
 
 func (w *world) segmentedControlHighlights(mode string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	highlighted, err := reader.HighlightedMode()
+	highlighted, err := w.browser.Reader().HighlightedMode()
 	if err != nil {
 		return err
 	}
@@ -337,11 +216,7 @@ func (w *world) noNextLink(n string) error {
 }
 
 func (w *world) pageHasNo(n, selector string) error {
-	reader, err := w.readerOf()
-	if err != nil {
-		return err
-	}
-	page, err := reader.Page(n)
+	page, err := w.browser.Reader().Page(n)
 	if err != nil {
 		return err
 	}

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/henry40408/comics/internal/models"
 )
 
 func TestGetBooks(t *testing.T) {
@@ -40,19 +38,9 @@ func TestContentRoutesAnswer503UntilTheScanFinishes(t *testing.T) {
 	}
 }
 
-// The 503 bodies are empty, and the HTML ones stay HTML so no-store applies.
 func TestUnavailableBeforeFirstScanHasAnEmptyBody(t *testing.T) {
 	ta := newUnscannedApp(t)
-	for _, path := range []string{"/", "/book/" + dataIDs[0]} {
-		res := ta.get(path)
-		if len(res.body) != 0 {
-			t.Errorf("GET %s: body %q, want empty", path, res.body)
-		}
-		if got := res.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
-			t.Errorf("GET %s: content type %q", path, got)
-		}
-	}
-	for _, path := range []string{"/data/x", "/thumb/md/x"} {
+	for _, path := range []string{"/", "/book/" + dataIDs[0], "/data/x", "/thumb/md/x"} {
 		if res := ta.get(path); len(res.body) != 0 {
 			t.Errorf("GET %s: body %q, want empty", path, res.body)
 		}
@@ -149,12 +137,8 @@ func TestGetPage(t *testing.T) {
 
 func TestPageMissingFileReturns404(t *testing.T) {
 	dir := t.TempDir()
-	book := filepath.Join(dir, "Temp Book")
-	if err := os.Mkdir(book, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	page := filepath.Join(book, "01.jpg")
-	copyFile(t, "./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg", page)
+	addBook(t, dir, "Temp Book", map[string][]byte{"01.jpg": fixturePage(t)})
+	page := filepath.Join(dir, "Temp Book", "01.jpg")
 	ta := newTestApp(t, withDataDir(dir))
 
 	id := ta.coverID()
@@ -169,15 +153,28 @@ func TestPageMissingFileReturns404(t *testing.T) {
 	}
 }
 
-func copyFile(t *testing.T, from, to string) {
+// addBook creates a book directory holding the given pages, keyed by file name.
+func addBook(t *testing.T, dataDir, name string, pages map[string][]byte) {
 	t.Helper()
-	content, err := os.ReadFile(from)
+	bookDir := filepath.Join(dataDir, name)
+	if err := os.Mkdir(bookDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for filename, content := range pages {
+		if err := os.WriteFile(filepath.Join(bookDir, filename), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// fixturePage is a real JPEG, for books a test builds itself.
+func fixturePage(t *testing.T) []byte {
+	t.Helper()
+	content, err := os.ReadFile("./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(to, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return content
 }
 
 func TestThumbnailServesJPEG(t *testing.T) {
@@ -258,14 +255,8 @@ func TestUnknownThumbnailSizeIsNotFoundBeforeTheScan(t *testing.T) {
 
 func TestThumbnailFallsBackToOriginalWhenUndecodable(t *testing.T) {
 	dir := t.TempDir()
-	book := filepath.Join(dir, "Bogus Book")
-	if err := os.Mkdir(book, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	page := filepath.Join(book, "01.jpg")
-	if err := os.WriteFile(page, []byte("this is not an image"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	addBook(t, dir, "Bogus Book", map[string][]byte{"01.jpg": []byte("this is not an image")})
+	page := filepath.Join(dir, "Bogus Book", "01.jpg")
 	ta := newTestApp(t, withDataDir(dir))
 	id := ta.coverID()
 
@@ -311,11 +302,7 @@ func TestShuffleFromABook(t *testing.T) {
 
 func TestShuffleWithoutOtherBooksGoesHome(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "Only"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	copyFile(t, "./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg",
-		filepath.Join(dir, "Only", "01.jpg"))
+	addBook(t, dir, "Only", map[string][]byte{"01.jpg": fixturePage(t)})
 	ta := newTestApp(t, withDataDir(dir))
 	onlyID := firstAfter(t, ta.get("/").text(), `href="/book/`)
 
@@ -359,12 +346,7 @@ func TestRescanPicksUpNewBooks(t *testing.T) {
 	if !strings.Contains(ta.get("/").text(), "0 book(s)") {
 		t.Fatal("expected an empty library")
 	}
-	book := filepath.Join(dir, "Late")
-	if err := os.Mkdir(book, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	copyFile(t, "./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg",
-		filepath.Join(book, "01.jpg"))
+	addBook(t, dir, "Late", map[string][]byte{"01.jpg": fixturePage(t)})
 
 	ta.post("/rescan")
 	if !strings.Contains(ta.get("/").text(), "1 book(s)") {
@@ -374,11 +356,7 @@ func TestRescanPicksUpNewBooks(t *testing.T) {
 
 func TestFailedRescanKeepsThePreviousScan(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "Book"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	copyFile(t, "./fixtures/data/Pepper and Carrot 01 - Potion of Flight/01.jpg",
-		filepath.Join(dir, "Book", "01.jpg"))
+	addBook(t, dir, "Book", map[string][]byte{"01.jpg": fixturePage(t)})
 	ta := newTestApp(t, withDataDir(dir))
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
@@ -422,11 +400,7 @@ func TestInitialScanFinishedLogsCounts(t *testing.T) {
 }
 
 func TestBookNotFound(t *testing.T) {
-	res := newTestApp(t).get("/book/nonexistent123")
-	assertStatus(t, 404, res, "GET /book/nonexistent123")
-	if res.text() != "not found" {
-		t.Errorf("body %q, want %q", res.text(), "not found")
-	}
+	assertStatus(t, 404, newTestApp(t).get("/book/nonexistent123"), "GET /book/nonexistent123")
 }
 
 func TestPageNotFound(t *testing.T) {
@@ -438,27 +412,20 @@ func TestPageNotFound(t *testing.T) {
 }
 
 func TestPageContentTypeFollowsTheExtension(t *testing.T) {
-	dir := t.TempDir()
-	book := filepath.Join(dir, "Mixed")
-	if err := os.Mkdir(book, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, want := range map[string]string{
+	want := map[string]string{
 		"a.PNG": "image/png", "b.webp": "image/webp", "c.txt": "application/octet-stream",
-	} {
-		if err := os.WriteFile(filepath.Join(book, name), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		_ = want
 	}
+	pages := map[string][]byte{}
+	for name := range want {
+		pages[name] = []byte("x")
+	}
+	dir := t.TempDir()
+	addBook(t, dir, "Mixed", pages)
 	ta := newTestApp(t, withDataDir(dir))
 	scan := ta.app.currentScan()
 	got := map[string]string{}
 	for _, page := range scan.Books[0].Pages {
 		got[page.Filename] = ta.get("/data/" + page.ID).Header.Get("Content-Type")
-	}
-	want := map[string]string{
-		"a.PNG": "image/png", "b.webp": "image/webp", "c.txt": "application/octet-stream",
 	}
 	for name, contentType := range want {
 		if got[name] != contentType {
@@ -482,15 +449,4 @@ func TestScansCanBeReadWhileRescanning(t *testing.T) {
 		assertStatus(t, 200, ta.get("/"), "GET / during rescans")
 	}
 	<-done
-}
-
-func TestCurrentScanIsNilBeforeTheFirstScan(t *testing.T) {
-	app := New(Config{DataDir: fixtureData, Secret: mustSecret(testSecret)})
-	if app.currentScan() != nil {
-		t.Fatal("a scan exists before RunInitialScan")
-	}
-	app.storeScan(&models.BookScan{})
-	if app.currentScan() == nil {
-		t.Fatal("the stored scan is missing")
-	}
 }

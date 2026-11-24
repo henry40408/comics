@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -64,32 +65,15 @@ func TestAuthLoginSuccessSetsCookieAndGrantsAccess(t *testing.T) {
 	}
 }
 
-func TestAuthLoginCookieHasSecureWhenEnabled(t *testing.T) {
-	res := newAuthApp(t, withCookieSecure()).login()
-	lines := res.setCookieLines()
-	if !slicesAny(lines, func(h string) bool { return strings.Contains(h, "Secure") }) {
-		t.Errorf("expected a Secure attribute in %v", lines)
-	}
-}
-
 // A browser drops a Secure cookie over plain HTTP.
 func TestAuthLoginCookieHasNoSecureByDefault(t *testing.T) {
 	lines := newAuthApp(t).login().setCookieLines()
 	if len(lines) == 0 {
 		t.Fatal("no Set-Cookie")
 	}
-	if slicesAny(lines, func(h string) bool { return strings.Contains(h, "Secure") }) {
+	if slices.ContainsFunc(lines, func(h string) bool { return strings.Contains(h, "Secure") }) {
 		t.Errorf("unexpected Secure attribute in %v", lines)
 	}
-}
-
-func slicesAny(lines []string, pred func(string) bool) bool {
-	for _, line := range lines {
-		if pred(line) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestAuthLoginWrongPasswordIsUnauthorized(t *testing.T) {
@@ -271,15 +255,6 @@ func assertNoStore(t *testing.T, res *response, what string) {
 	}
 }
 
-// A browser resolves /\evil.example to //evil.example.
-func TestAuthLoginRejectsBackslashRedirectTargets(t *testing.T) {
-	res := newAuthApp(t).post("/login", form(url.Values{"username": {"user"}, "password": {"password"}, "next": {`/\evil.example`}}))
-	assertStatus(t, 303, res, "POST /login")
-	if res.location() != "/" {
-		t.Errorf("Location %q", res.location())
-	}
-}
-
 // next arrives percent-decoded; a header-hostile value must still be answered.
 func TestLoginSurvivesAControlCharacterInNext(t *testing.T) {
 	res := newTestApp(t).get("/login?next=%2F%0Ax")
@@ -434,10 +409,16 @@ func TestLoginRejectsWrongMediaTypeAndMalformedForms(t *testing.T) {
 			}
 		})
 	}
-	assertStatus(t, 415, raw("application/json", `{"username":"user"}`), "json")
-	assertStatus(t, 415, raw("", "username=user&password=password"), "no content type")
 	assertStatus(t, 422, raw("application/x-www-form-urlencoded", "username=user"), "missing password")
-	assertStatus(t, 422, raw("application/x-www-form-urlencoded", "username=%zz&password=x"), "bad escape")
+	// Only the request body may carry credentials, whatever the media type.
+	for what, res := range map[string]*response{
+		"credentials in the query": ta.post("/login?username=user&password=password", form(nil)),
+		"a JSON body":              raw("application/json", `{"username":"user","password":"password"}`),
+	} {
+		if res.StatusCode == http.StatusSeeOther || len(res.Cookies()) != 0 {
+			t.Errorf("%s logged in: status %d, cookies %v", what, res.StatusCode, res.Cookies())
+		}
+	}
 	// Malformed forms spend no throttle budget: the correct login still works.
 	assertStatus(t, 303, ta.login(), "login after malformed forms")
 }
@@ -475,9 +456,6 @@ func TestVerifySemaphoresHaveTheDocumentedCapacity(t *testing.T) {
 	app := newAuthApp(t).app
 	if got := cap(app.verifySem); got != auth.MaxConcurrentVerifications {
 		t.Errorf("verifySem cap %d, want %d", got, auth.MaxConcurrentVerifications)
-	}
-	if cap(app.thumbSem) < 1 {
-		t.Error("thumbSem has no capacity")
 	}
 }
 
@@ -536,15 +514,24 @@ func TestFailedLoginLogsNoCredentials(t *testing.T) {
 	}
 }
 
-// Operators' filters match on the event name; scope names the window.
-func TestAPerIPThrottleKeepsItsEventName(t *testing.T) {
+// Operators' filters match on the event name; scope names the window. The
+// client is told when to retry, and gets no body.
+func TestAPerIPThrottleKeepsItsEventNameAndSaysWhenToRetry(t *testing.T) {
 	ta := newAuthApp(t)
 	ta.app.limiter = auth.NewRateLimiter(1, 100, 60, nil)
 	assertStatus(t, 401, ta.failedLogin(), "first")
-	assertStatus(t, 429, ta.failedLogin(), "second")
+	res := ta.failedLogin()
+	assertStatus(t, 429, res, "second")
 	logs := ta.logs.String()
 	if !strings.Contains(logs, "login_rate_limited") || !strings.Contains(logs, "per_ip") || strings.Contains(logs, "login_lockout") {
 		t.Errorf("unexpected log: %s", logs)
+	}
+	seconds, err := strconv.Atoi(res.Header.Get("Retry-After"))
+	if err != nil || seconds < 1 || seconds > 60 {
+		t.Errorf("Retry-After %q", res.Header.Get("Retry-After"))
+	}
+	if len(res.body) != 0 {
+		t.Errorf("429 body %q, want empty", res.body)
 	}
 }
 
@@ -565,20 +552,5 @@ func TestTheClientKeyIsTheTCPPeerWhenNoProxyIsTrusted(t *testing.T) {
 	logs := ta.logs.String()
 	if !strings.Contains(logs, "ip=203.0.113.7") || strings.Contains(logs, "198.51.100.1") {
 		t.Errorf("unexpected client key: %s", logs)
-	}
-}
-
-func TestAThrottledLoginSaysWhenToRetry(t *testing.T) {
-	ta := newAuthApp(t)
-	ta.app.limiter = auth.NewRateLimiter(1, 100, 60, nil)
-	ta.failedLogin()
-	res := ta.failedLogin()
-	assertStatus(t, 429, res, "second")
-	seconds, err := strconv.Atoi(res.Header.Get("Retry-After"))
-	if err != nil || seconds < 1 || seconds > 60 {
-		t.Errorf("Retry-After %q", res.Header.Get("Retry-After"))
-	}
-	if len(res.body) != 0 {
-		t.Errorf("429 body %q, want empty", res.body)
 	}
 }

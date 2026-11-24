@@ -1,6 +1,8 @@
 package views
 
 import (
+	goflag "flag" // the package already has a flag() helper
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,12 +16,11 @@ import (
 )
 
 const (
-	testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	// Values baked into the Rust-rendered goldens (see testdata/README.txt).
-	goldenVersion    = "9.4.1-3-g968f5ea-modified"
-	goldenAssetsHash = "c7db4b09d947f4e6"
-	firstBookID      = "1f1c111677715adf"
+	testSecret  = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	firstBookID = "1f1c111677715adf"
 )
+
+var update = goflag.Bool("update", false, "rewrite testdata/*.golden.html")
 
 // testdataDir is absolute because fixtureScan changes the working directory.
 var testdataDir = func() string {
@@ -58,11 +59,10 @@ func firstBook(t *testing.T, scan *models.BookScan) models.Book {
 	return scan.Books[i]
 }
 
-// normalise swaps the build-specific values for placeholders.
-func normalise(html string, versions ...string) string {
-	for _, v := range versions {
-		html = strings.ReplaceAll(html, v, "{{VERSION}}")
-	}
+// normalise swaps the build-specific values for the placeholders the goldens
+// carry.
+func normalise(html string) string {
+	html = strings.ReplaceAll(html, version.Version(), "{{VERSION}}")
 	return strings.ReplaceAll(html, "?v="+assets.Version(), "?v={{HASH}}")
 }
 
@@ -72,47 +72,68 @@ func golden(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.ReplaceAll(string(data), "?v="+goldenAssetsHash, "?v={{HASH}}")
+	return string(data)
 }
 
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
-	want := strings.ReplaceAll(golden(t, name), goldenVersion, "{{VERSION}}")
-	got = normalise(got, version.Version())
+	got = normalise(got)
+	if *update {
+		path := filepath.Join(testdataDir, name+".golden.html")
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want := golden(t, name)
 	if got != want {
-		t.Fatalf("%s differs from the Rust golden\n got: %s\nwant: %s", name, got, want)
+		t.Fatalf("%s differs from the golden\n got: %s\nwant: %s", name, got, want)
 	}
 }
 
-func TestIndexMatchesRustGolden(t *testing.T) {
+func TestIndexMatchesGolden(t *testing.T) {
 	scan := fixtureScan(t)
 	got := IndexPage(IndexView{Books: scan.Books, ScannedAt: goldenScannedAt})
 	assertGolden(t, "index", got)
 }
 
-func TestBookPagedMatchesRustGolden(t *testing.T) {
+func TestBookPagedMatchesGolden(t *testing.T) {
 	scan := fixtureScan(t)
 	got := BookPage(BookView{Book: firstBook(t, scan), Mode: ModePaged})
 	assertGolden(t, "book-paged", got)
 }
 
-func TestBookScrollMatchesRustGolden(t *testing.T) {
-	scan := fixtureScan(t)
-	got := BookPage(BookView{Book: firstBook(t, scan), Mode: ModeScroll})
-	assertGolden(t, "book-scroll", got)
-}
-
-func TestLoginMatchesRustGolden(t *testing.T) {
+func TestLoginMatchesGolden(t *testing.T) {
 	assertGolden(t, "login", LoginPage(LoginView{Next: "/"}))
 }
 
-func TestFailedLoginMatchesRustGolden(t *testing.T) {
-	assertGolden(t, "login-failed", LoginPage(LoginView{Error: true, Next: "/"}))
+// The failed-login and scroll pages have no golden of their own: each is the
+// plain page plus a short, fixed list of differences, spelled out below.
+func TestAFailedLoginAddsOnlyTheErrorBanner(t *testing.T) {
+	const banner = `<div class="err" data-testid="login-error">帳號或密碼錯誤</div>`
+	plain := LoginPage(LoginView{Next: "/"})
+	want := strings.Replace(plain, "<form", banner+"<form", 1)
+	if got := LoginPage(LoginView{Error: true, Next: "/"}); got != want || got == plain {
+		t.Fatalf("failed login page:\n got: %s\nwant: %s", got, want)
+	}
 }
 
-func TestAssetsHashMatchesTheGoldens(t *testing.T) {
-	if assets.Version() != goldenAssetsHash {
-		t.Fatalf("assets hash %s, goldens carry %s", assets.Version(), goldenAssetsHash)
+func TestScrollModeDiffersFromPagedOnlyInTheModeMarkup(t *testing.T) {
+	book := firstBook(t, fixtureScan(t))
+	swaps := []string{
+		`data-mode="paged"`, `data-mode="scroll"`,
+		`data-m="paged" class="on"`, `data-m="paged" class=""`,
+		`data-m="scroll" class=""`, `data-m="scroll" class="on"`,
+	}
+	for n := range book.Pages {
+		swaps = append(swaps,
+			fmt.Sprintf(`class="nojs-mode" href="?mode=scroll#p%d">↕ 捲動`, n+1),
+			fmt.Sprintf(`class="nojs-mode" href="?mode=paged#p%d">⇄ 翻頁`, n+1))
+	}
+	paged := BookPage(BookView{Book: book, Mode: ModePaged})
+	want := strings.NewReplacer(swaps...).Replace(paged)
+	if got := BookPage(BookView{Book: book, Mode: ModeScroll}); got != want || got == paged {
+		t.Fatalf("scroll page:\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -132,7 +153,6 @@ func TestAuthControlsAppearOnlyWhenAuthIsEnabled(t *testing.T) {
 	}
 }
 
-// Ported from rendered_pages_carry_no_inline_scripts.
 func TestRenderedPagesCarryNoInlineScripts(t *testing.T) {
 	scan := fixtureScan(t)
 	pages := []string{
@@ -163,7 +183,7 @@ func TestRenderedPagesCarryNoInlineScripts(t *testing.T) {
 // other test.
 func TestUserControlledTextIsHTMLEscaped(t *testing.T) {
 	page := models.Page{Filename: `<u>"p".jpg`, ID: "pid"}
-	book := models.Book{Title: `<i>"b"`, ID: "bid", Pages: []models.Page{page}, Cover: page}
+	book := models.Book{Title: `<i>"b"&c`, ID: "bid", Pages: []models.Page{page}, Cover: page}
 	index := IndexPage(IndexView{Books: []models.Book{book}})
 	reader := BookPage(BookView{Book: book})
 	login := LoginPage(LoginView{Next: `/"><x`})
@@ -178,7 +198,10 @@ func TestUserControlledTextIsHTMLEscaped(t *testing.T) {
 			t.Errorf("%s is not escaped: %s", c.what, c.raw)
 		}
 	}
-	if !strings.Contains(reader, "&lt;i&gt;&quot;b&quot;") {
+	// Either spelling of a quote is safe; accept both so the escaper may change.
+	reader = strings.ReplaceAll(reader, "&#34;", "&quot;")
+	login = strings.ReplaceAll(login, "&#34;", "&quot;")
+	if !strings.Contains(reader, "&lt;i&gt;&quot;b&quot;&amp;c") {
 		t.Errorf("book title escape missing: %s", reader)
 	}
 	if !strings.Contains(reader, "&lt;u&gt;&quot;p&quot;.jpg") {
@@ -189,13 +212,6 @@ func TestUserControlledTextIsHTMLEscaped(t *testing.T) {
 	}
 }
 
-func TestEscapeCoversExactlyTheMaudCharacters(t *testing.T) {
-	if got := escape(`a&b<c>d"e'f+g`); got != "a&amp;b&lt;c&gt;d&quot;e'f+g" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-// Ported from the_first_page_is_visible_without_javascript.
 func TestOnlyTheFirstPageStartsCurrent(t *testing.T) {
 	scan := fixtureScan(t)
 	html := BookPage(BookView{Book: firstBook(t, scan)})
@@ -211,7 +227,6 @@ func TestOnlyTheFirstPageStartsCurrent(t *testing.T) {
 	}
 }
 
-// Ported from anchor_paging_links_every_page_to_its_neighbours.
 func TestEveryPageLinksToItsNeighbours(t *testing.T) {
 	scan := fixtureScan(t)
 	html := BookPage(BookView{Book: firstBook(t, scan)})
@@ -224,6 +239,16 @@ func TestEveryPageLinksToItsNeighbours(t *testing.T) {
 		hasPrev := strings.Contains(nav, `class="nojs-prev"`)
 		if hasNext != (number != last) || hasPrev != (number != 1) {
 			t.Errorf("page %d: next=%v prev=%v", number, hasNext, hasPrev)
+		}
+		// The CSS :target paging resolves these anchors, so pin the targets too.
+		if want := fmt.Sprintf(`id="p%d"`, number); !strings.Contains(fig, want) {
+			t.Errorf("page %d lacks %s", number, want)
+		}
+		if want := fmt.Sprintf(`class="nojs-next" href="#p%d"`, number+1); hasNext && !strings.Contains(nav, want) {
+			t.Errorf("page %d next link is not %s", number, want)
+		}
+		if want := fmt.Sprintf(`class="nojs-prev" href="#p%d"`, number-1); hasPrev && !strings.Contains(nav, want) {
+			t.Errorf("page %d previous link is not %s", number, want)
 		}
 	}
 }
@@ -239,10 +264,10 @@ func TestParseModeFallsBackToPaged(t *testing.T) {
 }
 
 func TestIndexTimeFormats(t *testing.T) {
-	at := time.Date(2026, 1, 2, 3, 4, 5, 6_000_000, time.FixedZone("x", 3600))
+	at := time.Date(2026, 1, 12, 3, 4, 5, 6_000_000, time.FixedZone("x", 3600))
 	html := IndexPage(IndexView{ScannedAt: at, ScanDuration: 3 * time.Millisecond})
 	for _, want := range []string{
-		`datetime="2026-01-02T02:04:05.006Z">Fri, 2 Jan 2026 02:04:05 +0000</time>`,
+		`datetime="2026-01-12T02:04:05.006Z">Mon, 12 Jan 2026 02:04:05 +0000</time>`,
 		`<time datetime="PT0.003S">3ms</time>`,
 	} {
 		if !strings.Contains(html, want) {

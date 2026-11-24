@@ -41,7 +41,7 @@ const (
 )
 
 // TestMain runs from the repository root: page IDs hash the data path as
-// given, so the tests must scan "./fixtures/data" the way the Rust ones did.
+// given, so the tests must scan "./fixtures/data".
 func TestMain(m *testing.M) {
 	if err := os.Chdir("../.."); err != nil {
 		panic(err)
@@ -67,7 +67,15 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-var passwordHash = sync.OnceValue(func() string { return auth.TestPasswordHash("password") })
+// Far cheaper than the production parameters, and still real Argon2: login
+// verification reads the parameters from the hash.
+var passwordHash = sync.OnceValue(func() string {
+	hash, err := auth.HashPasswordWith("password", auth.PasswordParams{Memory: 1024, Time: 1, Threads: 1})
+	if err != nil {
+		panic(err)
+	}
+	return hash
+})
 
 // testApp is a running server plus a client that never follows redirects.
 type testApp struct {

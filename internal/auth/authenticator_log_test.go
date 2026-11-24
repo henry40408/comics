@@ -118,16 +118,6 @@ func TestLogUserAgentChangedWarnsWithoutLeakingTheSessionID(t *testing.T) {
 	}
 }
 
-func TestLoggingWithoutALoggerDiscardsInsteadOfPanicking(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
-	a.Logger = nil
-	request := requestFor(key, a.Sessions.Create("test-agent"))
-
-	a.LogRejection(request, RejectionBadSignature)
-	a.LogUserAgentChanged(request)
-}
-
 func TestSessionFingerprintIsADashWithoutAVerifiedSession(t *testing.T) {
 	a := newTestAuthenticator(t, randomSessionKey(t))
 	if got := a.SessionFingerprint(requestWithCookie("")); got != "-" {

@@ -13,7 +13,8 @@ import (
 
 // world is the state shared by the steps of one scenario: one browser,
 // opened by a Before hook rather than on first use, because only the hook
-// sees the scenario's @nojs tag.
+// sees the scenario's @nojs tag. When the hook fails, godog runs no step, so
+// steps may use w.browser without a nil check.
 type world struct {
 	browser *harness.Browser
 }
@@ -56,12 +57,4 @@ func hasTag(scenario *godog.Scenario, name string) bool {
 	return slices.ContainsFunc(scenario.Tags, func(tag *messages.PickleTag) bool {
 		return tag.Name == name
 	})
-}
-
-// browserOf is the scenario's browser, for steps that run after the hook.
-func (w *world) browserOf() (*harness.Browser, error) {
-	if w.browser == nil {
-		return nil, fmt.Errorf("no browser session: the Before hook did not open one")
-	}
-	return w.browser, nil
 }

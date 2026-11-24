@@ -163,11 +163,6 @@ func (e *Element) Value() (string, error) {
 	return callOn[string](e, "function() { return this.value; }")
 }
 
-// Connected reports whether the element is still in its document.
-func (e *Element) Connected() (bool, error) {
-	return callOn[bool](e, "function() { return this.isConnected; }")
-}
-
 // Focus gives the element the keyboard focus.
 func (e *Element) Focus() error {
 	_, err := callOn[chromedp.Void](e, "function() { this.focus(); }")

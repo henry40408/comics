@@ -47,7 +47,7 @@ Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go 
 
 ### Golden pages
 
-`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). They were captured from the former Rust server; `views_test.go` normalises the version, the assets hash and times before comparing. A deliberate markup change means regenerating the goldens and the e2e screenshots together. Visual edits (CSS, template layout, front-end JS) need the screenshots regenerated in the same change; copy-only or logic-only edits do not.
+`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). The version and the assets hash are stored as `{{VERSION}}` and `?v={{HASH}}`, and `views_test.go` swaps the real values for them before comparing; regenerate with `go test ./internal/views -update`. The scroll-mode and failed-login pages have no golden: `views_test.go` derives each from the paged or plain page plus a spelled-out list of differences. A deliberate markup change means regenerating the goldens and the e2e screenshots together. Visual edits (CSS, template layout, front-end JS) need the screenshots regenerated in the same change; copy-only or logic-only edits do not.
 
 ## Architecture
 

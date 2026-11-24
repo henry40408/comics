@@ -16,28 +16,16 @@ func registerLoginSteps(sc *godog.ScenarioContext, w *world) {
 }
 
 func (w *world) onTheLoginPage() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Login().Goto()
+	return w.browser.Login().Goto()
 }
 
 func (w *world) signIn(username, password string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Login().Login(unquote(username), unquote(password))
+	return w.browser.Login().Login(unquote(username), unquote(password))
 }
 
 func (w *world) shouldSeeTheLoginError() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
 	return harness.Eventually("the login error is showing", func() (bool, error) {
-		banner, err := b.Login().Error()
+		banner, err := w.browser.Login().Error()
 		if err != nil || banner == nil {
 			return false, err
 		}
@@ -46,25 +34,13 @@ func (w *world) shouldSeeTheLoginError() error {
 }
 
 func (w *world) shouldBeAt(expected string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("path and query", unquote(expected), b.PathAndQuery)
+	return harness.EventuallyEq("path and query", unquote(expected), w.browser.PathAndQuery)
 }
 
 func (w *world) loginFormRemembers(expected string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the login form's next target", unquote(expected), b.Login().NextTarget)
+	return harness.EventuallyEq("the login form's next target", unquote(expected), w.browser.Login().NextTarget)
 }
 
 func (w *world) usernameFieldFocused() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return harness.EventuallyEq("the focused field", "login-username", b.Login().FocusedTestID)
+	return harness.EventuallyEq("the focused field", "login-username", w.browser.Login().FocusedTestID)
 }

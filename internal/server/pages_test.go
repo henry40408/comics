@@ -2,9 +2,6 @@ package server
 
 import (
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,120 +23,8 @@ func figures(t *testing.T, html string) []string {
 	return parts
 }
 
-func openingTag(t *testing.T, fragment string) string {
-	t.Helper()
-	tag, _, found := strings.Cut(fragment, ">")
-	if !found {
-		t.Fatalf("an unclosed tag: %s", fragment)
-	}
-	return tag
-}
-
 func bookHTML(ta *testApp, query string) string {
 	return ta.get("/book/" + dataIDs[0] + query).text()
-}
-
-// The CSP forbids inline scripts, so the browser would drop them.
-func TestRenderedPagesCarryNoInlineScripts(t *testing.T) {
-	ta := newTestApp(t)
-	pages := []string{ta.get("/").text(), bookHTML(ta, ""), newAuthApp(t).get("/login").text()}
-	for _, html := range pages {
-		if !strings.Contains(html, "<script") {
-			t.Fatal("no script rendered")
-		}
-		for _, tag := range strings.Split(html, "<script")[1:] {
-			if open := openingTag(t, tag); !strings.Contains(open, "src=") {
-				t.Errorf("inline script: <script%s>", open)
-			}
-		}
-		if strings.Contains(html, "onclick=") {
-			t.Error("inline onclick handler")
-		}
-	}
-}
-
-// Pins the escaping html/template does by default: a template.HTML around
-// user-controlled text would pass every other test.
-func TestUserControlledTextIsHTMLEscaped(t *testing.T) {
-	dir := t.TempDir()
-	// A / cannot appear in a file name, so no closing tags here.
-	bookDir := filepath.Join(dir, `<i>"b"`)
-	if err := os.Mkdir(bookDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bookDir, `<u>"p".jpg`), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	ta := newTestApp(t, withDataDir(dir))
-
-	index := ta.get("/").text()
-	bookID := firstAfter(t, index, `href="/book/`)
-	book := ta.get("/book/" + bookID).text()
-	login := newAuthApp(t).get("/login?next=" + url.QueryEscape(`/"><x`)).text()
-
-	for _, c := range []struct{ what, html, raw string }{
-		{"index title", index, "<i>"},
-		{"book title", book, "<i>"},
-		{"page filename", book, "<u>"},
-		{"login next", login, "<x"},
-	} {
-		if strings.Contains(c.html, c.raw) {
-			t.Errorf("%s is not escaped: %s", c.what, c.raw)
-		}
-	}
-	if !strings.Contains(book, "&lt;i&gt;&#34;b&#34;") && !strings.Contains(book, "&lt;i&gt;&quot;b&quot;") {
-		t.Errorf("book title escaping unexpected: %s", book)
-	}
-	if !strings.Contains(login, "&gt;&lt;x") {
-		t.Errorf("login next escaping unexpected: %s", login)
-	}
-}
-
-// .pg is hidden until is-current lands on it; without app.js the server has to
-// set it on the first page.
-func TestTheFirstPageIsVisibleWithoutJavaScript(t *testing.T) {
-	tags := figures(t, bookHTML(newTestApp(t), ""))
-	if len(tags) < 2 {
-		t.Fatal("the fixture book needs several pages")
-	}
-	if !strings.Contains(openingTag(t, tags[0]), "is-current") {
-		t.Errorf("first page lacks is-current: %s", tags[0])
-	}
-	for _, tag := range tags[1:] {
-		if strings.Contains(openingTag(t, tag), "is-current") {
-			t.Errorf("a later page is current: %s", openingTag(t, tag))
-		}
-	}
-}
-
-// Without a script, :target picks the page, so each carries links to its
-// neighbours, and none past either end.
-func TestAnchorPagingLinksEveryPageToItsNeighbours(t *testing.T) {
-	frags := figures(t, bookHTML(newTestApp(t), ""))
-	total := len(frags)
-	if total <= 2 {
-		t.Fatal("the fixture book needs several pages")
-	}
-	for i, fragment := range frags {
-		n := i + 1
-		if !strings.Contains(fragment, fmt.Sprintf(`id="p%d"`, n)) {
-			t.Errorf("page %d has no id: %s", n, fragment)
-		}
-		hasNext := strings.Contains(fragment, fmt.Sprintf(`href="#p%d"`, n+1))
-		if n < total && !hasNext {
-			t.Errorf("page %d has no next", n)
-		}
-		if n == total && strings.Contains(fragment, `rel="next"`) {
-			t.Errorf("last page has a next: %s", fragment)
-		}
-		hasPrev := strings.Contains(fragment, fmt.Sprintf(`href="#p%d"`, n-1))
-		if n > 1 && !hasPrev {
-			t.Errorf("page %d has no prev", n)
-		}
-		if n == 1 && strings.Contains(fragment, `rel="prev"`) {
-			t.Errorf("first page has a prev: %s", fragment)
-		}
-	}
 }
 
 // The topbar switch would lose the page without a script, so each page carries

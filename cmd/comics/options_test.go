@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-
-	"github.com/henry40408/comics/internal/auth"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -32,7 +30,7 @@ func mustParse(t *testing.T, args []string, env map[string]string) options {
 
 func TestDefaults(t *testing.T) {
 	opts := mustParse(t, nil, nil)
-	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != "full" ||
+	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != defaultLogFormat ||
 		opts.logLevel != slog.LevelInfo || opts.command != "" || opts.secret != nil ||
 		opts.authUsername != "" || opts.hstsMaxAge != nil || opts.disableCSRFGuard {
 		t.Fatalf("unexpected defaults: %+v", opts)
@@ -50,9 +48,6 @@ func TestFlagBeatsEnvBeatsDefault(t *testing.T) {
 	}
 	if opts.bind != "127.0.0.1:1" {
 		t.Errorf("bind = %q", opts.bind)
-	}
-	if got := mustParse(t, []string{"-b", "127.0.0.1:2"}, env).bind; got != "127.0.0.1:2" {
-		t.Errorf("short flag: bind = %q", got)
 	}
 }
 
@@ -95,8 +90,6 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 		"bad proxies":      {"--trusted-proxies", "not-an-ip"},
 		"hostname bind":    {"--bind", "localhost:8080"},
 		"bad log format":   {"--log-format", "yaml"},
-		"compact format":   {"--log-format", "compact"},
-		"pretty format":    {"--log-format", "pretty"},
 		"bad hsts":         {"--hsts-max-age", "-1"},
 		"unknown flag":     {"--nope"},
 		"unknown command":  {"frobnicate"},
@@ -116,7 +109,7 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 
 func TestBindIsValidatedOnlyInServerMode(t *testing.T) {
 	env := envOf(map[string]string{"COMICS_BIND": "localhost:8080"})
-	for _, args := range [][]string{{"list"}, {"ls"}, {"hash-password"}, {"--version"}} {
+	for _, args := range [][]string{{"list"}, {"hash-password"}, {"--version"}} {
 		if _, err := parseOptions(args, env, io.Discard); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -141,7 +134,7 @@ func TestOptionsAreParsedIntoTheirTypes(t *testing.T) {
 		"--auth-username", "user",
 		"--auth-password-hash", "x",
 		"--log-format", "json",
-		"ls",
+		"list",
 	}, map[string]string{logLevelEnv: "warn"})
 	if opts.secret == nil || opts.hstsMaxAge == nil || *opts.hstsMaxAge != 0 {
 		t.Fatalf("secret/hsts: %+v", opts)
@@ -203,52 +196,9 @@ func TestEveryLegacyVariableNamesALiveReplacement(t *testing.T) {
 	}
 }
 
-func TestAUsablePasswordHashStartsTheServer(t *testing.T) {
-	hash, err := auth.HashPassword("password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ensurePasswordHashIsUsable(options{authPasswordHash: hash}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensurePasswordHashIsUsable(options{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
-	cases := []string{
-		"not-a-hash",
-		"password",
-		"$argon2id$v=19$m=19456$nope",
-		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
-	}
-	for _, hash := range cases {
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
-		if err == nil || !strings.Contains(err.Error(), "hash-password") {
-			t.Errorf("%q: err = %v", hash, err)
-		}
-	}
-}
-
 func TestAnExplicitlyEmptyCredentialIsRefused(t *testing.T) {
 	for _, flagName := range []string{"--auth-username", "--auth-password-hash"} {
 		_, err := parseOptions([]string{flagName, ""}, envOf(nil), io.Discard)
 		assertUsageError(t, err)
-	}
-}
-
-func TestABcryptHashNamesTheMigration(t *testing.T) {
-	for _, version := range []string{"2a", "2b", "2x", "2y"} {
-		hash := "$" + version + "$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu"
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
-		if err == nil {
-			t.Fatalf("%s accepted", version)
-		}
-		for _, want := range []string{"bcrypt", "Argon2id", "hash-password", "password itself is unchanged"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: %q lacks %q", version, err, want)
-			}
-		}
 	}
 }

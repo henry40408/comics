@@ -20,23 +20,25 @@ func (b *Browser) Reader() ReaderPage {
 // CurrentPage is the topbar's live page number: script-written, and hidden
 // without one. Nil when the page has none.
 func (p ReaderPage) CurrentPage() (*Element, error) {
+	return p.optionalAfterLoad(TestID("reader-current"))
+}
+
+// CurrentPageText is CurrentPage's text, empty without the element.
+func (p ReaderPage) CurrentPageText() (string, error) {
+	element, err := p.CurrentPage()
+	if err != nil || element == nil {
+		return "", err
+	}
+	return element.Text()
+}
+
+// optionalAfterLoad finds the element matching the CSS selector once the page
+// has loaded. Nil when absent.
+func (p ReaderPage) optionalAfterLoad(selector string) (*Element, error) {
 	if err := p.browser.WaitForLoad(); err != nil {
 		return nil, err
 	}
-	return p.browser.Optional(TestID("reader-current"))
-}
-
-// CurrentPageText is CurrentPage's text, nil without the element.
-func (p ReaderPage) CurrentPageText() (*string, error) {
-	element, err := p.CurrentPage()
-	if err != nil || element == nil {
-		return nil, err
-	}
-	text, err := element.Text()
-	if err != nil {
-		return nil, err
-	}
-	return &text, nil
+	return p.browser.Optional(selector)
 }
 
 // Advance clicks the "next page" zone, and confirms the page turned.
@@ -60,16 +62,9 @@ func (p ReaderPage) turnPage(what, testid string) error {
 		locate: func() (*Element, error) { return b.Query(TestID(testid)) },
 		tookEffect: func() (bool, error) {
 			now, err := p.CurrentPageText()
-			return !equalText(now, before), err
+			return now != before, err
 		},
 	})
-}
-
-func equalText(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
 }
 
 // ArrowShown says whether the tap zone ("next" or "previous") is on screen; a
@@ -319,7 +314,7 @@ func (p ReaderPage) JumpFromRail(n string) error {
 				return true, nil
 			}
 			text, err := p.CurrentPageText()
-			return text != nil && strings.TrimSpace(*text) == n, err
+			return strings.TrimSpace(text) == n, err
 		},
 	})
 }
@@ -336,20 +331,14 @@ func (p ReaderPage) CounterText() (string, error) {
 // ThemeToggle is the theme toggle, which only a script can operate. Nil when
 // absent.
 func (p ReaderPage) ThemeToggle() (*Element, error) {
-	if err := p.browser.WaitForLoad(); err != nil {
-		return nil, err
-	}
-	return p.browser.Optional("#theme")
+	return p.optionalAfterLoad("#theme")
 }
 
 // SharedModeControl is the shared segmented control, which cannot carry your
 // place across a script-less mode switch and so is hidden without a script.
 // Nil when absent.
 func (p ReaderPage) SharedModeControl() (*Element, error) {
-	if err := p.browser.WaitForLoad(); err != nil {
-		return nil, err
-	}
-	return p.browser.Optional("#seg")
+	return p.optionalAfterLoad("#seg")
 }
 
 // SwitchModeFrom clicks page n's own mode switch, which carries that page's

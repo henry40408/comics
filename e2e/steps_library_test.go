@@ -27,57 +27,32 @@ func registerLibrarySteps(sc *godog.ScenarioContext, w *world) {
 }
 
 func (w *world) openTheLibrary() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Library().Goto()
+	return w.browser.Library().Goto()
 }
 
 func (w *world) shouldSeeBooks(count string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
 	expected, err := strconv.Atoi(count)
 	if err != nil {
 		return err
 	}
 	return harness.EventuallyEq("book count", expected, func() (int, error) {
-		cards, err := b.Library().Cards()
+		cards, err := w.browser.Library().Cards()
 		return len(cards), err
 	})
 }
 
 func (w *world) openTheFirstBook() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Library().OpenFirstBook()
+	return w.browser.Library().OpenFirstBook()
 }
 
+// shouldBeInTheReader needs no wait on the URL: OpenFirstBook already
+// confirmed the path.
 func (w *world) shouldBeInTheReader() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	err = harness.Eventually("url is a book", func() (bool, error) {
-		path, err := b.Path()
-		return strings.HasPrefix(path, "/book/"), err
-	})
-	if err != nil {
-		return err
-	}
-	return harness.Eventually("the reader body is showing", b.Reader().IsShowing)
+	return harness.Eventually("the reader body is showing", w.browser.Reader().IsShowing)
 }
 
 func (w *world) libraryLists(title, pages string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	cards, err := b.Library().CardSummaries()
+	cards, err := w.browser.Library().CardSummaries()
 	if err != nil {
 		return err
 	}
@@ -97,11 +72,7 @@ func (w *world) libraryLists(title, pages string) error {
 }
 
 func (w *world) cardsNumbered(expected string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	cards, err := b.Library().CardSummaries()
+	cards, err := w.browser.Library().CardSummaries()
 	if err != nil {
 		return err
 	}
@@ -116,11 +87,7 @@ func (w *world) cardsNumbered(expected string) error {
 }
 
 func (w *world) libraryReportsVolumes(count string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	header, note, err := b.Library().VolumeCounts()
+	header, note, err := w.browser.Library().VolumeCounts()
 	if err != nil {
 		return err
 	}
@@ -134,11 +101,7 @@ func (w *world) libraryReportsVolumes(count string) error {
 }
 
 func (w *world) scanTimesShown() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	times, err := b.Library().ScanTimes()
+	times, err := w.browser.Library().ScanTimes()
 	if err != nil {
 		return err
 	}
@@ -155,11 +118,7 @@ func (w *world) scanTimesShown() error {
 }
 
 func (w *world) titleStartsWith(prefix string) error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	title, err := b.Title()
+	title, err := w.browser.Title()
 	if err != nil {
 		return err
 	}
@@ -170,29 +129,17 @@ func (w *world) titleStartsWith(prefix string) error {
 }
 
 func (w *world) shuffleFromLibrary() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Library().Shuffle()
+	return w.browser.Library().Shuffle()
 }
 
 func (w *world) rescanLibrary() error {
-	b, err := w.browserOf()
-	if err != nil {
-		return err
-	}
-	return b.Library().Rescan()
+	return w.browser.Library().Rescan()
 }
 
 func (w *world) toggleTheme() error {
-	b, err := w.browserOf()
+	before, err := w.browser.Theme()
 	if err != nil {
 		return err
 	}
-	before, err := b.Theme()
-	if err != nil {
-		return err
-	}
-	return b.ClickThemeToggle(before)
+	return w.browser.ClickThemeToggle(before)
 }
