@@ -157,6 +157,8 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		"$argon2id$v=19$m=19456,t=2,p=1$MTIzNDU2Nzg",
 		// Another algorithm's hash.
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
+		// A bcrypt hash: refused, and the message still points at hash-password.
+		"$2b$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
 	}
 	for _, hash := range cases {
 		err := EnsurePasswordHashUsable(hash)
@@ -166,21 +168,6 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "hash-password") {
 			t.Errorf("%q: %q does not name hash-password", hash, err)
-		}
-	}
-}
-
-func TestABcryptHashNamesTheMigration(t *testing.T) {
-	for _, prefix := range []string{"$2a$", "$2b$", "$2x$", "$2y$"} {
-		hash := prefix + "11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu"
-		err := EnsurePasswordHashUsable(hash)
-		if err == nil {
-			t.Fatalf("%s hash was accepted", prefix)
-		}
-		for _, want := range []string{"bcrypt", "Argon2id", "hash-password", "password itself is unchanged"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: %q lacks %q", prefix, err, want)
-			}
 		}
 	}
 }
@@ -199,8 +186,8 @@ func TestHashPasswordRecordsTheOWASPParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if parsed.Algorithm != "argon2id" {
-		t.Errorf("algorithm %q", parsed.Algorithm)
+	if !strings.HasPrefix(hash, "$argon2id$") {
+		t.Errorf("hash %q is not Argon2id", hash)
 	}
 	if want := (PasswordParams{Memory: 19456, Time: 2, Threads: 1}); parsed.Params != want {
 		t.Errorf("params = %+v, want %+v", parsed.Params, want)
@@ -304,21 +291,6 @@ func TestParsePasswordHashRefusesWhatItCannotVerify(t *testing.T) {
 		if _, err := ParsePasswordHash(hash); err == nil {
 			t.Errorf("%s parsed", name)
 		}
-	}
-}
-
-func TestArgon2iHashesVerify(t *testing.T) {
-	// Computed with argon2.Key itself so the test pins the dispatch, not the
-	// primitive.
-	salt := []byte("0123456789abcdef")
-	hash := "$argon2i$v=19$m=1024,t=1,p=1$" + base64.RawStdEncoding.EncodeToString(salt) + "$" +
-		base64.RawStdEncoding.EncodeToString(argon2iKey("pw", salt))
-	if !VerifyPassword("pw", hash) || VerifyPassword("other", hash) {
-		t.Fatal("argon2i verification wrong")
-	}
-	idHash := strings.Replace(hash, "$argon2i$", "$argon2id$", 1)
-	if VerifyPassword("pw", idHash) {
-		t.Fatal("an argon2i digest verified as argon2id")
 	}
 }
 

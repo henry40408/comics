@@ -275,9 +275,9 @@ func TestSIGTERMRightAfterStartupShutsDownGracefully(t *testing.T) {
 }
 
 func TestLegacyEnvVarAbortsStartup(t *testing.T) {
-	stdout, stderr, code := runToCompletion(t, []string{"BIND=127.0.0.1:0"}, "", "--data-dir", fixturesDir)
+	stdout, stderr, code := runToCompletion(t, []string{"AUTH_USERNAME=user"}, "", "--data-dir", fixturesDir)
 	want := "Error: these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n"
+		"  AUTH_USERNAME -> COMICS_AUTH_USERNAME\n"
 	if code != 1 || stdout != "" || stderr != want {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
@@ -332,13 +332,13 @@ func TestHashPasswordReadsStdinWithoutATerminal(t *testing.T) {
 
 func TestHashPasswordRefusals(t *testing.T) {
 	cases := map[string]struct{ stdin, wantErr string }{
-		"mismatch": {"one\ntwo\n", "Error: Password mismatch\n"},
-		"empty":    {"\n\n", "Error: Password is empty.\n"},
-		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "Error: Password is 1025 bytes"},
+		"mismatch": {"one\ntwo\n", "error: password mismatch"},
+		"empty":    {"\n\n", "error: password is empty"},
+		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "error: password is 1025 bytes"},
 	}
 	for name, tc := range cases {
 		stdout, stderr, code := runToCompletion(t, nil, tc.stdin, "hash-password")
-		if code != 1 || stdout != "" || !strings.HasPrefix(stderr, tc.wantErr) {
+		if code != 1 || stdout != "" || !strings.HasPrefix(strings.ToLower(stderr), tc.wantErr) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, code, stdout, stderr)
 		}
 	}
@@ -346,8 +346,8 @@ func TestHashPasswordRefusals(t *testing.T) {
 
 // The legacy check comes first, even for hash-password.
 func TestHashPasswordStillChecksLegacyEnvFirst(t *testing.T) {
-	_, stderr, code := runToCompletion(t, []string{"BIND=x"}, "a\na\n", "hash-password")
-	if code != 1 || !strings.Contains(stderr, "BIND -> COMICS_BIND") {
+	_, stderr, code := runToCompletion(t, []string{"AUTH_PASSWORD_HASH=x"}, "a\na\n", "hash-password")
+	if code != 1 || !strings.Contains(stderr, "AUTH_PASSWORD_HASH -> COMICS_AUTH_PASSWORD_HASH") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 }

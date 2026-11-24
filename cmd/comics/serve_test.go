@@ -67,8 +67,8 @@ func TestServerConfigWithoutASecretWarnsAndGeneratesOne(t *testing.T) {
 	if !strings.Contains(buffer.String(), "no --secret provided") {
 		t.Fatalf("log = %q", buffer.String())
 	}
-	// SessionKey panics on a zero-value Secret, so reaching here proves it was set.
-	if config.Secret.SessionKey() == serverConfig(options{}, logger).Secret.SessionKey() {
+	// IDSeed panics on a zero-value Secret, so reaching here proves it was set.
+	if config.Secret.IDSeed() == serverConfig(options{}, logger).Secret.IDSeed() {
 		t.Fatal("two generated secrets are identical")
 	}
 	if config.DataDir != "books" || config.AuthUsername != "" || config.AuthPasswordHash != "" {
@@ -90,7 +90,7 @@ func TestServerConfigCarriesTheGivenSecretAndCredentials(t *testing.T) {
 	if buffer.Len() != 0 {
 		t.Fatalf("log = %q", buffer.String())
 	}
-	if config.Secret.SessionKey() != given.SessionKey() {
+	if config.Secret.IDSeed() != given.IDSeed() {
 		t.Fatal("the configured secret was replaced")
 	}
 	if config.AuthUsername != "user" || config.AuthPasswordHash != "hash" || !config.CookieSecure {

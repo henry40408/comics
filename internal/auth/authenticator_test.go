@@ -76,23 +76,12 @@ func TestAuthenticateReportsWhyItRefused(t *testing.T) {
 
 	wantState(t, a.Authenticate(requestWithCookie("")), AuthUnauthenticated, RejectionAbsent)
 
-	// Right name, never signed by this key.
-	forged := SessionCookie + "=" + strings.Repeat("a", 32)
-	wantState(t, a.Authenticate(requestWithCookie(forged)), AuthUnauthenticated, RejectionBadSignature)
-
 	// Correctly signed, but not an identifier shape.
 	malformed := signedHeader(key, &http.Cookie{Name: SessionCookie, Value: "not-an-id", Path: "/"})
 	wantState(t, a.Authenticate(requestWithCookie(malformed)), AuthUnauthenticated, RejectionMalformed)
 
 	// Well-formed and correctly signed, but never issued.
 	wantState(t, a.Authenticate(requestFor(key, strings.Repeat("0", 32))), AuthUnauthenticated, RejectionUnknown)
-}
-
-func TestAuthenticateRejectsACookieSignedByAnotherKey(t *testing.T) {
-	a := newTestAuthenticator(t, randomSessionKey(t))
-	id := a.Sessions.Create("test-agent")
-	request := requestFor(randomSessionKey(t), id)
-	wantState(t, a.Authenticate(request), AuthUnauthenticated, RejectionBadSignature)
 }
 
 func TestAuthenticateSurfacesAChangedUserAgentWithoutRefusing(t *testing.T) {

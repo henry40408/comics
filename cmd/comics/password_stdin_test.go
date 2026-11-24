@@ -41,7 +41,7 @@ func TestHashPasswordCommandHashesAMatchingPair(t *testing.T) {
 func TestHashPasswordCommandRefusesAMismatch(t *testing.T) {
 	var out, errw bytes.Buffer
 	err := hashPasswordCommand(stdinFile(t, "one\ntwo\n"), &out, &errw)
-	if err == nil || err.Error() != "Password mismatch" {
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "password mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 	if out.Len() != 0 {

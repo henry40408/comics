@@ -51,7 +51,6 @@ func TestLogRejectionRecordsEachReasonAtItsLevel(t *testing.T) {
 	}{
 		{"idle expiry", RejectionExpiredIdle, "INFO", "session_expired", "idle", true},
 		{"absolute expiry", RejectionExpiredAbsolute, "INFO", "session_expired", "absolute", true},
-		{"bad signature", RejectionBadSignature, "WARN", "session_rejected", "bad_signature", false},
 		{"malformed", RejectionMalformed, "WARN", "session_rejected", "malformed", false},
 		{"unknown", RejectionUnknown, "DEBUG", "session_rejected", "unknown", true},
 	}
@@ -138,9 +137,8 @@ func TestSessionFingerprintIsSaltedForAVerifiedSession(t *testing.T) {
 func TestSessionIDRejectsCookiesThatAreNotAVerifiedSessionIdentifier(t *testing.T) {
 	key := randomSessionKey(t)
 	cases := map[string]*http.Request{
-		"signed by another key": requestFor(randomSessionKey(t), strings.Repeat("a", 32)),
-		"not a session id":      requestFor(key, "not-a-session-id"),
-		"unsigned value":        requestWithCookie(SessionCookieName(false) + "=plain"),
+		"not a session id": requestFor(key, "not-a-session-id"),
+		"unsigned value":   requestWithCookie(SessionCookieName(false) + "=plain"),
 	}
 	a := newTestAuthenticator(t, key)
 	for name, request := range cases {

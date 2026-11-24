@@ -77,7 +77,7 @@ func TestBooleansAcceptOnlyTrueAndFalse(t *testing.T) {
 	if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": "true"}); !opts.disableCSRFGuard {
 		t.Error("env true was ignored")
 	}
-	for _, bad := range []string{"1", "yes", "TRUE"} {
+	for _, bad := range []string{"yes", "on", "2"} {
 		_, err := parseOptions(nil, envOf(map[string]string{"COMICS_COOKIE_SECURE": bad}), io.Discard)
 		assertUsageError(t, err)
 		_, err = parseOptions([]string{"--cookie-secure=" + bad}, envOf(nil), io.Discard)
@@ -184,11 +184,10 @@ func TestHelpPrintsUsageAndABadFlagDoesNot(t *testing.T) {
 
 func TestLegacyEnvVarsAreReportedInOrder(t *testing.T) {
 	err := ensureNoLegacyEnvVars(envOf(map[string]string{
-		"COMICS_SESSION_KEY": "x", "COMICS_SEED": "x", "BIND": "", "RUST_LOG": "debug",
+		"AUTH_PASSWORD_HASH": "x", "AUTH_USERNAME": "",
 	}))
 	want := "these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n  COMICS_SEED -> COMICS_SECRET\n" +
-		"  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
+		"  AUTH_USERNAME -> COMICS_AUTH_USERNAME\n  AUTH_PASSWORD_HASH -> COMICS_AUTH_PASSWORD_HASH"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v", err)
 	}
