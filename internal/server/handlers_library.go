@@ -15,8 +15,7 @@ import (
 	"github.com/henry40408/comics/internal/views"
 )
 
-// writeHTML sends a rendered page. An empty body is how the 503 and the
-// library's other bare errors read.
+// writeHTML sends a rendered page.
 func writeHTML(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -24,9 +23,8 @@ func writeHTML(w http.ResponseWriter, status int, body string) {
 }
 
 func (a *App) handleIndex(w http.ResponseWriter, _ *http.Request) {
-	scan := a.currentScan()
-	if scan == nil {
-		writeHTML(w, http.StatusServiceUnavailable, "")
+	scan, ready := a.readyScan(w)
+	if !ready {
 		return
 	}
 	writeHTML(w, http.StatusOK, views.IndexPage(views.IndexView{
@@ -41,14 +39,13 @@ func (a *App) handleIndex(w http.ResponseWriter, _ *http.Request) {
 // mode switch works without JavaScript; anything unrecognised renders paged
 // rather than a 400.
 func (a *App) handleBook(w http.ResponseWriter, r *http.Request) {
-	scan := a.currentScan()
-	if scan == nil {
-		writeHTML(w, http.StatusServiceUnavailable, "")
+	scan, ready := a.readyScan(w)
+	if !ready {
 		return
 	}
 	index, found := scan.BooksMap[r.PathValue("id")]
-	if !found || index >= len(scan.Books) {
-		writeHTML(w, http.StatusNotFound, "not found")
+	if !found {
+		http.NotFound(w, r)
 		return
 	}
 	writeHTML(w, http.StatusOK, views.BookPage(views.BookView{

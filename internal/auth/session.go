@@ -183,9 +183,6 @@ func (s *SessionStore) Len() int {
 	return len(s.sessions)
 }
 
-// IsEmpty reports whether no session is live.
-func (s *SessionStore) IsEmpty() bool { return s.Len() == 0 }
-
 func (s *SessionStore) isIdle(record *sessionRecord, nowSecs int64) bool {
 	idleFor := max(nowSecs-record.lastSeen.Load(), 0)
 	return idleFor >= int64(s.idleTTL/time.Second)

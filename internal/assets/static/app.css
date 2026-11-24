@@ -31,7 +31,7 @@ html[data-theme="dark"] {
 }
 
 /* The same palette without JavaScript, where theme.js never sets `data-theme`.
- * Keep the two lists in step (`dark_theme_has_a_no_js_fallback`). */
+ * Keep the two lists in step (`TestDarkThemeHasANoJSFallback`). */
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) {
     --paper: #16140f;

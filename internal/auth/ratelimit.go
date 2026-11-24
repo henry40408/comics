@@ -230,8 +230,8 @@ type ClientKeys struct {
 	warned  atomic.Bool
 }
 
-// NewClientKeys builds a resolver. logger receives the one-time warning about
-// an ignored X-Forwarded-For.
+// NewClientKeys builds a resolver. logger, which must not be nil, receives the
+// one-time warning about an ignored X-Forwarded-For.
 func NewClientKeys(trusted TrustedProxies, logger *slog.Logger) *ClientKeys {
 	return &ClientKeys{trusted: trusted, logger: logger}
 }
@@ -284,7 +284,7 @@ func (c *ClientKeys) keyFor(peer netip.Addr, hasPeer bool, headers http.Header) 
 // missing trusted-proxies entry (every client collapses into one bucket) or a
 // forgery.
 func (c *ClientKeys) warnOnceAboutIgnoredForwarding(peer netip.Addr, headers http.Header) {
-	if len(headers.Values("X-Forwarded-For")) == 0 || c.logger == nil {
+	if len(headers.Values("X-Forwarded-For")) == 0 {
 		return
 	}
 	if c.warned.Swap(true) {

@@ -66,8 +66,8 @@ Every option except `COMICS_LOG_LEVEL` can also be passed as a flag; see `comics
 | `COMICS_BIND` | Bind address (the Docker image sets `0.0.0.0:8080`) | `127.0.0.1:8080` |
 | `COMICS_DATA_DIR` | Data directory | `./data` |
 | `COMICS_CACHE_DIR` | Thumbnail cache directory | `comics-thumbs` under the system temp dir |
-| `COMICS_LOG_FORMAT` | `full` or `json` | `full` |
-| `COMICS_LOG_LEVEL` | `debug`, `info`, `warn` or `error` (environment only, no flag) | `info` |
+| `COMICS_LOG_FORMAT` | `text` or `json` | `text` |
+| `COMICS_LOG_LEVEL` | `debug`, `info`, `warn` or `error`, case-insensitive (environment only, no flag) | `info` |
 
 ### Notes
 
@@ -80,7 +80,7 @@ Every option except `COMICS_LOG_LEVEL` can also be passed as a flag; see `comics
 - **`COMICS_DISABLE_CSRF_GUARD`**: state-changing requests are checked with `Sec-Fetch-Site`, falling back to `Origin`. Browsers omit `Sec-Fetch-Site` on plain-HTTP non-localhost hosts (e.g. `http://nas.local`), and if they also send `Origin: null` the login form returns `403` with no way in. This flag is the escape hatch for that case; serving over HTTPS or through an SSH tunnel to `localhost` fixes it without giving anything up. `SameSite=Strict` still protects you with the flag on. Accepts `true`/`false` only.
 - **Security headers**: every response carries a strict `Content-Security-Policy` (`default-src 'none'`) and the usual hardening headers; they are not configurable. Make sure your reverse proxy does not add its own CSP — two policies are intersected, usually yielding a blank page.
 - **Audit logging**: logins, logouts, expiries, failures and throttling are logged at `INFO`/`WARN` with client IP and `User-Agent` (never the session ID, username or password). Worth alerting on: `session_rejected` with `reason=bad_signature` or `reason=malformed` (a cookie this server never issued), and `login_lockout` (the account-wide budget is spent). Per-client throttling logs `login_rate_limited` with a `scope` of `per_ip` or `shared`. Setting `COMICS_LOG_LEVEL=warn` stops most of this logging, but `session_rejected` (`bad_signature`/`malformed`) still logs at `WARN` with the client IP and `User-Agent`.
-- **Upgrading**: the server refuses to start while a retired variable is set (`COMICS_SEED`, `COMICS_SESSION_KEY`, `RUST_LOG` (use `COMICS_LOG_LEVEL`), or the old unprefixed `BIND`, `SEED`, `AUTH_USERNAME`, …) and names its replacement. Moving to `COMICS_SECRET` logs everyone out and changes every book/page URL once. A bcrypt `COMICS_AUTH_PASSWORD_HASH` is also refused at startup: re-run `comics hash-password` with the same password.
+- **Upgrading**: the server refuses to start while a retired variable is set (`COMICS_SEED`, `COMICS_SESSION_KEY`, `RUST_LOG` (use `COMICS_LOG_LEVEL`), or the old unprefixed `BIND`, `SEED`, `AUTH_USERNAME`, …) and names its replacement. Moving to `COMICS_SECRET` logs everyone out and changes every book/page URL once. A bcrypt `COMICS_AUTH_PASSWORD_HASH` is also refused at startup: re-run `comics hash-password` with the same password. `--log-format full` is now `text`, and the `-b` flag and the `ls` alias are gone (`--bind` and `list` remain); each makes an old start-up command fail with exit code 2.
 
 ## Commands
 
@@ -95,7 +95,7 @@ $argon2id$v=19$m=19456,t=2,p=1$...
 
 Only the hash goes to stdout, so `COMICS_AUTH_PASSWORD_HASH=$(comics hash-password)` works. Passwords may be up to 1 KiB (about 341 Traditional Chinese characters). An empty password is refused; one shorter than 15 characters prints a warning on stderr but is still hashed.
 
-### `list` (alias `ls`)
+### `list`
 
 ```bash
 $ comics list

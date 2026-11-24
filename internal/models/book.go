@@ -52,10 +52,8 @@ func newBook(seed uint64, dir, name string, logger *slog.Logger) (Book, error) {
 	if !utf8.ValidString(name) {
 		return Book{}, fmt.Errorf("invalid path: %q", path)
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() {
-		return Book{}, fmt.Errorf("not a directory: %s", path)
-	}
+	// A path that is not a directory fails in scanPages' ReadDir, which opens
+	// with O_DIRECTORY, so even a FIFO cannot block the scan.
 	pages, err := scanPages(seed, path, logger)
 	if err != nil {
 		return Book{}, err
