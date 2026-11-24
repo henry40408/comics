@@ -54,8 +54,7 @@ func hashPasswordCommand(stdin *os.File, out, errw io.Writer) error {
 		return err
 	}
 	if password != confirmation {
-		//nolint:staticcheck // ST1005: printed verbatim to the user, not wrapped into another error
-		return errors.New("Password mismatch")
+		return errors.New("password mismatch")
 	}
 	return emitPasswordHash(password, out, errw)
 }

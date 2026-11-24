@@ -8,21 +8,14 @@ import (
 // legacyEnvVar pairs a retired environment variable with its replacement.
 type legacyEnvVar struct{ old, replacement string }
 
-// legacyEnvVars lists the retired variables. Update it whenever an environment
-// variable is added, renamed or removed: a silently ignored one (say, falling
-// back to a random secret) is worse than a startup failure.
+// legacyEnvVars lists the retired variables that must still abort startup. Only
+// these two stay: ignoring the old names would leave COMICS_AUTH_* unset and
+// the server would silently come up fully public (fail-open). Any other
+// retired name that is ignored merely leaves a setting unapplied, so it is not
+// worth a table entry.
 var legacyEnvVars = []legacyEnvVar{
 	{"AUTH_USERNAME", "COMICS_AUTH_USERNAME"},
 	{"AUTH_PASSWORD_HASH", "COMICS_AUTH_PASSWORD_HASH"},
-	{"BIND", "COMICS_BIND"},
-	{"DATA_DIR", "COMICS_DATA_DIR"},
-	{"CACHE_DIR", "COMICS_CACHE_DIR"},
-	{"LOG_FORMAT", "COMICS_LOG_FORMAT"},
-	{"SEED", "COMICS_SECRET"},
-	{"COMICS_SEED", "COMICS_SECRET"},
-	{"COMICS_SESSION_KEY", "COMICS_SECRET"},
-	// A global RUST_LOG would otherwise be ignored without a word.
-	{"RUST_LOG", "COMICS_LOG_LEVEL"},
 }
 
 // ensureNoLegacyEnvVars fails when a retired variable is set, even empty.

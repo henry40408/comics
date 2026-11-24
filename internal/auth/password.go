@@ -43,10 +43,6 @@ const (
 	maxTime      = 16
 )
 
-// bcryptPrefixes are matched only to name the migration: a bare parse error is
-// unactionable.
-var bcryptPrefixes = []string{"$2a$", "$2b$", "$2x$", "$2y$"}
-
 // PasswordParams are Argon2 cost parameters. Memory is in KiB.
 type PasswordParams struct {
 	Memory  uint32
@@ -65,13 +61,11 @@ var DefaultPasswordParams = PasswordParams{Memory: 19456, Time: 2, Threads: 1}
 // verifies. Merely short passwords are the caller's advice, not a refusal.
 func EnsurePasswordFits(password string) error {
 	if password == "" {
-		//nolint:staticcheck // ST1005: printed verbatim to the user, not wrapped into another error
-		return errors.New("Password is empty.")
+		return errors.New("password is empty")
 	}
 	if len(password) > MaxPasswordBytes {
-		//nolint:staticcheck // ST1005: printed verbatim to the user, not wrapped into another error
-		return fmt.Errorf("Password is %d bytes, and comics accepts at most %d. "+
-			"Shorten it — note that non-ASCII characters cost several bytes each.",
+		return fmt.Errorf("password is %d bytes, and comics accepts at most %d. "+
+			"Shorten it — note that non-ASCII characters cost several bytes each",
 			len(password), MaxPasswordBytes)
 	}
 	return nil
@@ -106,17 +100,16 @@ func formatPHC(params PasswordParams, salt, digest []byte) string {
 
 // ParsedPasswordHash is a PHC string taken apart.
 type ParsedPasswordHash struct {
-	Algorithm string
-	Params    PasswordParams
-	Salt      []byte
-	Digest    []byte
+	Params PasswordParams
+	Salt   []byte
+	Digest []byte
 }
 
 // ParsePasswordHash reads exactly what HashPassword writes,
 // $argon2id$v=19$m=..,t=..,p=..$<salt>$<hash>, with every field present and the
 // parameters in that order. Salt and hash use standard base64 without padding.
-// Only argon2id and argon2i at version 19 are supported. Salts under 8 bytes
-// and digests under 4 bytes are refused.
+// Only argon2id at version 19 is supported. Salts under 8 bytes and digests
+// under 4 bytes are refused.
 //
 // A missing field is an error, not a default: a hash that silently took the
 // default cost would parse and then never verify.
@@ -126,9 +119,8 @@ func ParsePasswordHash(phc string) (ParsedPasswordHash, error) {
 		return ParsedPasswordHash{}, errors.New("password hash must look like " +
 			"$argon2id$v=19$m=<memory>,t=<time>,p=<threads>$<salt>$<hash>")
 	}
-	hash := ParsedPasswordHash{Algorithm: fields[1]}
-	if hash.Algorithm != "argon2id" && hash.Algorithm != "argon2i" {
-		return ParsedPasswordHash{}, fmt.Errorf("unsupported algorithm %q", hash.Algorithm)
+	if fields[1] != "argon2id" {
+		return ParsedPasswordHash{}, fmt.Errorf("unsupported algorithm %q", fields[1])
 	}
 	if fields[2] != "v="+strconv.Itoa(argon2Version) {
 		return ParsedPasswordHash{}, fmt.Errorf("unsupported version %q", fields[2])
@@ -137,7 +129,7 @@ func ParsePasswordHash(phc string) (ParsedPasswordHash, error) {
 	if err != nil {
 		return ParsedPasswordHash{}, err
 	}
-	hash.Params = params
+	hash := ParsedPasswordHash{Params: params}
 	if hash.Salt, err = decodeBase64(fields[4], minSaltBytes, "salt"); err != nil {
 		return ParsedPasswordHash{}, err
 	}
@@ -195,14 +187,10 @@ func validateParams(params PasswordParams) error {
 	return nil
 }
 
-// Matches reports whether password produces this hash's digest, reading cost,
-// algorithm and output length from the parsed string.
+// Matches reports whether password produces this hash's digest, reading cost
+// and output length from the parsed string.
 func (p ParsedPasswordHash) Matches(password string) bool {
-	derive := argon2.IDKey
-	if p.Algorithm == "argon2i" {
-		derive = argon2.Key
-	}
-	got := derive([]byte(password), p.Salt, p.Params.Time, p.Params.Memory, p.Params.Threads, uint32(len(p.Digest)))
+	got := argon2.IDKey([]byte(password), p.Salt, p.Params.Time, p.Params.Memory, p.Params.Threads, uint32(len(p.Digest)))
 	return subtle.ConstantTimeCompare(got, p.Digest) == 1
 }
 
@@ -257,15 +245,6 @@ func VerifyCredentials(creds *Credentials, username, password string) bool {
 // correct password exactly as it refuses a typo. Deliberately not run before
 // the hash-password subcommand, which is how the operator fixes a bad hash.
 func EnsurePasswordHashUsable(hash string) error {
-	for _, prefix := range bcryptPrefixes {
-		if strings.HasPrefix(hash, prefix) {
-			//nolint:staticcheck // ST1005: printed verbatim to the user, not wrapped into another error
-			return errors.New("COMICS_AUTH_PASSWORD_HASH is a bcrypt hash, which comics no longer accepts — " +
-				"it now hashes passwords with Argon2id. Your password itself is unchanged: " +
-				"run `comics hash-password`, enter it again, and replace the value of " +
-				"COMICS_AUTH_PASSWORD_HASH with the new hash.")
-		}
-	}
 	if _, err := ParsePasswordHash(hash); err != nil {
 		return fmt.Errorf("COMICS_AUTH_PASSWORD_HASH is not an Argon2 hash (%w); "+
 			"generate one with `comics hash-password`", err)
