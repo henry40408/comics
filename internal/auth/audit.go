@@ -26,7 +26,8 @@ func NewAuditSalt() *AuditSalt {
 }
 
 // Fingerprint is the first fingerprintBytes of SHA-256(salt || nonce),
-// hex-encoded. Not xxh3 like content IDs: that is not a cryptographic hash.
+// hex-encoded. The salt is secret, so the logged value cannot be matched to a
+// session identifier without it.
 func (a *AuditSalt) Fingerprint(nonce string) string {
 	hasher := sha256.New()
 	hasher.Write(a.salt[:])

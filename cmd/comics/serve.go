@@ -31,8 +31,8 @@ func serverConfig(opts options, logger *slog.Logger) server.Config {
 	if opts.secret != nil {
 		secretValue = *opts.secret
 	} else {
-		logger.Warn("no --secret provided; generating a random one — every session will " +
-			"be invalidated and every book/page URL will change on restart. " +
+		logger.Warn("no --secret provided; generating a random one — every book/page " +
+			"URL will change on restart. " +
 			"Generate a persistent secret with `openssl rand -hex 32` and set " +
 			"COMICS_SECRET.")
 	}

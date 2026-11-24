@@ -88,15 +88,15 @@ func (o *options) specs() []flagSpec {
 			usage: "username for the login form"},
 		{name: "auth-password-hash", env: "COMICS_AUTH_PASSWORD_HASH", set: setNonEmpty(&o.authPasswordHash),
 			usage: "Argon2id hash of the password for the login form (see hash-password)"},
-		{name: "cookie-secure", env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, parseStrictBool),
+		{name: "cookie-secure", env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, strconv.ParseBool),
 			usage: "send the session cookie with the Secure attribute (HTTPS only)"},
 		{name: "hsts-max-age", env: "COMICS_HSTS_MAX_AGE", set: o.setHSTSMaxAge,
 			usage: "send Strict-Transport-Security with this max-age in seconds"},
 		{name: "trusted-proxies", env: "COMICS_TRUSTED_PROXIES", set: setParsed(&o.trustedProxies, auth.ParseTrustedProxies),
 			usage: "comma-separated IPs and CIDR prefixes whose X-Forwarded-For is trusted"},
-		{name: "disable-csrf-guard", env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: setParsed(&o.disableCSRFGuard, parseStrictBool),
+		{name: "disable-csrf-guard", env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: setParsed(&o.disableCSRFGuard, strconv.ParseBool),
 			usage: "turn off the CSRF origin guard (plain-HTTP LAN hosts only)"},
-		{name: "version", boolean: true, set: setParsed(&o.showVersion, parseStrictBool),
+		{name: "version", boolean: true, set: setParsed(&o.showVersion, strconv.ParseBool),
 			usage: "print the version and exit"},
 	}
 }
@@ -230,17 +230,6 @@ func setNonEmpty(target *string) func(string) error {
 		*target = value
 		return nil
 	}
-}
-
-// parseStrictBool accepts only "true" and "false".
-func parseStrictBool(value string) (bool, error) {
-	switch value {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	}
-	return false, errors.New("must be true or false")
 }
 
 func (o *options) setSecret(value string) error {

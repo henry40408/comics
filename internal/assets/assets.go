@@ -2,10 +2,9 @@
 package assets
 
 import (
+	"crypto/sha256"
 	_ "embed"
-	"strconv"
-
-	"github.com/zeebo/xxh3"
+	"encoding/hex"
 )
 
 var (
@@ -40,14 +39,18 @@ var (
 	version = computeVersion()
 )
 
+// versionBytes is how much of the SHA-256 digest the version keeps: 16 hex
+// characters are plenty to tell two builds' asset URLs apart.
+const versionBytes = 8
+
 // computeVersion hashes every embedded asset in a fixed order. It is a pure
 // function of the embedded bytes, so computing it once at init is safe.
 func computeVersion() string {
-	hasher := xxh3.New()
+	hasher := sha256.New()
 	for _, asset := range [][]byte{[]byte(AppCSS), []byte(AppJS), []byte(ThemeJS), []byte(FaviconSVG), FaviconPNG, AppleTouchIconPNG} {
 		_, _ = hasher.Write(asset)
 	}
-	return strconv.FormatUint(hasher.Sum64(), 16)
+	return hex.EncodeToString(hasher.Sum(nil)[:versionBytes])
 }
 
 // Version is appended to asset URLs as ?v= so they can be served immutable.

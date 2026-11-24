@@ -67,21 +67,54 @@ func TestAnEmptyEnvVarIsUnset(t *testing.T) {
 	}
 }
 
-func TestBooleansAcceptOnlyTrueAndFalse(t *testing.T) {
+func TestBooleansAcceptWhatParseBoolAccepts(t *testing.T) {
 	if opts := mustParse(t, []string{"--cookie-secure"}, nil); !opts.cookieSecure {
 		t.Error("a bare flag did not mean true")
 	}
-	if opts := mustParse(t, []string{"--cookie-secure=false"}, nil); opts.cookieSecure {
-		t.Error("=false was ignored")
+	accepted := map[string]bool{
+		"1": true, "t": true, "T": true, "TRUE": true, "true": true,
+		"0": false, "f": false, "F": false, "false": false,
 	}
-	if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": "true"}); !opts.disableCSRFGuard {
-		t.Error("env true was ignored")
+	for value, want := range accepted {
+		if opts := mustParse(t, []string{"--cookie-secure=" + value}, nil); opts.cookieSecure != want {
+			t.Errorf("--cookie-secure=%s gave %v, want %v", value, opts.cookieSecure, want)
+		}
+		if opts := mustParse(t, nil, map[string]string{"COMICS_COOKIE_SECURE": value}); opts.cookieSecure != want {
+			t.Errorf("COMICS_COOKIE_SECURE=%s gave %v, want %v", value, opts.cookieSecure, want)
+		}
 	}
-	for _, bad := range []string{"1", "yes", "TRUE"} {
+	for _, value := range []string{"true", "1"} {
+		if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": value}); !opts.disableCSRFGuard {
+			t.Errorf("COMICS_DISABLE_CSRF_GUARD=%s was ignored", value)
+		}
+	}
+	for _, bad := range []string{"yes", "on", "2", "TrUe"} {
 		_, err := parseOptions(nil, envOf(map[string]string{"COMICS_COOKIE_SECURE": bad}), io.Discard)
 		assertUsageError(t, err)
 		_, err = parseOptions([]string{"--cookie-secure=" + bad}, envOf(nil), io.Discard)
 		assertUsageError(t, err)
+	}
+}
+
+// --version takes the same boolean forms as the other flags, and a flag given
+// an empty value is an error rather than false. An empty environment variable
+// is the opposite on purpose: it counts as unset (TestAnEmptyEnvVarIsUnset).
+func TestVersionAndEmptyFlagValuesParseLikeBooleans(t *testing.T) {
+	if opts := mustParse(t, []string{"--version"}, nil); !opts.showVersion {
+		t.Error("a bare --version did not mean true")
+	}
+	for value, want := range map[string]bool{"1": true, "T": true, "0": false, "false": false} {
+		if opts := mustParse(t, []string{"--version=" + value}, nil); opts.showVersion != want {
+			t.Errorf("--version=%s gave %v, want %v", value, opts.showVersion, want)
+		}
+	}
+	for _, args := range [][]string{{"--version=yes"}, {"--version="}, {"--cookie-secure="}} {
+		_, err := parseOptions(args, envOf(nil), io.Discard)
+		assertUsageError(t, err)
+		// The flag package keeps only the text of the parser's error, not the error.
+		if !strings.Contains(err.Error(), "strconv.ParseBool") {
+			t.Errorf("%v: err = %v, want ParseBool to be the one refusing", args, err)
+		}
 	}
 }
 
@@ -184,16 +217,23 @@ func TestHelpPrintsUsageAndABadFlagDoesNot(t *testing.T) {
 
 func TestLegacyEnvVarsAreReportedInOrder(t *testing.T) {
 	err := ensureNoLegacyEnvVars(envOf(map[string]string{
-		"COMICS_SESSION_KEY": "x", "COMICS_SEED": "x", "BIND": "", "RUST_LOG": "debug",
+		"AUTH_PASSWORD_HASH": "x", "AUTH_USERNAME": "",
 	}))
 	want := "these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n  COMICS_SEED -> COMICS_SECRET\n" +
-		"  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
+		"  AUTH_USERNAME -> COMICS_AUTH_USERNAME\n  AUTH_PASSWORD_HASH -> COMICS_AUTH_PASSWORD_HASH"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v", err)
 	}
 	if ensureNoLegacyEnvVars(envOf(nil)) != nil {
 		t.Fatal("an empty environment was refused")
+	}
+}
+
+// Ignoring either of these would leave COMICS_AUTH_* unset and serve comics
+// without authentication, so they are the only retired names that still abort.
+func TestOnlyTheAuthCredentialVariablesStayRetired(t *testing.T) {
+	if len(legacyEnvVars) != 2 || legacyEnvVars[0].old != "AUTH_USERNAME" || legacyEnvVars[1].old != "AUTH_PASSWORD_HASH" {
+		t.Fatalf("legacyEnvVars = %+v", legacyEnvVars)
 	}
 }
 

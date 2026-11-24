@@ -57,20 +57,6 @@ func TestSessionIDShapeAcceptsOnlyHexDigits(t *testing.T) {
 	}
 }
 
-func TestVerifyAcceptsASignatureOfExactlyTheDigestLength(t *testing.T) {
-	signer := NewCookieSigner(randomSessionKey(t))
-	signed := signer.Sign("")
-	if len(signed) != signedDigestLen {
-		t.Fatalf("signed empty value has length %d, want %d", len(signed), signedDigestLen)
-	}
-	if got, ok := signer.Verify(signed); !ok || got != "" {
-		t.Fatalf("Verify = %q, %v, want empty value accepted", got, ok)
-	}
-	if _, ok := signer.Verify(signed[:signedDigestLen-1]); ok {
-		t.Fatal("a signature one byte short verified")
-	}
-}
-
 func TestSafeNextHeaderValueByteBoundaries(t *testing.T) {
 	for _, next := range []string{"/ a", "/~", "/é"} {
 		if got := SafeNext(next); got != next {

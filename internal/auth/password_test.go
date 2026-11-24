@@ -149,7 +149,13 @@ func mustHash(t *testing.T, password string) string {
 }
 
 func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
+	// Argon2i is complete and well formed, so the algorithm is the only reason to refuse it.
+	argon2i := "$argon2i$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$ZGlnZXN0ZGlnZXN0ZGlnZXN0ZGlnZXN0"
+	if err := EnsurePasswordHashUsable(argon2i); err == nil || !strings.Contains(err.Error(), `unsupported algorithm "argon2i"`) {
+		t.Errorf("argon2i: err = %v, want the unsupported algorithm refusal", err)
+	}
 	cases := []string{
+		argon2i,
 		"",
 		"not-a-hash",
 		"password",
@@ -157,6 +163,8 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		"$argon2id$v=19$m=19456,t=2,p=1$MTIzNDU2Nzg",
 		// Another algorithm's hash.
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
+		// A bcrypt hash: refused, and the message still points at hash-password.
+		"$2b$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
 	}
 	for _, hash := range cases {
 		err := EnsurePasswordHashUsable(hash)
@@ -164,22 +172,9 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 			t.Errorf("%q was accepted", hash)
 			continue
 		}
-		if !strings.Contains(err.Error(), "hash-password") {
-			t.Errorf("%q: %q does not name hash-password", hash, err)
-		}
-	}
-}
-
-func TestABcryptHashNamesTheMigration(t *testing.T) {
-	for _, prefix := range []string{"$2a$", "$2b$", "$2x$", "$2y$"} {
-		hash := prefix + "11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu"
-		err := EnsurePasswordHashUsable(hash)
-		if err == nil {
-			t.Fatalf("%s hash was accepted", prefix)
-		}
-		for _, want := range []string{"bcrypt", "Argon2id", "hash-password", "password itself is unchanged"} {
+		for _, want := range []string{"not a usable Argon2id hash", "hash-password"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: %q lacks %q", prefix, err, want)
+				t.Errorf("%q: %q does not contain %q", hash, err, want)
 			}
 		}
 	}
@@ -199,8 +194,8 @@ func TestHashPasswordRecordsTheOWASPParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if parsed.Algorithm != "argon2id" {
-		t.Errorf("algorithm %q", parsed.Algorithm)
+	if !strings.HasPrefix(hash, "$argon2id$") {
+		t.Errorf("hash %q is not Argon2id", hash)
 	}
 	if want := (PasswordParams{Memory: 19456, Time: 2, Threads: 1}); parsed.Params != want {
 		t.Errorf("params = %+v, want %+v", parsed.Params, want)
@@ -293,6 +288,7 @@ func TestParsePasswordHashRefusesWhatItCannotVerify(t *testing.T) {
 
 	for name, hash := range map[string]string{
 		"argon2d":          "$argon2d$v=19$m=1024,t=1,p=1" + tail,
+		"argon2i":          "$argon2i$v=19$m=1024,t=1,p=1" + tail,
 		"old version":      "$argon2id$v=16$m=1024,t=1,p=1" + tail,
 		"unknown param":    "$argon2id$v=19$m=1024,t=1,p=1,x=1" + tail,
 		"bad number":       "$argon2id$v=19$m=lots,t=1,p=1" + tail,
@@ -305,20 +301,14 @@ func TestParsePasswordHashRefusesWhatItCannotVerify(t *testing.T) {
 			t.Errorf("%s parsed", name)
 		}
 	}
-}
 
-func TestArgon2iHashesVerify(t *testing.T) {
-	// Computed with argon2.Key itself so the test pins the dispatch, not the
-	// primitive.
-	salt := []byte("0123456789abcdef")
-	hash := "$argon2i$v=19$m=1024,t=1,p=1$" + base64.RawStdEncoding.EncodeToString(salt) + "$" +
-		base64.RawStdEncoding.EncodeToString(argon2iKey("pw", salt))
-	if !VerifyPassword("pw", hash) || VerifyPassword("other", hash) {
-		t.Fatal("argon2i verification wrong")
+	// Refused for its name alone, not for some other field of the hash.
+	if _, err := ParsePasswordHash("$argon2id$v=19$m=1024,t=1,p=1" + tail); err != nil {
+		t.Fatalf("the argon2id twin of the argon2i row did not parse: %v", err)
 	}
-	idHash := strings.Replace(hash, "$argon2i$", "$argon2id$", 1)
-	if VerifyPassword("pw", idHash) {
-		t.Fatal("an argon2i digest verified as argon2id")
+	_, err := ParsePasswordHash("$argon2i$v=19$m=1024,t=1,p=1" + tail)
+	if err == nil || !strings.Contains(err.Error(), "unsupported algorithm") {
+		t.Errorf("argon2i error = %v, want unsupported algorithm", err)
 	}
 }
 

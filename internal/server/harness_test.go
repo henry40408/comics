@@ -28,9 +28,9 @@ const otherSecret = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba98765
 // --secret testSecret --data-dir fixtures/data and read the /book/ hrefs.
 var dataIDs = [2]string{
 	// Pepper and Carrot 01 - Potion of Flight
-	"1f1c111677715adf",
+	"ef4c3cd1ffa17dc1",
 	// Pepper and Carrot 02 - Rainbow Potions
-	"b8799902927c8bf6",
+	"ad99f34da8eb7ed6",
 }
 
 const (
@@ -40,8 +40,9 @@ const (
 	sessionCookie = auth.SessionCookie
 )
 
-// TestMain runs from the repository root: page IDs hash the data path as
-// given, so the tests must scan "./fixtures/data".
+// TestMain runs from the repository root because the tests name the fixtures
+// by a path relative to it (fixtureData, and the fixture JPEG that
+// fixturePage reads), while go test starts in this package's directory.
 func TestMain(m *testing.M) {
 	if err := os.Chdir("../.."); err != nil {
 		panic(err)

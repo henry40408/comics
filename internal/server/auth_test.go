@@ -466,7 +466,10 @@ func TestSessionEventsDoNotLeakTheCookieValue(t *testing.T) {
 	ta := newAuthApp(t)
 	res := ta.login()
 	cookie := sessionCookieOf(t, res)
-	id := cookie.Value[len(cookie.Value)-32:]
+	id := cookie.Value
+	if !auth.IsSessionID(id) {
+		t.Fatalf("the session cookie value %q is not a bare session identifier", id)
+	}
 
 	logs := ta.logs.String()
 	if !strings.Contains(logs, "session_created") {
@@ -475,7 +478,7 @@ func TestSessionEventsDoNotLeakTheCookieValue(t *testing.T) {
 	if !strings.Contains(logs, ta.app.salt.Fingerprint(id)) {
 		t.Errorf("expected the fingerprint in %s", logs)
 	}
-	if strings.Contains(logs, id) || strings.Contains(logs, cookie.Value) {
+	if strings.Contains(logs, id) {
 		t.Errorf("identifier leaked into %s", logs)
 	}
 
@@ -483,6 +486,34 @@ func TestSessionEventsDoNotLeakTheCookieValue(t *testing.T) {
 	logs = ta.logs.String()
 	if !strings.Contains(logs, "session_destroyed") || strings.Contains(logs, id) {
 		t.Errorf("logout log wrong or leaking: %s", logs)
+	}
+}
+
+// The cookie value is the bare session ID, so anything else is anonymous: a
+// value from a release that signed it (its tail names a live session) must not
+// log in, and neither must a well-shaped ID the server never issued.
+func TestAuthCookieValuesThatAreNotALiveSessionAreAnonymous(t *testing.T) {
+	ta := newAuthApp(t)
+	live := sessionCookieOf(t, ta.login()).Value
+	anonymous := ta.get("/")
+
+	for _, tc := range []struct{ name, value, wantReason string }{
+		{"legacy signed value", strings.Repeat("A", 43) + live, "malformed"},
+		{"well-formed but never issued", strings.Repeat("a", auth.SessionIDHexLen), "unknown"},
+	} {
+		before := len(ta.logs.String())
+		res := ta.get("/", withCookie(&http.Cookie{Name: sessionCookie, Value: tc.value}))
+		assertStatus(t, 303, res, tc.name)
+		if res.location() != anonymous.location() {
+			t.Errorf("%s: Location %q, want %q as without a cookie", tc.name, res.location(), anonymous.location())
+		}
+		logged := ta.logs.String()[before:]
+		if !strings.Contains(logged, "reason="+tc.wantReason) {
+			t.Errorf("%s: no reason=%s in %s", tc.name, tc.wantReason, logged)
+		}
+		if strings.Contains(logged, live) {
+			t.Errorf("%s: the session identifier leaked into %s", tc.name, logged)
+		}
 	}
 }
 

@@ -275,10 +275,23 @@ func TestSIGTERMRightAfterStartupShutsDownGracefully(t *testing.T) {
 }
 
 func TestLegacyEnvVarAbortsStartup(t *testing.T) {
-	stdout, stderr, code := runToCompletion(t, []string{"BIND=127.0.0.1:0"}, "", "--data-dir", fixturesDir)
+	stdout, stderr, code := runToCompletion(t, []string{"AUTH_USERNAME=user"}, "", "--data-dir", fixturesDir)
 	want := "Error: these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n"
+		"  AUTH_USERNAME -> COMICS_AUTH_USERNAME\n"
 	if code != 1 || stdout != "" || stderr != want {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// Only the two credential names still abort startup (ignoring them would serve
+// comics without authentication); the other retired names are ignored.
+func TestRetiredNamesOtherThanTheCredentialsDoNotAbortStartup(t *testing.T) {
+	env := []string{
+		"BIND=127.0.0.1:1", "DATA_DIR=nowhere", "CACHE_DIR=nowhere", "LOG_FORMAT=json",
+		"SEED=x", "COMICS_SEED=x", "COMICS_SESSION_KEY=x", "RUST_LOG=debug",
+	}
+	stdout, stderr, code := runToCompletion(t, env, "", "--data-dir", fixturesDir, "list")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "2 book(s), 8 page(s)") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -332,9 +345,9 @@ func TestHashPasswordReadsStdinWithoutATerminal(t *testing.T) {
 
 func TestHashPasswordRefusals(t *testing.T) {
 	cases := map[string]struct{ stdin, wantErr string }{
-		"mismatch": {"one\ntwo\n", "Error: Password mismatch\n"},
-		"empty":    {"\n\n", "Error: Password is empty.\n"},
-		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "Error: Password is 1025 bytes"},
+		"mismatch": {"one\ntwo\n", "Error: password mismatch\n"},
+		"empty":    {"\n\n", "Error: password is empty\n"},
+		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "Error: password is 1025 bytes"},
 	}
 	for name, tc := range cases {
 		stdout, stderr, code := runToCompletion(t, nil, tc.stdin, "hash-password")
@@ -346,8 +359,8 @@ func TestHashPasswordRefusals(t *testing.T) {
 
 // The legacy check comes first, even for hash-password.
 func TestHashPasswordStillChecksLegacyEnvFirst(t *testing.T) {
-	_, stderr, code := runToCompletion(t, []string{"BIND=x"}, "a\na\n", "hash-password")
-	if code != 1 || !strings.Contains(stderr, "BIND -> COMICS_BIND") {
+	_, stderr, code := runToCompletion(t, []string{"AUTH_PASSWORD_HASH=x"}, "a\na\n", "hash-password")
+	if code != 1 || !strings.Contains(stderr, "AUTH_PASSWORD_HASH -> COMICS_AUTH_PASSWORD_HASH") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 }

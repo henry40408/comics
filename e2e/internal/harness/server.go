@@ -36,6 +36,8 @@ const startupTimeout = time.Minute
 // listening before the suite started: then it is left alone.
 type Server struct {
 	cmd *exec.Cmd
+	// cacheDir is the thumbnail cache the child owns; Stop removes it.
+	cacheDir string
 	// exited receives the result of cmd.Wait once the child is gone.
 	exited chan error
 }
@@ -54,6 +56,13 @@ func Start() (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A private cache: page IDs do not depend on how the data dir is written,
+	// so any other server run with this secret on these fixtures has the same
+	// IDs and would share the default cache's thumbnails with this one.
+	cacheDir, err := os.MkdirTemp("", "comics-e2e-cache-")
+	if err != nil {
+		return nil, fmt.Errorf("creating the thumbnail cache dir: %w", err)
+	}
 	cmd := exec.Command(binary,
 		"--bind", "127.0.0.1:"+strconv.Itoa(Port),
 		"--data-dir", "fixtures/data",
@@ -63,30 +72,34 @@ func Start() (*Server, error) {
 		"COMICS_AUTH_USERNAME="+Username,
 		"COMICS_AUTH_PASSWORD_HASH="+testPasswordHash,
 		"COMICS_SECRET="+testSecret,
+		"COMICS_CACHE_DIR="+cacheDir,
 	)
 	// Passed through, so a refusal to start shows in the test output.
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(cacheDir)
 		return nil, fmt.Errorf("spawning the comics server at %s: %w", binary, err)
 	}
 
-	server := &Server{cmd: cmd, exited: make(chan error, 1)}
+	server := &Server{cmd: cmd, cacheDir: cacheDir, exited: make(chan error, 1)}
 	go func() { server.exited <- cmd.Wait() }()
 
 	if err := server.waitUntilListening(); err != nil {
+		_ = os.RemoveAll(cacheDir) // idempotent: Stop already removed it on a timeout
 		return nil, err
 	}
 	return server, nil
 }
 
-// Stop kills the server if this process started it.
+// Stop kills the server if this process started it, and removes its cache.
 func (s *Server) Stop() {
 	if s.cmd == nil {
 		return
 	}
 	_ = s.cmd.Process.Kill()
 	<-s.exited //nolint:errcheck // killed on purpose, so Wait's error carries nothing
+	_ = os.RemoveAll(s.cacheDir)
 	s.cmd = nil
 }
 

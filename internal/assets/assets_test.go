@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestVersionIsStableAndHex(t *testing.T) {
+func TestVersionIsStableAndSixteenHexCharacters(t *testing.T) {
 	first, second := Version(), Version()
 	if first != second {
 		t.Fatal("version changed between calls")
 	}
-	if Version() == "" || strings.Trim(Version(), "0123456789abcdef") != "" {
-		t.Fatalf("version %q is not lowercase hex", Version())
+	if len(Version()) != 16 || strings.Trim(Version(), "0123456789abcdef") != "" {
+		t.Fatalf("version %q is not 16 lowercase hex characters", Version())
 	}
 }
 

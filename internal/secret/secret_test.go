@@ -1,8 +1,6 @@
 package secret
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -22,11 +20,6 @@ func mustParse(t *testing.T, raw string) Secret {
 		t.Fatalf("Parse(%q): %v", raw, err)
 	}
 	return s
-}
-
-func signingKey(s Secret) []byte {
-	key := s.SessionKey()
-	return key[:32]
 }
 
 // Pins the decoding, which a nil-error check alone does not.
@@ -56,26 +49,15 @@ func TestRejectsShortOddAndNonHex(t *testing.T) {
 
 // A longer secret is a different secret, not the same one padded.
 func TestLengthIsPartOfTheSecret(t *testing.T) {
-	if bytes.Equal(signingKey(mustParse(t, valid)), signingKey(mustParse(t, longer))) {
-		t.Fatal("a prefix must not derive the same key as the whole")
+	if mustParse(t, valid).IDSeed() == mustParse(t, longer).IDSeed() {
+		t.Fatal("a prefix must not derive the same seed as the whole")
 	}
 }
 
 func TestDifferentSecretsDeriveDifferentValues(t *testing.T) {
 	a, b := mustParse(t, valid), mustParse(t, "ff"+valid[2:])
-	if bytes.Equal(signingKey(a), signingKey(b)) {
-		t.Error("same signing key")
-	}
 	if a.IDSeed() == b.IDSeed() {
 		t.Error("same id seed")
-	}
-}
-
-func TestTheIDSeedIsNotAPrefixOfTheSigningKey(t *testing.T) {
-	s := mustParse(t, valid)
-	seed := s.IDSeed()
-	if bytes.Contains(signingKey(s), binary.BigEndian.AppendUint64(nil, seed)) {
-		t.Fatal("the id seed appears verbatim in the signing key")
 	}
 }
 
@@ -93,15 +75,14 @@ func TestPrintingDoesNotLeakTheSecret(t *testing.T) {
 
 func TestGenerateProducesDistinctSecrets(t *testing.T) {
 	a, b := Generate(), Generate()
-	if bytes.Equal(signingKey(a), signingKey(b)) {
-		t.Fatal("two generated secrets derived the same key")
+	if a.IDSeed() == b.IDSeed() {
+		t.Fatal("two generated secrets derived the same seed")
 	}
 }
 
 func TestZeroValueSecretPanics(t *testing.T) {
 	derivations := map[string]func(){
-		"SessionKey": func() { Secret{}.SessionKey() },
-		"IDSeed":     func() { Secret{}.IDSeed() },
+		"IDSeed": func() { Secret{}.IDSeed() },
 	}
 	for name, derive := range derivations {
 		func() {

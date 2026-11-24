@@ -56,10 +56,10 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | Package | Responsibility |
 | --- | --- |
 | `cmd/comics` | CLI (`flag`, precedence flag > env > default), `slog` logging, graceful shutdown (`serve.go`), `list`, `hash-password`, `legacyEnvVars` (`env.go`) |
-| `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are `xxh3(seed, …)` (`HashString` in `ids.go`) |
+| `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are the first 8 bytes of `sha256(seed, …)` as 16 hex characters (`HashString` in `ids.go`; a page ID hashes only the book name and file name, never the data dir) |
 | `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `requireAuth`, `requestLog`), `handlers_library.go` (`writeHTML`, index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
-| `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `CookieSigner`, `AuditSalt`, password hashing (`password.go`) |
-| `internal/secret` | `Secret` → `SessionKey()` (SHA-512) and `IDSeed()` (SHA-256), domain-separated |
+| `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `AuditSalt`, password hashing (`password.go`) |
+| `internal/secret` | `Secret` → `IDSeed()` (SHA-256, domain-prefixed) |
 | `internal/assets` | Embedded CSS/JS/icons (`go:embed`) + the `?v=<hash>` version |
 | `internal/views` | Page builders (`layout` holds the shared `<head>`; `index`, `book`, `login`) returning strings with an escaping builder (`html.go`) |
 | `internal/thumb` | Decode, resize, JPEG-encode |
@@ -67,7 +67,7 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | `internal/assets/static/` | Hand-written CSS/JS, embedded at compile time |
 | `vendor/` | Vendored third-party modules, committed |
 
-`App` (`internal/server/server.go`) holds the cookie signer, the session store, the scan behind a `sync.RWMutex`, the cache dir, `thumbSem` and `verifySem`.
+`App` (`internal/server/server.go`) holds the session store, the scan behind a `sync.RWMutex`, the cache dir, `thumbSem` and `verifySem`.
 
 **Scanning performs no image I/O** — `models.newPage` only stats the path; dimensions are never read (deliberate, for slow disks).
 
@@ -116,12 +116,12 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 
 - **Argon2id** at `auth.DefaultPasswordParams` (`m=19456, t=2, p=1`); verification reads parameters from the PHC string. Each verification uses 19 MiB, so `POST /login` holds an `App.verifySem` permit (`auth.MaxConcurrentVerifications` = 4).
 - `auth.VerifyCredentials` must **not** short-circuit: Argon2 runs even for a wrong username, and the username is compared with `subtle.ConstantTimeCompare`. `username == expected && verify(…)` reintroduces a timing oracle. `auth.MaxPasswordBytes` (1024) is a rejection backstop, not truncation.
-- Sessions live in the in-memory `SessionStore`; the cookie holds only an opaque 128-bit ID. **Sessions do not survive a restart** — deliberate; it makes logout enforceable.
+- Sessions live in the in-memory `SessionStore`; the cookie holds only an opaque 128-bit ID, unsigned (the store lookup already proves the server issued it; see the `SessionStore` doc comment). **Sessions do not survive a restart** — deliberate; it makes logout enforceable.
 - `POST /logout` ends **every** session (one credential pair = one person; revokes stolen cookies). The route is public; store membership authorises `SessionStore.DestroyAll`.
 - Cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`; with `COMICS_COOKIE_SECURE`, also `Secure` and renamed `__Host-comics_session`. Exactly one name is accepted.
 - TTLs: idle `auth.DefaultIdleTTL` (3 days), absolute `auth.DefaultAbsoluteTTL` (7 days). Capacity 1 000 (`defaultMaxSessions`), LRU-evicting.
 - Login rate limit (`internal/auth/ratelimit.go`): 5 per client IP per 60 s **and** 20 globally. `RateLimiter.TryAcquire` returns a `Throttle` naming the refusing `Scope` (`per_ip` / `shared` / `global` in logs) and reset time → `Retry-After`. `Global` logs `login_lockout`; others log `login_rate_limited` with `scope`. Keep these separate — the lockout is the one worth alerting on. Both windows are checked before either is charged; a successful login refunds both (`Release`). Read the `RateLimiter` docs before changing thresholds. The key is the TCP peer unless it is in `COMICS_TRUSTED_PROXIES` (**empty by default**, so `X-Forwarded-For` is ignored).
-- `auth.EnsurePasswordHashUsable` (called from `runServer` in `cmd/comics/serve.go`, only when a hash is set) fails startup on a hash the login route could not use (bcrypt gets a dedicated migration message). The parse is strict (all six PHC fields, `v=19`, `m,t,p` in order, a digest), so a digest-less or partial hash is refused there. Not applied to `hash-password`.
+- `auth.EnsurePasswordHashUsable` (called from `runServer` in `cmd/comics/serve.go`, only when a hash is set) fails startup on a hash the login route could not use. Only Argon2id is accepted: every other format (bcrypt, Argon2i, …) gets the same generic message pointing at `comics hash-password`. The parse is strict (all six PHC fields, `v=19`, `m,t,p` in order, a digest), so a digest-less or partial hash is refused there. Not applied to `hash-password`.
 - `auth.SafeNext` accepts only a local path: the second character may be neither `/` nor `\` (browsers read both as an authority), and **every control byte, including tab, and DEL is rejected**. `next` arrives percent-decoded, so a raw newline would split the `Location` header; a tab is stricter than Go's own header check allows, but URL parsing strips tabs, so `/<TAB>/evil.example` would become the open redirect `//evil.example`.
 - Audit events (emitted from `internal/server/handlers_login.go` and `internal/auth/authenticator.go`; `internal/auth/audit.go` holds the session-ID fingerprint) are INFO/WARN, visible at the default `COMICS_LOG_LEVEL=info`; pair with `--log-format json`. Never log session IDs in cleartext.
 
@@ -139,6 +139,6 @@ The version is never stored in a manifest: `internal/version.Version()` returns 
 
 - Fixtures: `fixtures/data/`. Their book IDs derive from `testSecret` in `internal/server/harness_test.go` and are hard-coded as `dataIDs`; changing the secret or derivation means recomputing them (run the binary with that secret on `fixtures/data`, read `/book/…` hrefs from the index).
 - User-facing template/login strings are Traditional Chinese (e.g. `帳號或密碼錯誤`).
-- Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `text` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, case-insensitive, parsed by `slog.Level.UnmarshalText`; default `info`) is env-only, with no flag. `RUST_LOG` is a retired variable and fails startup.
-- `ensureNoLegacyEnvVars` (`cmd/comics/env.go`) fails startup on retired names. Update `legacyEnvVars` there whenever an environment variable is added, renamed or removed — a silently ignored variable (e.g. falling back to a random secret) is worse than a startup failure.
+- Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `text` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, case-insensitive, parsed by `slog.Level.UnmarshalText`; default `info`) is env-only, with no flag.
+- `ensureNoLegacyEnvVars` (`cmd/comics/env.go`) fails startup on the two retired names whose silent loss would be fail-open: the unprefixed `AUTH_USERNAME` and `AUTH_PASSWORD_HASH` (ignored, the server would come up public). Every other retired name (`BIND`, `SEED`, `COMICS_SESSION_KEY`, `RUST_LOG`, …) is ignored. Add a `legacyEnvVars` row only when ignoring a renamed variable would weaken security the same way, not for every rename.
 - GitHub Actions are pinned by commit SHA with the tag as a trailing comment (`uses: owner/repo@<sha> # v1.2.3`).
