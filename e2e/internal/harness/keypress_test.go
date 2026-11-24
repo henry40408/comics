@@ -2,36 +2,54 @@ package harness
 
 import "testing"
 
-func TestKeyNeverArrived(t *testing.T) {
+func TestJudgeKey(t *testing.T) {
 	cases := []struct {
 		name  string
+		key   string
 		probe string
-		want  bool
+		want  keyVerdict
 	}{
 		{
 			name:  "the renderer drew frames and nothing was recorded: the browser dropped it",
+			key:   "End",
 			probe: `{"keys":[],"frames":312,"hasFocus":true,"visibilityState":"visible"}`,
-			want:  true,
+			want:  keyDropped,
 		},
 		{
-			name:  "a key arrived: the page ignored it",
+			name:  "the key arrived: a page that ignores it still fails later, not here",
+			key:   "End",
 			probe: `{"keys":["End"],"frames":312,"hasFocus":true,"visibilityState":"visible"}`,
-			want:  false,
+			want:  keyArrived,
+		},
+		{
+			name:  "another key arrived: it does not stand for this one",
+			key:   "End",
+			probe: `{"keys":["Home"],"frames":312,"hasFocus":true,"visibilityState":"visible"}`,
+			want:  keyDropped,
+		},
+		{
+			name:  "Space is recorded as a space",
+			key:   "Space",
+			probe: `{"keys":[" "],"frames":312,"hasFocus":true,"visibilityState":"visible"}`,
+			want:  keyArrived,
 		},
 		{
 			name:  "focus is not required: most parallel Chromes do not have it",
+			key:   "t",
 			probe: `{"keys":[],"frames":312,"hasFocus":false,"visibilityState":"visible"}`,
-			want:  true,
+			want:  keyDropped,
 		},
 		{
 			name:  "the recorder drew no frames (@nojs): an empty recorder proves nothing",
+			key:   "t",
 			probe: `{"keys":[],"frames":0,"hasFocus":true,"visibilityState":"visible"}`,
-			want:  false,
+			want:  keyUnconfirmable,
 		},
 		{
 			name:  "no recorder at all",
+			key:   "t",
 			probe: `{"keys":null,"frames":null,"hasFocus":true,"visibilityState":"visible"}`,
-			want:  false,
+			want:  keyUnconfirmable,
 		},
 	}
 	for _, tc := range cases {
@@ -40,8 +58,8 @@ func TestKeyNeverArrived(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := keyNeverArrived(probe); got != tc.want {
-				t.Errorf("keyNeverArrived(%s) = %v, want %v", tc.probe, got, tc.want)
+			if got := judgeKey(probe, tc.key); got != tc.want {
+				t.Errorf("judgeKey(%s, %q) = %v, want %v", tc.probe, tc.key, got, tc.want)
 			}
 		})
 	}
