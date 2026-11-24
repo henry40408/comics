@@ -40,7 +40,7 @@ func BookPage(view BookView) string {
 	}
 	body := el("body", []attr{a("class", "reader"), a("data-mode", string(view.Mode))},
 		topbar(view),
-		el("div", []attr{a("class", "viewer"), a("id", "viewer")},
+		el("div", []attr{a("class", "viewer")},
 			el("div", []attr{a("class", "zone next"), a("id", "next"), a("title", "Next"), a("data-testid", "reader-next")}, el("span", nil)),
 			el("div", []attr{a("class", "zone prev"), a("id", "prev"), a("title", "Previous"), a("data-testid", "reader-prev")}, el("span", nil)),
 			el("div", []attr{a("class", "pages"), a("id", "pages")}, figures...),
@@ -101,7 +101,7 @@ func figure(view BookView, page models.Page, number int) node {
 	if number == 1 {
 		class = "pg is-current"
 	}
-	return el("figure", []attr{a("class", class), a("id", "p"+strconv.Itoa(number)), a("data-p", strconv.Itoa(number))},
+	return el("figure", []attr{a("class", class), a("id", "p"+strconv.Itoa(number))},
 		void("img", a("src", "/data/"+page.ID), a("alt", page.Filename), a("loading", "lazy")),
 		pageNav(view.Mode, number, total),
 	)
@@ -140,7 +140,7 @@ func rail(book models.Book) node {
 	for i, page := range book.Pages {
 		n := strconv.Itoa(i + 1)
 		// A link, so the rail works without a script; app.js animates instead.
-		links[i] = el("a", []attr{a("href", "#p"+n), a("data-p", n), a("title", "第"+n+"頁")},
+		links[i] = el("a", []attr{a("href", "#p"+n), a("title", "第"+n+"頁")},
 			void("img", a("src", "/thumb/sm/"+page.ID), a("alt", ""), a("loading", "lazy")))
 	}
 	return el("div", []attr{a("class", "rail")},

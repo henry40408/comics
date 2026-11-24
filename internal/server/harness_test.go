@@ -28,9 +28,9 @@ const otherSecret = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba98765
 // --secret testSecret --data-dir fixtures/data and read the /book/ hrefs.
 var dataIDs = [2]string{
 	// Pepper and Carrot 01 - Potion of Flight
-	"1f1c111677715adf",
+	"ef4c3cd1ffa17dc1",
 	// Pepper and Carrot 02 - Rainbow Potions
-	"b8799902927c8bf6",
+	"ad99f34da8eb7ed6",
 }
 
 const (

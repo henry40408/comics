@@ -14,16 +14,17 @@ import (
 	"strings"
 )
 
-// The secret feeds one 64-bit seed (IDSeed), so 256 bits saturates it. Longer
-// secrets buy nothing.
+// The minimum is what `openssl rand -hex 32` makes. IDSeed keeps only 64 bits
+// of the secret's digest, so a longer secret buys nothing.
 const (
 	minBytes  = 32
 	minHexLen = minBytes * 2
 )
 
-// idSeedDomain prefixes the secret before hashing. The ID seed is effectively
-// public (IDs are xxh3(seed, ...) in URLs and xxh3 is invertible with enough
-// samples), so the secret is hashed rather than used as the seed itself.
+// idSeedDomain prefixes the secret before hashing. The seed is the first input
+// of every ID, and IDs are public in URLs, so anyone can try to recover a
+// 64-bit seed from them by brute force. The secret is hashed rather than used
+// as the seed itself so that a recovered seed cannot be turned back into it.
 const idSeedDomain = "comics/id-seed/v1"
 
 // Secret is the configured secret. Its printed forms are redacted.

@@ -80,7 +80,7 @@ func scanPages(seed uint64, bookDir string, logger *slog.Logger) ([]Page, error)
 	for _, name := range names {
 		page, err := newPage(seed, bookDir, name)
 		if err != nil {
-			logger.Error("failed to create page", "err", err, "path", joinPath(bookDir, name))
+			logger.Error("failed to create page", "err", err, "path", bookDir+"/"+name)
 			continue
 		}
 		pages = append(pages, page)

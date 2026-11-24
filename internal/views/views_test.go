@@ -18,7 +18,7 @@ import (
 
 const (
 	testSecret  = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	firstBookID = "1f1c111677715adf"
+	firstBookID = "ef4c3cd1ffa17dc1"
 )
 
 var update = goflag.Bool("update", false, "rewrite testdata/*.golden.html")

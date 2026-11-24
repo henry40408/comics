@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
+	"path/filepath"
 	"unicode/utf8"
 )
 
@@ -23,20 +23,12 @@ type Book struct {
 	Pages []Page
 }
 
-// joinPath is dir + "/" + name, with no separator added when dir is empty or
-// already ends in one. filepath.Join would clean
-// "./data" to "data" and change every page ID.
-func joinPath(dir, name string) string {
-	if dir == "" || strings.HasSuffix(dir, "/") {
-		return dir + name
-	}
-	return dir + "/" + name
-}
-
 // newPage performs no image I/O, deliberately, so a scan never opens every
 // image on a slow disk. It only stats the path.
 func newPage(seed uint64, dir, name string) (Page, error) {
-	path := joinPath(dir, name)
+	// Not filepath.Join: Clean resolves ".." in the text, which names another
+	// directory when the data dir goes through a symlink ("link/../data").
+	path := dir + "/" + name
 	if !utf8.ValidString(name) {
 		return Page{}, fmt.Errorf("invalid path: %q", path)
 	}
@@ -44,11 +36,14 @@ func newPage(seed uint64, dir, name string) (Page, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return Page{}, fmt.Errorf("not a file: %s", path)
 	}
-	return Page{Filename: name, ID: HashString(seed, path), Path: path}, nil
+	// The ID uses only the book and file names, so moving the data directory
+	// or writing its path differently does not change any URL.
+	id := HashString(seed, filepath.Base(dir)+"/"+name)
+	return Page{Filename: name, ID: id, Path: path}, nil
 }
 
 func newBook(seed uint64, dir, name string, logger *slog.Logger) (Book, error) {
-	path := joinPath(dir, name)
+	path := dir + "/" + name // not filepath.Join; see newPage
 	if !utf8.ValidString(name) {
 		return Book{}, fmt.Errorf("invalid path: %q", path)
 	}

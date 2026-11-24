@@ -56,7 +56,7 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | Package | Responsibility |
 | --- | --- |
 | `cmd/comics` | CLI (`flag`, precedence flag > env > default), `slog` logging, graceful shutdown (`serve.go`), `list`, `hash-password`, `legacyEnvVars` (`env.go`) |
-| `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are `xxh3(seed, …)` (`HashString` in `ids.go`) |
+| `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are the first 8 bytes of `sha256(seed, …)` as 16 hex characters (`HashString` in `ids.go`; a page ID hashes only the book name and file name, never the data dir) |
 | `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `requireAuth`, `requestLog`), `handlers_library.go` (`writeHTML`, index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
 | `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `AuditSalt`, password hashing (`password.go`) |
 | `internal/secret` | `Secret` → `IDSeed()` (SHA-256, domain-prefixed) |

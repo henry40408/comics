@@ -10,9 +10,9 @@ func TestHashStringKnownAnswers(t *testing.T) {
 		in   string
 		want string
 	}{
-		{0, "", "2d06800538d394c2"},
-		{^uint64(0), "abcd", "1e169947214dfef"},
-		{1, "a", "d2f6d0996f37a720"},
+		{0, "", "af5570f5a1810b7a"},
+		{^uint64(0), "abcd", "cc791ccbcc2f72b7"},
+		{1, "a", "3b196fd4907bedf5"},
 	}
 	for _, c := range cases {
 		if got := HashString(c.seed, c.in); got != c.want {

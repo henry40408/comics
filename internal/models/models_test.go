@@ -15,8 +15,8 @@ const (
 	// these hold.
 	firstBookTitle  = "Pepper and Carrot 01 - Potion of Flight"
 	secondBookTitle = "Pepper and Carrot 02 - Rainbow Potions"
-	firstBookID     = "1f1c111677715adf"
-	secondBookID    = "b8799902927c8bf6"
+	firstBookID     = "ef4c3cd1ffa17dc1"
+	secondBookID    = "ad99f34da8eb7ed6"
 	testSecret      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
