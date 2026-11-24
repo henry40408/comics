@@ -1,20 +1,12 @@
 package auth
 
-import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"net/http"
-)
+import "net/http"
 
-// SessionCookie is the base name of the signed session cookie, without the
-// __Host- prefix.
+// SessionCookie is the base name of the session cookie, without the __Host-
+// prefix.
 const SessionCookie = "comics_session"
 
 const sessionCookieHostPrefixed = "__Host-comics_session"
-
-// signedDigestLen is the length of an unpadded base64url HMAC-SHA256 digest.
-const signedDigestLen = 43
 
 // SessionCookieName is the cookie name, __Host- prefixed when secure.
 //
@@ -30,8 +22,7 @@ func SessionCookieName(secure bool) string {
 }
 
 // BuildSessionCookie is the cookie that carries id. The value is the store's
-// opaque identifier and nothing else; sign it with CookieSigner.SignCookie
-// before sending.
+// opaque identifier and nothing else.
 //
 // secure is configurable because browsers silently discard a Secure cookie
 // over plain HTTP, which would lock LAN deployments out with no visible error.
@@ -62,55 +53,21 @@ func BuildSessionRemovalCookie(secure bool) *http.Cookie {
 	return cookie
 }
 
-// CookieSigner signs and verifies cookie values: HMAC-SHA256 over the value
-// alone, its unpadded base64url digest prepended to the value. That alphabet is
-// cookie-safe, so nothing needs escaping. The cookie name is not part of what
-// is signed; the one accepted name is enforced by the lookup.
-type CookieSigner struct {
-	key [32]byte
+// CookieSigner is an empty shell, kept only so the frozen tests still compile;
+// removed in the next production commit. The session cookie is no longer
+// signed.
+type CookieSigner struct{}
+
+// NewCookieSigner ignores key; kept only so the frozen tests still compile,
+// removed in the next production commit.
+func NewCookieSigner(key [64]byte) CookieSigner {
+	return CookieSigner{}
 }
 
-// NewCookieSigner takes the signing half of secret.Secret.SessionKey().
-func NewCookieSigner(sessionKey [64]byte) CookieSigner {
-	var signer CookieSigner
-	copy(signer.key[:], sessionKey[:32])
-	return signer
-}
-
-func (s CookieSigner) digest(value string) []byte {
-	mac := hmac.New(sha256.New, s.key[:])
-	mac.Write([]byte(value))
-	return mac.Sum(nil)
-}
-
-// Sign returns the signed form of value.
-func (s CookieSigner) Sign(value string) string {
-	return base64.RawURLEncoding.EncodeToString(s.digest(value)) + value
-}
-
-// Verify splits a signed value and checks its digest, returning the original
-// value.
-func (s CookieSigner) Verify(signed string) (string, bool) {
-	if len(signed) < signedDigestLen {
-		return "", false
-	}
-	digest, err := base64.RawURLEncoding.DecodeString(signed[:signedDigestLen])
-	if err != nil {
-		return "", false
-	}
-	value := signed[signedDigestLen:]
-	if !hmac.Equal(digest, s.digest(value)) {
-		return "", false
-	}
-	return value, true
-}
-
-// SignCookie returns a copy of cookie with its value signed, ready for
-// Set-Cookie.
-func (s CookieSigner) SignCookie(cookie *http.Cookie) *http.Cookie {
-	signed := *cookie
-	signed.Value = s.Sign(cookie.Value)
-	return &signed
+// SignCookie returns cookie unchanged; kept only so the frozen tests still
+// compile, removed in the next production commit.
+func (CookieSigner) SignCookie(cookie *http.Cookie) *http.Cookie {
+	return cookie
 }
 
 // cookieValue is the value of the last cookie called name in the request, which

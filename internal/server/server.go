@@ -40,7 +40,6 @@ type App struct {
 	// creds is nil when auth is off.
 	creds         *auth.Credentials
 	authenticator *auth.Authenticator
-	signer        auth.CookieSigner
 	sessions      *auth.SessionStore
 	salt          *auth.AuditSalt
 	limiter       *auth.RateLimiter
@@ -63,14 +62,12 @@ func New(cfg Config) *App {
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(os.TempDir(), "comics-thumbs")
 	}
-	signer := auth.NewCookieSigner(cfg.Secret.SessionKey())
 	sessions := auth.NewSessionStore(auth.DefaultIdleTTL, auth.DefaultAbsoluteTTL, nil)
 	salt := auth.NewAuditSalt()
 	app := &App{
 		cfg:        cfg,
 		logger:     cfg.Logger,
 		seed:       cfg.Secret.IDSeed(),
-		signer:     signer,
 		sessions:   sessions,
 		salt:       salt,
 		limiter:    newLoginLimiter(),
@@ -84,7 +81,6 @@ func New(cfg Config) *App {
 	app.authenticator = &auth.Authenticator{
 		Enabled:      app.creds != nil,
 		CookieSecure: cfg.CookieSecure,
-		Signer:       signer,
 		Sessions:     sessions,
 		Salt:         salt,
 		Logger:       cfg.Logger,

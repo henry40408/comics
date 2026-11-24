@@ -1,7 +1,7 @@
-// Package auth holds comics' authentication: server-side sessions, signed
-// session cookies, the login rate limiter, trusted-proxy handling and the
-// Argon2id password check. It owns no HTTP routing; the server package wires
-// these pieces into handlers.
+// Package auth holds comics' authentication: server-side sessions, the session
+// cookie, the login rate limiter, trusted-proxy handling and the Argon2id
+// password check. It owns no HTTP routing; the server package wires these
+// pieces into handlers.
 package auth
 
 import (
@@ -65,9 +65,24 @@ type sessionRecord struct {
 // SessionStore holds the live sessions, in memory only.
 //
 // Sessions do not survive a restart. That is the price of server-side state,
-// which is what makes logout enforceable: a self-describing signed cookie
-// cannot be revoked short of rotating COMICS_SECRET, which also changes every
-// book and page URL.
+// which is what makes logout enforceable: a self-contained token, one that
+// proves its own validity as a JWT does, cannot be revoked before it expires.
+//
+// The cookie carries the session ID and nothing else, and it is not signed.
+// A signature would only prove that this server issued the ID, and the store
+// lookup already answers that question: a session ID is 128 bits from
+// crypto/rand, the store lives only in memory, and any ID the store does not
+// hold is refused. Guessing a live ID is a 128-bit search however the cookie
+// is checked.
+//
+// Residual risk: before, only IDs with a valid signature reached the map
+// lookup; now any 32-hex value does. No usable timing channel follows from
+// that. The ID is 128 random bits, and the Go runtime (an implementation
+// detail, not a language guarantee) hashes the whole key with a per-map random
+// seed, comparing strings only when the hash matches. An attacker cannot pick
+// a guess that shares a prefix with a live ID and so reaches the comparison
+// more often, and the comparison, though not constant-time, works in whole
+// words rather than byte by byte.
 type SessionStore struct {
 	mu          sync.RWMutex
 	sessions    map[string]*sessionRecord
@@ -104,6 +119,8 @@ func (s *SessionStore) nowSecs() int64 { return int64(s.clock() / time.Second) }
 // state lives in the store.
 func (s *SessionStore) Create(userAgent string) string {
 	var raw [sessionIDBytes]byte
+	// crypto/rand.Read never returns an error. It is the only thing keeping
+	// session IDs unguessable, so do not swap in a weaker source.
 	_, _ = rand.Read(raw[:])
 	id := hex.EncodeToString(raw[:])
 
@@ -220,8 +237,16 @@ func userAgentDigest(userAgent string) uint64 {
 	return binary.BigEndian.Uint64(sum[:userAgentDigestBytes])
 }
 
-// IsSessionID is a shape check only, so a malformed cookie is refused without
-// taking the store's lock.
+// IsSessionID reports whether value has the shape of an ID this server issues:
+// SessionIDHexLen hex characters. It is a shape check only and says nothing
+// about whether the session is live; that is the store's answer.
+//
+// It does two jobs. It caps an untrusted cookie value at 32 characters before
+// that value reaches a map lookup or the fingerprint hash (a Cookie header can
+// run to about 1 MiB). And it makes a "malformed" rejection the signal for a
+// cookie this server could never have issued, which is worth an alert, unlike
+// a well-shaped ID that merely is not live any more (for example after a
+// restart).
 func IsSessionID(value string) bool {
 	if len(value) != SessionIDHexLen {
 		return false

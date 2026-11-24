@@ -140,12 +140,11 @@ func (a *App) respondThrottled(w http.ResponseWriter, throttle auth.Throttle, ip
 	w.WriteHeader(http.StatusTooManyRequests)
 }
 
-// startSession opens a session, sends its signed cookie and redirects. The
-// response carries a session ID, so OWASP wants no-store on it.
+// startSession opens a session, sends its cookie and redirects. The response
+// carries a session ID, so OWASP wants no-store on it.
 func (a *App) startSession(w http.ResponseWriter, location, ip, userAgent string) {
 	id := a.sessions.Create(userAgent)
-	cookie := a.signer.SignCookie(auth.BuildSessionCookie(a.cfg.CookieSecure, id))
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, auth.BuildSessionCookie(a.cfg.CookieSecure, id))
 	setNoStore(w.Header())
 	seeOther(w, location)
 	a.logger.Info("session created",

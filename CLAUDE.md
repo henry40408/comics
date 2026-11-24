@@ -58,8 +58,8 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | `cmd/comics` | CLI (`flag`, precedence flag > env > default), `slog` logging, graceful shutdown (`serve.go`), `list`, `hash-password`, `legacyEnvVars` (`env.go`) |
 | `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are `xxh3(seed, …)` (`HashString` in `ids.go`) |
 | `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `requireAuth`, `requestLog`), `handlers_library.go` (`writeHTML`, index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
-| `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `CookieSigner`, `AuditSalt`, password hashing (`password.go`) |
-| `internal/secret` | `Secret` → `SessionKey()` (SHA-512) and `IDSeed()` (SHA-256), domain-separated |
+| `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `AuditSalt`, password hashing (`password.go`) |
+| `internal/secret` | `Secret` → `IDSeed()` (SHA-256, domain-prefixed) |
 | `internal/assets` | Embedded CSS/JS/icons (`go:embed`) + the `?v=<hash>` version |
 | `internal/views` | Page builders (`layout` holds the shared `<head>`; `index`, `book`, `login`) returning strings with an escaping builder (`html.go`) |
 | `internal/thumb` | Decode, resize, JPEG-encode |
@@ -67,7 +67,7 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | `internal/assets/static/` | Hand-written CSS/JS, embedded at compile time |
 | `vendor/` | Vendored third-party modules, committed |
 
-`App` (`internal/server/server.go`) holds the cookie signer, the session store, the scan behind a `sync.RWMutex`, the cache dir, `thumbSem` and `verifySem`.
+`App` (`internal/server/server.go`) holds the session store, the scan behind a `sync.RWMutex`, the cache dir, `thumbSem` and `verifySem`.
 
 **Scanning performs no image I/O** — `models.newPage` only stats the path; dimensions are never read (deliberate, for slow disks).
 
@@ -116,7 +116,7 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 
 - **Argon2id** at `auth.DefaultPasswordParams` (`m=19456, t=2, p=1`); verification reads parameters from the PHC string. Each verification uses 19 MiB, so `POST /login` holds an `App.verifySem` permit (`auth.MaxConcurrentVerifications` = 4).
 - `auth.VerifyCredentials` must **not** short-circuit: Argon2 runs even for a wrong username, and the username is compared with `subtle.ConstantTimeCompare`. `username == expected && verify(…)` reintroduces a timing oracle. `auth.MaxPasswordBytes` (1024) is a rejection backstop, not truncation.
-- Sessions live in the in-memory `SessionStore`; the cookie holds only an opaque 128-bit ID. **Sessions do not survive a restart** — deliberate; it makes logout enforceable.
+- Sessions live in the in-memory `SessionStore`; the cookie holds only an opaque 128-bit ID, unsigned (the store lookup already proves the server issued it; see the `SessionStore` doc comment). **Sessions do not survive a restart** — deliberate; it makes logout enforceable.
 - `POST /logout` ends **every** session (one credential pair = one person; revokes stolen cookies). The route is public; store membership authorises `SessionStore.DestroyAll`.
 - Cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`; with `COMICS_COOKIE_SECURE`, also `Secure` and renamed `__Host-comics_session`. Exactly one name is accepted.
 - TTLs: idle `auth.DefaultIdleTTL` (3 days), absolute `auth.DefaultAbsoluteTTL` (7 days). Capacity 1 000 (`defaultMaxSessions`), LRU-evicting.

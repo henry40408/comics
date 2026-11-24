@@ -1,13 +1,12 @@
 // Package secret holds the one secret comics is configured with
-// (COMICS_SECRET) and derives the cookie signing key and the ID seed from it.
+// (COMICS_SECRET) and derives the ID seed from it.
 //
-// Rotating the secret logs everyone out and changes every book and page URL.
+// Rotating the secret changes every book and page URL, and nothing else.
 package secret
 
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -15,20 +14,17 @@ import (
 	"strings"
 )
 
-// The signed cookie is HMAC-SHA256 with a 32-byte key, so 256 bits saturates
-// it. Longer secrets buy nothing.
+// The secret feeds one 64-bit seed (IDSeed), so 256 bits saturates it. Longer
+// secrets buy nothing.
 const (
 	minBytes  = 32
 	minHexLen = minBytes * 2
 )
 
-// Domain separators. The ID seed is effectively public (IDs are xxh3(seed, ...)
-// in URLs and xxh3 is invertible with enough samples), so it must not share
-// bytes with the signing key.
-const (
-	sessionKeyDomain = "comics/session-key/v1"
-	idSeedDomain     = "comics/id-seed/v1"
-)
+// idSeedDomain prefixes the secret before hashing. The ID seed is effectively
+// public (IDs are xxh3(seed, ...) in URLs and xxh3 is invertible with enough
+// samples), so the secret is hashed rather than used as the seed itself.
+const idSeedDomain = "comics/id-seed/v1"
 
 // Secret is the configured secret. Its printed forms are redacted.
 type Secret struct {
@@ -62,13 +58,6 @@ func Parse(text string) (Secret, error) {
 	return Secret{raw: raw}, nil
 }
 
-// SessionKey is SHA-512 over the domain and the secret: exactly the 64 bytes
-// of a cookie key. The signing half is the first 32 bytes.
-func (s Secret) SessionKey() [64]byte {
-	s.mustBeSet()
-	return sha512.Sum512(append([]byte(sessionKeyDomain), s.raw...))
-}
-
 // IDSeed is the seed salting hashed book and page IDs.
 func (s Secret) IDSeed() uint64 {
 	s.mustBeSet()
@@ -76,7 +65,7 @@ func (s Secret) IDSeed() uint64 {
 	return binary.BigEndian.Uint64(digest[:8])
 }
 
-// mustBeSet stops a zero Secret from deriving a key anyone can compute.
+// mustBeSet stops a zero Secret from deriving a seed anyone can compute.
 func (s Secret) mustBeSet() {
 	if len(s.raw) == 0 {
 		panic("secret: zero-value Secret used; build one with Parse or Generate")

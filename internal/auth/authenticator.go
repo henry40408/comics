@@ -19,18 +19,15 @@ const (
 )
 
 // Rejection is why a request was treated as unauthenticated. The reasons are
-// logged at different levels: a bad signature cannot happen by accident, while
-// every legitimate cookie becomes unknown after a restart.
+// logged at different levels: a malformed cookie cannot happen by accident,
+// while every legitimate cookie becomes unknown after a restart.
 type Rejection int
 
 const (
 	RejectionNone Rejection = iota
 	// RejectionAbsent: no cookie of the accepted name.
 	RejectionAbsent
-	// RejectionBadSignature: not signed by this key; forged, or from a
-	// different COMICS_SECRET.
-	RejectionBadSignature
-	// RejectionMalformed: correctly signed, but not a session identifier.
+	// RejectionMalformed: not shaped like a session ID this server issues.
 	RejectionMalformed
 	// RejectionUnknown: names no live session.
 	RejectionUnknown
@@ -55,15 +52,17 @@ type Authenticator struct {
 	// Enabled is true when both a username and a password hash are configured.
 	Enabled      bool
 	CookieSecure bool
-	Signer       CookieSigner
-	Sessions     *SessionStore
-	Salt         *AuditSalt
-	Logger       *slog.Logger // must not be nil
+	// Signer is unused; kept only so the frozen tests still compile, removed in
+	// the next production commit.
+	Signer   CookieSigner
+	Sessions *SessionStore
+	Salt     *AuditSalt
+	Logger   *slog.Logger // must not be nil
 }
 
-// Authenticate applies three gates, cheapest first: signature, identifier
-// shape, then the store, the only one that takes a lock or can say the session
-// is live.
+// Authenticate applies two gates, cheapest first: the cookie value's shape,
+// then the store, the only one that takes a lock or can say the session is
+// live.
 func (a *Authenticator) Authenticate(r *http.Request) AuthState {
 	if !a.Enabled {
 		return AuthState{Kind: AuthPublic}
@@ -87,8 +86,9 @@ func unauthenticated(why Rejection) AuthState {
 	return AuthState{Kind: AuthUnauthenticated, Rejection: why}
 }
 
-// SessionID is the verified session identifier from the request's cookie.
-// Never log it directly: hash it with AuditSalt.
+// SessionID is the session identifier from the request's cookie, once it has
+// the shape of one (the store may still not know it). Never log it directly:
+// hash it with AuditSalt.
 func (a *Authenticator) SessionID(r *http.Request) (string, bool) {
 	id, _, ok := a.cookieSessionID(r)
 	return id, ok
@@ -97,13 +97,9 @@ func (a *Authenticator) SessionID(r *http.Request) (string, bool) {
 // cookieSessionID is the shared prefix of both lookups: it never touches the
 // store, and names the first gate that refused.
 func (a *Authenticator) cookieSessionID(r *http.Request) (id string, why Rejection, ok bool) {
-	signed, found := cookieValue(r, SessionCookieName(a.CookieSecure))
+	id, found := cookieValue(r, SessionCookieName(a.CookieSecure))
 	if !found {
 		return "", RejectionAbsent, false
-	}
-	id, verified := a.Signer.Verify(signed)
-	if !verified {
-		return "", RejectionBadSignature, false
 	}
 	if !IsSessionID(id) {
 		return "", RejectionMalformed, false
@@ -112,7 +108,7 @@ func (a *Authenticator) cookieSessionID(r *http.Request) (id string, why Rejecti
 }
 
 // SessionFingerprint is the audit-log form of the request's session: a salted
-// hash, or "-" when the request has no verified session.
+// hash, or "-" when the request has no cookie shaped like a session ID.
 func (a *Authenticator) SessionFingerprint(r *http.Request) string {
 	id, ok := a.SessionID(r)
 	if !ok {
@@ -123,8 +119,8 @@ func (a *Authenticator) SessionFingerprint(r *http.Request) string {
 
 // LogRejection records why a request was refused. Absent is silent (an
 // ordinary anonymous visit). Unknown is DEBUG, since every cookie becomes
-// unknown on restart. BadSignature and Malformed cannot happen by accident, so
-// they WARN.
+// unknown on restart. Malformed cannot happen by accident, so it WARNs (the one
+// exception: cookies issued by a release that still signed them).
 func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
 	userAgent := r.UserAgent()
 	switch why {
@@ -132,9 +128,6 @@ func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
 		a.logExpired(r, "idle")
 	case RejectionExpiredAbsolute:
 		a.logExpired(r, "absolute")
-	case RejectionBadSignature:
-		a.Logger.Warn("session cookie was not signed by this key",
-			"event", "session_rejected", "reason", "bad_signature", "user_agent", userAgent)
 	case RejectionMalformed:
 		a.Logger.Warn("session cookie is not a session identifier",
 			"event", "session_rejected", "reason", "malformed", "user_agent", userAgent)
