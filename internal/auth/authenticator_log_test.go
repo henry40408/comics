@@ -115,14 +115,14 @@ func TestLogUserAgentChangedWarnsWithoutLeakingTheSessionID(t *testing.T) {
 	}
 }
 
-func TestSessionFingerprintIsADashWithoutAVerifiedSession(t *testing.T) {
+func TestSessionFingerprintIsADashWithoutASessionIDCookie(t *testing.T) {
 	a := newTestAuthenticator(t)
 	if got := a.SessionFingerprint(requestWithCookie("")); got != "-" {
 		t.Fatalf("fingerprint = %q", got)
 	}
 }
 
-func TestSessionFingerprintIsSaltedForAVerifiedSession(t *testing.T) {
+func TestSessionFingerprintIsSaltedForASessionID(t *testing.T) {
 	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
 	got := a.SessionFingerprint(requestFor(id))

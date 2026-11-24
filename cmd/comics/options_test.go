@@ -96,6 +96,23 @@ func TestBooleansAcceptWhatParseBoolAccepts(t *testing.T) {
 	}
 }
 
+// --version takes the same boolean forms as the other flags, and a flag given
+// an empty value is an error rather than false.
+func TestVersionAndEmptyFlagValuesParseLikeBooleans(t *testing.T) {
+	if opts := mustParse(t, []string{"--version"}, nil); !opts.showVersion {
+		t.Error("a bare --version did not mean true")
+	}
+	for value, want := range map[string]bool{"1": true, "T": true, "0": false, "false": false} {
+		if opts := mustParse(t, []string{"--version=" + value}, nil); opts.showVersion != want {
+			t.Errorf("--version=%s gave %v, want %v", value, opts.showVersion, want)
+		}
+	}
+	for _, args := range [][]string{{"--version=yes"}, {"--version="}, {"--cookie-secure="}} {
+		_, err := parseOptions(args, envOf(nil), io.Discard)
+		assertUsageError(t, err)
+	}
+}
+
 func assertUsageError(t *testing.T, err error) {
 	t.Helper()
 	var usage usageError

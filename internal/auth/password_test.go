@@ -159,6 +159,8 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
 		// A bcrypt hash: refused, and the message still points at hash-password.
 		"$2b$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu",
+		// Argon2i is complete and well formed, but only Argon2id is accepted.
+		"$argon2i$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$ZGlnZXN0ZGlnZXN0ZGlnZXN0ZGlnZXN0",
 	}
 	for _, hash := range cases {
 		err := EnsurePasswordHashUsable(hash)
@@ -166,8 +168,10 @@ func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
 			t.Errorf("%q was accepted", hash)
 			continue
 		}
-		if !strings.Contains(err.Error(), "hash-password") {
-			t.Errorf("%q: %q does not name hash-password", hash, err)
+		for _, want := range []string{"not a usable Argon2id hash", "hash-password"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%q: %q does not contain %q", hash, err, want)
+			}
 		}
 	}
 }
