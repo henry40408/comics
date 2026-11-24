@@ -172,6 +172,7 @@ func parseProbe(raw []byte) (clickProbe, error) {
 //     pointer events arrived, and where. Empty means the input never reached
 //     the renderer; mousedown/mouseup without click would instead suggest a
 //     layout shift.
+//   - keys: the same for keydown, which pressUntil reads back.
 //   - frames: a requestAnimationFrame count, telling an empty events from a
 //     recorder that never ran. On the CI failures it reads 300-plus: a
 //     renderer drawing at 60fps and receiving nothing. (The probe's hasFocus
@@ -185,11 +186,15 @@ func armRecorder(b *Browser) error {
 	_, err := chromedp.Run(b.ctx, chromedp.Evaluate[chromedp.Void](`(() => {
 		if (window.__e2e) {
 			window.__e2e.events.length = 0;
+			window.__e2e.keys.length = 0;
 			window.__e2e.frames = 0;
 			return;
 		}
-		const state = { events: [], frames: 0 };
+		const state = { events: [], keys: [], frames: 0 };
 		window.__e2e = state;
+		window.addEventListener('keydown', (e) => {
+			if (state.keys.length < 24) { state.keys.push(e.key); }
+		}, true);
 		const name = (n) => n === null ? null : n.tagName.toLowerCase()
 			+ (n.id ? '#' + n.id : '')
 			+ (n.getAttribute('data-testid') ? '@' + n.getAttribute('data-testid') : '');
