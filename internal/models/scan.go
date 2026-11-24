@@ -1,7 +1,6 @@
 package models
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"runtime"
@@ -36,12 +35,10 @@ func (s *BookScan) PageByID(id string) (*Page, bool) {
 }
 
 // ScanBooks treats every entry of dataDir that is a directory as a book and
-// every file inside it as a page. Nothing deeper is scanned. A nil logger
-// discards the per-entry errors.
+// every file inside it as a page. Nothing deeper is scanned. An entry that
+// is not a usable book or page is skipped and logged to logger, which must not
+// be nil; only an unreadable dataDir is an error.
 func ScanBooks(seed uint64, dataDir string, logger *slog.Logger) (*BookScan, error) {
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
 	start := time.Now()
 	names, err := readNames(dataDir)
 	if err != nil {

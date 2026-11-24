@@ -12,8 +12,7 @@ import (
 const immutableAsset = "public, max-age=31536000, immutable"
 
 // Handler is the complete HTTP handler. Layers, outermost first: security
-// headers, CSRF, request log, the mux; protected routes add auth and
-// noStoreHTML.
+// headers, CSRF, request log, the mux; protected routes add auth.
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerProtected(mux)
@@ -37,14 +36,14 @@ func (a *App) Handler() http.Handler {
 
 func (a *App) registerProtected(mux *http.ServeMux) {
 	protect := func(handler http.HandlerFunc) http.Handler {
-		return a.requireAuth(noStoreHTML(handler))
+		return a.requireAuth(handler)
 	}
 	mux.Handle("GET /{$}", protect(a.handleIndex))
 	mux.Handle("GET /book/{id}", protect(a.handleBook))
 	mux.Handle("GET /data/{id}", protect(a.handlePage))
 	mux.Handle("GET /thumb/{size}/{id}", protect(a.handleThumb))
 	mux.Handle("POST /shuffle", protect(a.handleShuffle))
-	mux.Handle("POST /shuffle/{id}", protect(a.handleShuffleFrom))
+	mux.Handle("POST /shuffle/{id}", protect(a.handleShuffle))
 	mux.Handle("POST /rescan", protect(a.handleRescan))
 }
 

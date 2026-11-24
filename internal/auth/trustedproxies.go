@@ -52,9 +52,6 @@ func parseTrustedEntry(entry string) (netip.Prefix, error) {
 	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
-// IsEmpty reports whether no proxy is trusted.
-func (t TrustedProxies) IsEmpty() bool { return len(t.prefixes) == 0 }
-
 // Contains reports whether ip is a trusted proxy. The address is unmapped
 // first: a [::]-bound listener reports ::ffff:10.0.0.2, which would otherwise
 // never match 10.0.0.0/8.

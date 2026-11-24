@@ -52,8 +52,10 @@ type options struct {
 // the environment is applied first and a flag parsed afterwards overrides it.
 // An empty name means the setting has no flag.
 type flagSpec struct {
-	name    string
-	env     string
+	name string
+	env  string
+	// usage must not contain a backquote: flag shows the quoted text as the
+	// name of the flag's value.
 	usage   string
 	boolean bool
 	set     func(value string) error
@@ -81,7 +83,7 @@ func (o *options) specs() []flagSpec {
 			usage: "log format: text or json (default " + defaultLogFormat + ")"},
 		{env: logLevelEnv, set: setParsed(&o.logLevel, parseLogLevel)},
 		{name: "secret", env: "COMICS_SECRET", set: o.setSecret,
-			usage: "at least 64 hex characters (`openssl rand -hex 32`); unset means a random secret per start"},
+			usage: "at least 64 hex characters, e.g. from openssl rand -hex 32; unset means a random secret per start"},
 		{name: "auth-username", env: "COMICS_AUTH_USERNAME", set: setNonEmpty(&o.authUsername),
 			usage: "username for the login form"},
 		{name: "auth-password-hash", env: "COMICS_AUTH_PASSWORD_HASH", set: setNonEmpty(&o.authPasswordHash),
@@ -190,10 +192,8 @@ func (o *options) setCommand(rest []string) error {
 		return fmt.Errorf("unexpected argument %q after the subcommand", rest[1])
 	}
 	switch rest[0] {
-	case "list":
-		o.command = "list"
-	case "hash-password":
-		o.command = "hash-password"
+	case "list", "hash-password":
+		o.command = rest[0]
 	default:
 		return fmt.Errorf("unknown subcommand %q (want list or hash-password)", rest[0])
 	}

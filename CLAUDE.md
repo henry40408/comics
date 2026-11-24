@@ -57,7 +57,7 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | --- | --- |
 | `cmd/comics` | CLI (`flag`, precedence flag > env > default), `slog` logging, graceful shutdown (`serve.go`), `list`, `hash-password`, `legacyEnvVars` (`env.go`) |
 | `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are `xxh3(seed, …)` (`HashString` in `ids.go`) |
-| `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `noStoreHTML`, `requireAuth`, `requestLog`), `handlers_library.go` (index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
+| `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `requireAuth`, `requestLog`), `handlers_library.go` (`writeHTML`, index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
 | `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `CookieSigner`, `AuditSalt`, password hashing (`password.go`) |
 | `internal/secret` | `Secret` → `SessionKey()` (SHA-512) and `IDSeed()` (SHA-256), domain-separated |
 | `internal/assets` | Embedded CSS/JS/icons (`go:embed`) + the `?v=<hash>` version |
@@ -77,7 +77,7 @@ Protected: `GET /`, `GET /book/{id}` (`?mode=paged|scroll`), `GET /data/{id}`, `
 
 Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, `/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`.
 
-Layers, outermost first: `securityHeaders` → `http.CrossOriginProtection` → `requestLog` → the mux; protected routes add `requireAuth` → `noStoreHTML`. `COMICS_DISABLE_CSRF_GUARD` removes the CSRF layer (escape hatch for plain-HTTP LAN hosts sending `Origin: null`); read the comment on it in `Handler` first.
+Layers, outermost first: `securityHeaders` → `http.CrossOriginProtection` → `requestLog` → the mux; protected routes add `requireAuth`. `writeHTML`, the only place comics writes `text/html`, makes every page `no-store` (the stdlib mux's 307 for an unclean path such as `//book/x` is the one exception, and its body is only the requested URL); the login and logout 303s set it themselves, and the image routes keep their own `private` value. `COMICS_DISABLE_CSRF_GUARD` removes the CSRF layer (escape hatch for plain-HTTP LAN hosts sending `Origin: null`); read the comment on it in `Handler` first.
 
 ### CSRF
 

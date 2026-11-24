@@ -27,7 +27,8 @@ type Config struct {
 	// HSTSMaxAge is a pointer because 0 is a valid max-age.
 	HSTSMaxAge     *uint64
 	TrustedProxies auth.TrustedProxies
-	Logger         *slog.Logger
+	// Logger must not be nil.
+	Logger *slog.Logger
 }
 
 // App is the comics server: its state and its HTTP handler.
@@ -59,10 +60,6 @@ type App struct {
 // New builds the app. It does no I/O: the data directory is scanned by
 // RunInitialScan.
 func New(cfg Config) *App {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(os.TempDir(), "comics-thumbs")
 	}
@@ -71,13 +68,13 @@ func New(cfg Config) *App {
 	salt := auth.NewAuditSalt()
 	app := &App{
 		cfg:        cfg,
-		logger:     logger,
+		logger:     cfg.Logger,
 		seed:       cfg.Secret.IDSeed(),
 		signer:     signer,
 		sessions:   sessions,
 		salt:       salt,
 		limiter:    newLoginLimiter(),
-		clientKeys: auth.NewClientKeys(cfg.TrustedProxies, logger),
+		clientKeys: auth.NewClientKeys(cfg.TrustedProxies, cfg.Logger),
 		thumbSem:   make(chan struct{}, runtime.NumCPU()),
 		verifySem:  make(chan struct{}, auth.MaxConcurrentVerifications),
 	}
@@ -90,7 +87,7 @@ func New(cfg Config) *App {
 		Signer:       signer,
 		Sessions:     sessions,
 		Salt:         salt,
-		Logger:       logger,
+		Logger:       cfg.Logger,
 	}
 	return app
 }

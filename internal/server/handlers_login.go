@@ -37,14 +37,12 @@ func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	renderLogin(w, false, next)
 }
 
-// renderLogin sends the form. It is public, so noStoreHTML never sees it, yet
-// it carries the error state and next.
+// renderLogin sends the form, which carries the error state and next.
 func renderLogin(w http.ResponseWriter, failed bool, next string) {
 	status := http.StatusOK
 	if failed {
 		status = http.StatusUnauthorized
 	}
-	setNoStore(w.Header())
 	writeHTML(w, status, views.LoginPage(views.LoginView{Error: failed, Next: auth.SafeNext(next)}))
 }
 

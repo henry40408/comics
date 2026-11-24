@@ -15,9 +15,15 @@ import (
 	"github.com/henry40408/comics/internal/views"
 )
 
-// writeHTML sends a rendered page.
+// writeHTML sends a rendered page. It is the only place comics writes
+// text/html, which is how every page ends up no-store (the mux's own redirect
+// for an unclean path is the one stdlib exception). The image routes do not
+// come through here: they set long-lived private values on purpose, since a
+// blanket no-store would re-read every page from disk on every turn.
 func writeHTML(w http.ResponseWriter, status int, body string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	header := w.Header()
+	header.Set("Content-Type", "text/html; charset=utf-8")
+	setNoStore(header)
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
 }
@@ -92,21 +98,15 @@ func writeBytes(w http.ResponseWriter, contentType, cacheControl string, body []
 	_, _ = w.Write(body)
 }
 
-func (a *App) handleShuffle(w http.ResponseWriter, _ *http.Request) {
-	a.redirectToRandomBook(w, "")
-}
-
-func (a *App) handleShuffleFrom(w http.ResponseWriter, r *http.Request) {
-	a.redirectToRandomBook(w, r.PathValue("id"))
-}
-
-// redirectToRandomBook picks any book but excluded, or goes home when none is
-// left.
-func (a *App) redirectToRandomBook(w http.ResponseWriter, excluded string) {
+// handleShuffle serves POST /shuffle and POST /shuffle/{id}. It picks any book
+// but the one in the path (no path value on the first route, so none is
+// excluded), or goes home when none is left.
+func (a *App) handleShuffle(w http.ResponseWriter, r *http.Request) {
 	scan, ready := a.readyScan(w)
 	if !ready {
 		return
 	}
+	excluded := r.PathValue("id")
 	candidates := slices.DeleteFunc(slices.Clone(scan.Books), func(book models.Book) bool {
 		return book.ID == excluded
 	})
