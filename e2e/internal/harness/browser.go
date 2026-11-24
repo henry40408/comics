@@ -252,12 +252,13 @@ func (b *Browser) Theme() (string, error) {
 	return Eval[string](b, "document.documentElement.getAttribute('data-theme') ?? ''")
 }
 
-// Press types a key at the page, as a reader would.
+// Press types a key at the page, as a reader would, and confirms that the
+// page received it (see pressUntil).
 func (b *Browser) Press(key string) error {
 	if err := b.WaitForLoad(); err != nil {
 		return err
 	}
-	return chromedp.Do(b.ctx, chromedp.KeyEvent(keyText(key)))
+	return pressUntil(b, key)
 }
 
 func keyText(key string) string {
