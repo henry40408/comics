@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,31 +9,19 @@ import (
 	"testing"
 )
 
-func randomSessionKey(t *testing.T) [64]byte {
-	t.Helper()
-	var key [64]byte
-	if _, err := rand.Read(key[:]); err != nil {
-		t.Fatal(err)
-	}
-	return key
-}
-
-func newTestAuthenticator(t *testing.T, key [64]byte) *Authenticator {
+func newTestAuthenticator(t *testing.T) *Authenticator {
 	t.Helper()
 	return &Authenticator{
 		Enabled:  true,
-		Signer:   NewCookieSigner(key),
 		Sessions: newTestStore(),
 		Salt:     NewAuditSalt(),
 		Logger:   slog.New(slog.DiscardHandler),
 	}
 }
 
-// signedHeader signs cookie with key and renders it as a browser Cookie header
-// value.
-func signedHeader(key [64]byte, cookie *http.Cookie) string {
-	signed := NewCookieSigner(key).SignCookie(cookie)
-	return signed.Name + "=" + signed.Value
+// cookiePair renders cookie as a browser Cookie header value.
+func cookiePair(cookie *http.Cookie) string {
+	return cookie.Name + "=" + cookie.Value
 }
 
 func requestWithCookie(cookieHeader string) *http.Request {
@@ -45,9 +32,15 @@ func requestWithCookie(cookieHeader string) *http.Request {
 	return r
 }
 
-// requestFor is a request whose cookie is correctly signed and names id.
-func requestFor(key [64]byte, id string) *http.Request {
-	return requestWithCookie(signedHeader(key, BuildSessionCookie(false, id)))
+// requestFor is a request whose cookie carries id, as a browser sends it.
+func requestFor(id string) *http.Request {
+	return requestWithCookie(cookiePair(BuildSessionCookie(false, id)))
+}
+
+// legacySignedValue is what a release that signed the session cookie sent for
+// id: a 43-character digest in front of the identifier, 75 characters in all.
+func legacySignedValue(id string) string {
+	return strings.Repeat("A", 43) + id
 }
 
 func wantState(t *testing.T, got AuthState, kind AuthKind, why Rejection) {
@@ -58,38 +51,39 @@ func wantState(t *testing.T, got AuthState, kind AuthKind, why Rejection) {
 }
 
 func TestAuthenticatePublicWhenNoAuthConfig(t *testing.T) {
-	a := newTestAuthenticator(t, randomSessionKey(t))
+	a := newTestAuthenticator(t)
 	a.Enabled = false
 	wantState(t, a.Authenticate(requestWithCookie("")), AuthPublic, RejectionNone)
 }
 
 func TestAuthenticateAuthenticatedForALiveSession(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
-	wantState(t, a.Authenticate(requestFor(key, id)), AuthAuthenticated, RejectionNone)
+	wantState(t, a.Authenticate(requestFor(id)), AuthAuthenticated, RejectionNone)
 }
 
 func TestAuthenticateReportsWhyItRefused(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 
 	wantState(t, a.Authenticate(requestWithCookie("")), AuthUnauthenticated, RejectionAbsent)
 
-	// Correctly signed, but not an identifier shape.
-	malformed := signedHeader(key, &http.Cookie{Name: SessionCookie, Value: "not-an-id", Path: "/"})
-	wantState(t, a.Authenticate(requestWithCookie(malformed)), AuthUnauthenticated, RejectionMalformed)
+	// Not an identifier shape.
+	wantState(t, a.Authenticate(requestFor("not-an-id")), AuthUnauthenticated, RejectionMalformed)
 
-	// Well-formed and correctly signed, but never issued.
-	wantState(t, a.Authenticate(requestFor(key, strings.Repeat("0", 32))), AuthUnauthenticated, RejectionUnknown)
+	// A cookie from a release that signed them: its tail names a live session,
+	// but the whole value is not an identifier, so it must not log in.
+	live := a.Sessions.Create("test-agent")
+	wantState(t, a.Authenticate(requestFor(legacySignedValue(live))), AuthUnauthenticated, RejectionMalformed)
+
+	// Well-formed, but never issued.
+	wantState(t, a.Authenticate(requestFor(strings.Repeat("0", 32))), AuthUnauthenticated, RejectionUnknown)
 }
 
 func TestAuthenticateSurfacesAChangedUserAgentWithoutRefusing(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("original-agent")
 
-	request := requestFor(key, id)
+	request := requestFor(id)
 	request.Header.Set("User-Agent", "a-different-agent")
 
 	got := a.Authenticate(request)
@@ -100,42 +94,38 @@ func TestAuthenticateSurfacesAChangedUserAgentWithoutRefusing(t *testing.T) {
 }
 
 func TestAuthenticateReportsExpiredSessions(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	a.Sessions = NewSessionStore(0, DefaultAbsoluteTTL, nil)
 	id := a.Sessions.Create("test-agent")
-	wantState(t, a.Authenticate(requestFor(key, id)), AuthUnauthenticated, RejectionExpiredIdle)
+	wantState(t, a.Authenticate(requestFor(id)), AuthUnauthenticated, RejectionExpiredIdle)
 
 	a.Sessions = NewSessionStore(DefaultIdleTTL, 0, nil)
 	id = a.Sessions.Create("test-agent")
-	wantState(t, a.Authenticate(requestFor(key, id)), AuthUnauthenticated, RejectionExpiredAbsolute)
+	wantState(t, a.Authenticate(requestFor(id)), AuthUnauthenticated, RejectionExpiredAbsolute)
 }
 
 func TestAuthenticateRejectsUnprefixedCookieWhenSecureIsOn(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
 	a.CookieSecure = true
 
-	wantState(t, a.Authenticate(requestFor(key, id)), AuthUnauthenticated, RejectionAbsent)
+	wantState(t, a.Authenticate(requestFor(id)), AuthUnauthenticated, RejectionAbsent)
 }
 
 func TestAuthenticateAcceptsThePrefixedCookieWhenSecureIsOn(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	a.CookieSecure = true
 	id := a.Sessions.Create("test-agent")
 
-	header := signedHeader(key, BuildSessionCookie(true, id))
+	header := cookiePair(BuildSessionCookie(true, id))
 	wantState(t, a.Authenticate(requestWithCookie(header)), AuthAuthenticated, RejectionNone)
 }
 
 func TestSessionIDReturnsTheIdentifierItWasGiven(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
 
-	if got, ok := a.SessionID(requestFor(key, id)); !ok || got != id {
+	if got, ok := a.SessionID(requestFor(id)); !ok || got != id {
 		t.Fatalf("SessionID = %q, %v, want %q", got, ok, id)
 	}
 	if got, ok := a.SessionID(requestWithCookie("")); ok {
@@ -144,10 +134,9 @@ func TestSessionIDReturnsTheIdentifierItWasGiven(t *testing.T) {
 }
 
 func TestTheLastCookieOfTheNameWins(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
-	good := signedHeader(key, BuildSessionCookie(false, id))
+	good := cookiePair(BuildSessionCookie(false, id))
 
 	request := requestWithCookie(SessionCookie + "=junk")
 	request.Header.Add("Cookie", good)

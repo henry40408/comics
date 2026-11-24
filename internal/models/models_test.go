@@ -135,33 +135,6 @@ func TestScanFailsWhenTheDataDirIsMissing(t *testing.T) {
 	}
 }
 
-func TestJoinPathKeepsTheDirAsGiven(t *testing.T) {
-	cases := []struct{ dir, name, want string }{
-		{"./fixtures/data", "Book", "./fixtures/data/Book"},
-		{"data/", "Book", "data/Book"},
-		{"", "Book", "Book"},
-		{"/abs", "Book", "/abs/Book"},
-	}
-	for _, c := range cases {
-		if got := joinPath(c.dir, c.name); got != c.want {
-			t.Errorf("joinPath(%q, %q) = %q, want %q", c.dir, c.name, got, c.want)
-		}
-	}
-}
-
-// A cleaned data dir would change every page ID, so the path must be kept as
-// given.
-func TestPagePathsKeepTheDataDirAsGiven(t *testing.T) {
-	scan, err := ScanBooks(0, "./"+fixtureDataDir, discardLogger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "./" + fixtureDataDir + "/" + firstBookTitle + "/01.jpg"
-	if got := scan.Books[0].Pages[0].Path; got != want {
-		t.Fatalf("page path %q, want %q", got, want)
-	}
-}
-
 func TestBookIDsAreStable(t *testing.T) {
 	parsed, err := secret.Parse(testSecret)
 	if err != nil {

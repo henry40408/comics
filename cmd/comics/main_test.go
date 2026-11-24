@@ -283,6 +283,19 @@ func TestLegacyEnvVarAbortsStartup(t *testing.T) {
 	}
 }
 
+// Only the two credential names still abort startup (ignoring them would serve
+// comics without authentication); the other retired names are ignored.
+func TestRetiredNamesOtherThanTheCredentialsDoNotAbortStartup(t *testing.T) {
+	env := []string{
+		"BIND=127.0.0.1:1", "DATA_DIR=nowhere", "CACHE_DIR=nowhere", "LOG_FORMAT=json",
+		"SEED=x", "COMICS_SEED=x", "COMICS_SESSION_KEY=x", "RUST_LOG=debug",
+	}
+	stdout, stderr, code := runToCompletion(t, env, "", "--data-dir", fixturesDir, "list")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "2 book(s), 8 page(s)") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
 func TestInvalidOptionExitsWithUsageCode(t *testing.T) {
 	env := []string{"COMICS_SECRET=abcd"}
 	stdout, stderr, code := runToCompletion(t, env, "", "--data-dir", fixturesDir)
@@ -332,13 +345,13 @@ func TestHashPasswordReadsStdinWithoutATerminal(t *testing.T) {
 
 func TestHashPasswordRefusals(t *testing.T) {
 	cases := map[string]struct{ stdin, wantErr string }{
-		"mismatch": {"one\ntwo\n", "error: password mismatch"},
-		"empty":    {"\n\n", "error: password is empty"},
-		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "error: password is 1025 bytes"},
+		"mismatch": {"one\ntwo\n", "Error: password mismatch\n"},
+		"empty":    {"\n\n", "Error: password is empty\n"},
+		"too long": {strings.Repeat("x", 1025) + "\n" + strings.Repeat("x", 1025) + "\n", "Error: password is 1025 bytes"},
 	}
 	for name, tc := range cases {
 		stdout, stderr, code := runToCompletion(t, nil, tc.stdin, "hash-password")
-		if code != 1 || stdout != "" || !strings.HasPrefix(strings.ToLower(stderr), tc.wantErr) {
+		if code != 1 || stdout != "" || !strings.HasPrefix(stderr, tc.wantErr) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, code, stdout, stderr)
 		}
 	}

@@ -40,7 +40,6 @@ func parseLogLines(t *testing.T, buffer *bytes.Buffer) []logLine {
 }
 
 func TestLogRejectionRecordsEachReasonAtItsLevel(t *testing.T) {
-	key := randomSessionKey(t)
 	cases := []struct {
 		name       string
 		why        Rejection
@@ -56,10 +55,10 @@ func TestLogRejectionRecordsEachReasonAtItsLevel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := newTestAuthenticator(t, key)
+			a := newTestAuthenticator(t)
 			buffer := attachDebugLogger(a)
 			id := a.Sessions.Create("test-agent")
-			request := requestFor(key, id)
+			request := requestFor(id)
 			request.Header.Set("User-Agent", "audit-agent")
 
 			a.LogRejection(request, tc.why)
@@ -84,7 +83,7 @@ func TestLogRejectionRecordsEachReasonAtItsLevel(t *testing.T) {
 }
 
 func TestLogRejectionIsSilentWhenTheCookieIsAbsentOrThereWasNoRejection(t *testing.T) {
-	a := newTestAuthenticator(t, randomSessionKey(t))
+	a := newTestAuthenticator(t)
 	buffer := attachDebugLogger(a)
 	a.LogRejection(requestWithCookie(""), RejectionAbsent)
 	a.LogRejection(requestWithCookie(""), RejectionNone)
@@ -94,11 +93,10 @@ func TestLogRejectionIsSilentWhenTheCookieIsAbsentOrThereWasNoRejection(t *testi
 }
 
 func TestLogUserAgentChangedWarnsWithoutLeakingTheSessionID(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	buffer := attachDebugLogger(a)
 	id := a.Sessions.Create("original-agent")
-	request := requestFor(key, id)
+	request := requestFor(id)
 	request.Header.Set("User-Agent", "new-agent")
 
 	a.LogUserAgentChanged(request)
@@ -118,29 +116,28 @@ func TestLogUserAgentChangedWarnsWithoutLeakingTheSessionID(t *testing.T) {
 }
 
 func TestSessionFingerprintIsADashWithoutAVerifiedSession(t *testing.T) {
-	a := newTestAuthenticator(t, randomSessionKey(t))
+	a := newTestAuthenticator(t)
 	if got := a.SessionFingerprint(requestWithCookie("")); got != "-" {
 		t.Fatalf("fingerprint = %q", got)
 	}
 }
 
 func TestSessionFingerprintIsSaltedForAVerifiedSession(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
+	a := newTestAuthenticator(t)
 	id := a.Sessions.Create("test-agent")
-	got := a.SessionFingerprint(requestFor(key, id))
+	got := a.SessionFingerprint(requestFor(id))
 	if got != a.Salt.Fingerprint(id) || strings.Contains(got, id) {
 		t.Fatalf("fingerprint = %q", got)
 	}
 }
 
-func TestSessionIDRejectsCookiesThatAreNotAVerifiedSessionIdentifier(t *testing.T) {
-	key := randomSessionKey(t)
+func TestSessionIDRejectsCookiesThatAreNotShapedLikeASessionIdentifier(t *testing.T) {
+	a := newTestAuthenticator(t)
+	id := a.Sessions.Create("test-agent")
 	cases := map[string]*http.Request{
-		"not a session id": requestFor(key, "not-a-session-id"),
-		"unsigned value":   requestWithCookie(SessionCookieName(false) + "=plain"),
+		"not a session id":    requestFor("not-a-session-id"),
+		"legacy signed value": requestFor(legacySignedValue(id)),
 	}
-	a := newTestAuthenticator(t, key)
 	for name, request := range cases {
 		if got, ok := a.SessionID(request); ok || got != "" {
 			t.Errorf("%s: SessionID = %q, %v", name, got, ok)

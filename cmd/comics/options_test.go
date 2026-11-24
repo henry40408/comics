@@ -67,17 +67,28 @@ func TestAnEmptyEnvVarIsUnset(t *testing.T) {
 	}
 }
 
-func TestBooleansAcceptOnlyTrueAndFalse(t *testing.T) {
+func TestBooleansAcceptWhatParseBoolAccepts(t *testing.T) {
 	if opts := mustParse(t, []string{"--cookie-secure"}, nil); !opts.cookieSecure {
 		t.Error("a bare flag did not mean true")
 	}
-	if opts := mustParse(t, []string{"--cookie-secure=false"}, nil); opts.cookieSecure {
-		t.Error("=false was ignored")
+	accepted := map[string]bool{
+		"1": true, "t": true, "T": true, "TRUE": true, "true": true,
+		"0": false, "f": false, "F": false, "false": false,
 	}
-	if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": "true"}); !opts.disableCSRFGuard {
-		t.Error("env true was ignored")
+	for value, want := range accepted {
+		if opts := mustParse(t, []string{"--cookie-secure=" + value}, nil); opts.cookieSecure != want {
+			t.Errorf("--cookie-secure=%s gave %v, want %v", value, opts.cookieSecure, want)
+		}
+		if opts := mustParse(t, nil, map[string]string{"COMICS_COOKIE_SECURE": value}); opts.cookieSecure != want {
+			t.Errorf("COMICS_COOKIE_SECURE=%s gave %v, want %v", value, opts.cookieSecure, want)
+		}
 	}
-	for _, bad := range []string{"yes", "on", "2"} {
+	for _, value := range []string{"true", "1"} {
+		if opts := mustParse(t, nil, map[string]string{"COMICS_DISABLE_CSRF_GUARD": value}); !opts.disableCSRFGuard {
+			t.Errorf("COMICS_DISABLE_CSRF_GUARD=%s was ignored", value)
+		}
+	}
+	for _, bad := range []string{"yes", "on", "2", "TrUe"} {
 		_, err := parseOptions(nil, envOf(map[string]string{"COMICS_COOKIE_SECURE": bad}), io.Discard)
 		assertUsageError(t, err)
 		_, err = parseOptions([]string{"--cookie-secure=" + bad}, envOf(nil), io.Discard)
@@ -193,6 +204,14 @@ func TestLegacyEnvVarsAreReportedInOrder(t *testing.T) {
 	}
 	if ensureNoLegacyEnvVars(envOf(nil)) != nil {
 		t.Fatal("an empty environment was refused")
+	}
+}
+
+// Ignoring either of these would leave COMICS_AUTH_* unset and serve comics
+// without authentication, so they are the only retired names that still abort.
+func TestOnlyTheAuthCredentialVariablesStayRetired(t *testing.T) {
+	if len(legacyEnvVars) != 2 || legacyEnvVars[0].old != "AUTH_USERNAME" || legacyEnvVars[1].old != "AUTH_PASSWORD_HASH" {
+		t.Fatalf("legacyEnvVars = %+v", legacyEnvVars)
 	}
 }
 

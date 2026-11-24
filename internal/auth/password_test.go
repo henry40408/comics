@@ -280,6 +280,7 @@ func TestParsePasswordHashRefusesWhatItCannotVerify(t *testing.T) {
 
 	for name, hash := range map[string]string{
 		"argon2d":          "$argon2d$v=19$m=1024,t=1,p=1" + tail,
+		"argon2i":          "$argon2i$v=19$m=1024,t=1,p=1" + tail,
 		"old version":      "$argon2id$v=16$m=1024,t=1,p=1" + tail,
 		"unknown param":    "$argon2id$v=19$m=1024,t=1,p=1,x=1" + tail,
 		"bad number":       "$argon2id$v=19$m=lots,t=1,p=1" + tail,
@@ -291,6 +292,15 @@ func TestParsePasswordHashRefusesWhatItCannotVerify(t *testing.T) {
 		if _, err := ParsePasswordHash(hash); err == nil {
 			t.Errorf("%s parsed", name)
 		}
+	}
+
+	// Refused for its name alone, not for some other field of the hash.
+	if _, err := ParsePasswordHash("$argon2id$v=19$m=1024,t=1,p=1" + tail); err != nil {
+		t.Fatalf("the argon2id twin of the argon2i row did not parse: %v", err)
+	}
+	_, err := ParsePasswordHash("$argon2i$v=19$m=1024,t=1,p=1" + tail)
+	if err == nil || !strings.Contains(err.Error(), "unsupported algorithm") {
+		t.Errorf("argon2i error = %v, want unsupported algorithm", err)
 	}
 }
 
