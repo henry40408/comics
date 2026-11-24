@@ -183,9 +183,6 @@ func (s *SessionStore) Len() int {
 	return len(s.sessions)
 }
 
-// IsEmpty reports whether no session is live.
-func (s *SessionStore) IsEmpty() bool { return s.Len() == 0 }
-
 func (s *SessionStore) isIdle(record *sessionRecord, nowSecs int64) bool {
 	idleFor := max(nowSecs-record.lastSeen.Load(), 0)
 	return idleFor >= int64(s.idleTTL/time.Second)
@@ -229,14 +226,6 @@ func IsSessionID(value string) bool {
 	if len(value) != SessionIDHexLen {
 		return false
 	}
-	for i := range len(value) {
-		if !isHexDigit(value[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func isHexDigit(b byte) bool {
-	return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F'
+	_, err := hex.DecodeString(value)
+	return err == nil
 }

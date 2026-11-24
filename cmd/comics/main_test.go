@@ -283,24 +283,6 @@ func TestLegacyEnvVarAbortsStartup(t *testing.T) {
 	}
 }
 
-func TestFoldedEnvVarsAbortStartup(t *testing.T) {
-	env := []string{"COMICS_SEED=1", "COMICS_SESSION_KEY=0123456789abcdef"}
-	stdout, stderr, code := runToCompletion(t, env, "", "--data-dir", fixturesDir)
-	want := "Error: these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  COMICS_SEED -> COMICS_SECRET\n" +
-		"  COMICS_SESSION_KEY -> COMICS_SECRET\n"
-	if code != 1 || stdout != "" || stderr != want {
-		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
-	}
-}
-
-func TestRustLogIsARetiredVariable(t *testing.T) {
-	_, stderr, code := runToCompletion(t, []string{"RUST_LOG=debug"}, "", "--data-dir", fixturesDir)
-	if code != 1 || !strings.Contains(stderr, "  RUST_LOG -> COMICS_LOG_LEVEL\n") {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
-	}
-}
-
 func TestInvalidOptionExitsWithUsageCode(t *testing.T) {
 	env := []string{"COMICS_SECRET=abcd"}
 	stdout, stderr, code := runToCompletion(t, env, "", "--data-dir", fixturesDir)

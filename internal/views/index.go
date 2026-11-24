@@ -50,9 +50,9 @@ func sidebar() node {
 
 func header(view IndexView) node {
 	scannedAt := view.ScannedAt.UTC()
-	// chrono's RFC 2822 has an unpadded day; HTML allows at most three
-	// fractional digits in a datetime, hence the fixed millisecond layout.
-	display := scannedAt.Format("Mon, 2 Jan 2006 15:04:05 -0700")
+	// HTML allows at most three fractional digits in a datetime, hence the
+	// fixed millisecond layout.
+	display := scannedAt.Format(time.RFC1123Z)
 	iso := scannedAt.Format("2006-01-02T15:04:05.000Z")
 	ms := float64(view.ScanDuration.Milliseconds())
 	return el("div", []attr{a("class", "head")},

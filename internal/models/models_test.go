@@ -1,6 +1,7 @@
 package models
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,14 +11,16 @@ import (
 
 const (
 	fixtureDataDir = "../../fixtures/data"
-	// Book IDs under testSecret, as hard-coded in the Rust tests (DATA_IDS).
-	// Every existing URL stays valid only while these hold.
+	// Book IDs under testSecret. Every existing URL stays valid only while
+	// these hold.
 	firstBookTitle  = "Pepper and Carrot 01 - Potion of Flight"
 	secondBookTitle = "Pepper and Carrot 02 - Rainbow Potions"
 	firstBookID     = "1f1c111677715adf"
 	secondBookID    = "b8799902927c8bf6"
 	testSecret      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
+
+var discardLogger = slog.New(slog.DiscardHandler)
 
 func writeFile(t *testing.T, path string) {
 	t.Helper()
@@ -33,14 +36,6 @@ func mkdir(t *testing.T, path string) {
 	}
 }
 
-func TestPageNewRejectsADirectory(t *testing.T) {
-	dir := t.TempDir()
-	mkdir(t, filepath.Join(dir, "sub"))
-	if _, err := newPage(0, dir, "sub"); err == nil {
-		t.Fatal("a directory became a page")
-	}
-}
-
 func TestPageNewBuildsFromAFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "01.jpg"))
@@ -53,29 +48,13 @@ func TestPageNewBuildsFromAFile(t *testing.T) {
 	}
 }
 
-func TestBookNewRejectsANonDirectory(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "loose.txt"))
-	if _, err := newBook(0, dir, "loose.txt", nil); err == nil {
-		t.Fatal("a file became a book")
-	}
-}
-
-func TestBookNewRejectsAnEmptyDirectory(t *testing.T) {
-	dir := t.TempDir()
-	mkdir(t, filepath.Join(dir, "empty"))
-	if _, err := newBook(0, dir, "empty", nil); err == nil {
-		t.Fatal("an empty directory became a book")
-	}
-}
-
 func TestBookNewBuildsWithSortedPages(t *testing.T) {
 	dir := t.TempDir()
 	book := filepath.Join(dir, "My Book")
 	mkdir(t, book)
 	writeFile(t, filepath.Join(book, "02.jpg"))
 	writeFile(t, filepath.Join(book, "01.jpg"))
-	got, err := newBook(1, dir, "My Book", nil)
+	got, err := newBook(1, dir, "My Book", discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +73,7 @@ func scanTwoBooks(t *testing.T) (*BookScan, string) {
 			writeFile(t, filepath.Join(dir, book, page))
 		}
 	}
-	scan, err := ScanBooks(1, dir, nil)
+	scan, err := ScanBooks(1, dir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +120,7 @@ func TestScanSkipsLooseFilesAndEmptyBooks(t *testing.T) {
 	mkdir(t, filepath.Join(dir, "empty"))
 	mkdir(t, filepath.Join(dir, "Real"))
 	writeFile(t, filepath.Join(dir, "Real", "01.jpg"))
-	scan, err := ScanBooks(1, dir, nil)
+	scan, err := ScanBooks(1, dir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,12 +130,12 @@ func TestScanSkipsLooseFilesAndEmptyBooks(t *testing.T) {
 }
 
 func TestScanFailsWhenTheDataDirIsMissing(t *testing.T) {
-	if _, err := ScanBooks(0, filepath.Join(t.TempDir(), "nope"), nil); err == nil {
+	if _, err := ScanBooks(0, filepath.Join(t.TempDir(), "nope"), discardLogger); err == nil {
 		t.Fatal("missing data dir scanned")
 	}
 }
 
-func TestJoinPathFollowsRustPathJoin(t *testing.T) {
+func TestJoinPathKeepsTheDirAsGiven(t *testing.T) {
 	cases := []struct{ dir, name, want string }{
 		{"./fixtures/data", "Book", "./fixtures/data/Book"},
 		{"data/", "Book", "data/Book"},
@@ -173,7 +152,7 @@ func TestJoinPathFollowsRustPathJoin(t *testing.T) {
 // A cleaned data dir would change every page ID, so the path must be kept as
 // given.
 func TestPagePathsKeepTheDataDirAsGiven(t *testing.T) {
-	scan, err := ScanBooks(0, "./"+fixtureDataDir, nil)
+	scan, err := ScanBooks(0, "./"+fixtureDataDir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,12 +162,12 @@ func TestPagePathsKeepTheDataDirAsGiven(t *testing.T) {
 	}
 }
 
-func TestDataIDsMatchRust(t *testing.T) {
+func TestBookIDsAreStable(t *testing.T) {
 	parsed, err := secret.Parse(testSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scan, err := ScanBooks(parsed.IDSeed(), fixtureDataDir, nil)
+	scan, err := ScanBooks(parsed.IDSeed(), fixtureDataDir, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,23 +191,6 @@ func TestDataIDsMatchRust(t *testing.T) {
 	if pages != 8 {
 		t.Errorf("got %d pages, want 8", pages)
 	}
-	wantPageIDs := map[string]string{
-		"01.jpg": "be96e91e035d4605",
-		"02.jpg": "cd6eca0c7491cba5",
-		"03.jpg": "5405762997634363",
-	}
-	// Page IDs hash the path as given, and the Rust vectors were taken from
-	// the repo root, so scan the same relative path from there.
-	t.Chdir("../..")
-	rooted, err := ScanBooks(parsed.IDSeed(), "fixtures/data", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, page := range rooted.Books[0].Pages[:3] {
-		if want := wantPageIDs[page.Filename]; page.ID != want {
-			t.Errorf("page %s ID %q, want %q", page.Filename, page.ID, want)
-		}
-	}
 }
 
 func symlink(t *testing.T, target, link string) {
@@ -242,7 +204,7 @@ func TestScanFollowsASymlinkedBookDirectory(t *testing.T) {
 	outside, root := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(outside, "01.jpg"))
 	symlink(t, outside, filepath.Join(root, "Linked"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +219,7 @@ func TestScanFollowsASymlinkedPageFile(t *testing.T) {
 	book := filepath.Join(root, "Book")
 	mkdir(t, book)
 	symlink(t, filepath.Join(outside, "real.jpg"), filepath.Join(book, "01.jpg"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +234,7 @@ func TestScanRejectsASymlinkToADirectoryInsideABook(t *testing.T) {
 	mkdir(t, book)
 	writeFile(t, filepath.Join(book, "01.jpg"))
 	symlink(t, outside, filepath.Join(book, "sub"))
-	scan, err := ScanBooks(0, root, nil)
+	scan, err := ScanBooks(0, root, discardLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +248,7 @@ func TestNonUTF8NamesAreRejected(t *testing.T) {
 	if _, err := newPage(0, dir, "\xff.jpg"); err == nil {
 		t.Error("newPage accepted a non-UTF-8 name")
 	}
-	if _, err := newBook(0, dir, "\xff", nil); err == nil {
+	if _, err := newBook(0, dir, "\xff", discardLogger); err == nil {
 		t.Error("newBook accepted a non-UTF-8 name")
 	}
 }

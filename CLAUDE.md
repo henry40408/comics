@@ -24,7 +24,7 @@ Run from the repository root. The Go version comes from `go.mod` alone (`go` + `
 Third-party modules are **vendored and committed** (`vendor/`); builds and tests use `-mod=vendor` (Go selects it automatically while `vendor/` exists). To add or update a dependency: `go get <module>@<version>`, `go mod tidy`, `go mod vendor`, and commit `go.mod`, `go.sum` and `vendor/` together. A `go get` without `go mod vendor` breaks the build, and the CI `deps` job catches it.
 
 Subcommands:
-- `go run ./cmd/comics list` (alias `ls`): books and page counts.
+- `go run ./cmd/comics list`: books and page counts.
 - `go run ./cmd/comics hash-password`: prints an Argon2id PHC string for `COMICS_AUTH_PASSWORD_HASH`. Reads the password from the terminal, or from stdin when there is none. Refuses an empty password; below `auth.MinPasswordChars` (15, counted in characters) it only warns, on **stderr** — the hash must stay stdout's only content so `$(comics hash-password)` works.
 - `--version` prints the version and exits.
 
@@ -35,7 +35,6 @@ Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go 
 - A **separate Go module** with its own `go.mod` and committed `vendor/`; `go test ./...` at the root does not run it. `e2e/go.mod` mirrors the root `go`/`toolchain` lines (CI checks it). Update its dependencies the same way as the root ones, inside `e2e/` (`go get`, `go mod tidy`, `go mod vendor`).
 - Run from `e2e/`: `go test -count=1 -v ./...` (`-count=1` because the test cache cannot see a rebuilt `bin/comics`). One or more features: `E2E_FEATURES=features/reader.feature` (comma-separated). Regenerate `docs/screenshots/` with `go run ./cmd/screenshots`.
 - godog runs two passes: `shared` (everything except `@logout`/`@rescan`, up to `ConcurrencyCeiling` (4) scenarios in parallel, one Chrome each) and `exclusive` (`@logout`, `@rescan`, one at a time, since they disturb every other live session). Undefined or pending steps fail.
-- Regenerate the screenshots in the same change for visual edits (CSS, template layout, front-end JS); copy-only or logic-only edits do not need it.
 - Run golangci-lint `fmt --diff` and `run` inside `e2e/` before committing (the CI `lint` job does; the `deps` job runs the tidy/vendor/govulncheck checks there too).
 - Needs a local Chromium or Chrome (chromedp starts it headless). `E2E_CHROME` pins the binary (unset: chromedp's own search, which prefers a `chromium` on `PATH` over `google-chrome`); CI sets it to `/usr/bin/google-chrome`, and the run logs which choice it used. On macOS `/Applications/Chromium.app` is found (`brew install --cask ungoogled-chromium`). A missing browser fails with one clear error, not one per scenario.
 - Starts the server binary `bin/comics` itself (running `go build -mod=vendor -o bin/comics ./cmd/comics` if it is missing), or adopts one already listening on `127.0.0.1:3030`. An existing binary is not rebuilt, so rebuild it after changing server code before E2E.
@@ -48,7 +47,7 @@ Gherkin scenarios (`e2e/features/*.feature`) run through godog and drive the Go 
 
 ### Golden pages
 
-`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). They were captured from the former Rust server; `views_test.go` normalises the version, the assets hash and times before comparing. A deliberate markup change means regenerating the goldens and the e2e screenshots together.
+`internal/views/testdata/*.golden.html` pin the exact markup (the e2e suite and the no-JS CSS depend on it). The version and the assets hash are stored as `{{VERSION}}` and `?v={{HASH}}`, and `views_test.go` swaps the real values for them before comparing; regenerate with `go test ./internal/views -update`. The scroll-mode and failed-login pages have no golden: `views_test.go` derives each from the paged or plain page plus a spelled-out list of differences. A deliberate markup change means regenerating the goldens and the e2e screenshots together. Visual edits (CSS, template layout, front-end JS) need the screenshots regenerated in the same change; copy-only or logic-only edits do not.
 
 ## Architecture
 
@@ -58,7 +57,7 @@ Thin binary (`cmd/comics`) over internal packages, so tests can build the handle
 | --- | --- |
 | `cmd/comics` | CLI (`flag`, precedence flag > env > default), `slog` logging, graceful shutdown (`serve.go`), `list`, `hash-password`, `legacyEnvVars` (`env.go`) |
 | `internal/models` | `ScanBooks` (parallel) → `BookScan` with books and pages by ID; IDs are `xxh3(seed, …)` (`HashString` in `ids.go`) |
-| `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `noStoreHTML`, `requireAuth`, `requestLog`), `handlers_library.go` (index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
+| `internal/server` | `App`, `Config`, `New`, `RunInitialScan`; `routes.go` (`Handler`), `middleware.go` (`securityHeaders`, `requireAuth`, `requestLog`), `handlers_library.go` (`writeHTML`, index, book, page, shuffle, rescan, health), `handlers_login.go`, `handlers_thumb.go` |
 | `internal/auth` | `Authenticator`, `SessionStore`, `RateLimiter`, `ClientKeys`, `TrustedProxies`, `CookieSigner`, `AuditSalt`, password hashing (`password.go`) |
 | `internal/secret` | `Secret` → `SessionKey()` (SHA-512) and `IDSeed()` (SHA-256), domain-separated |
 | `internal/assets` | Embedded CSS/JS/icons (`go:embed`) + the `?v=<hash>` version |
@@ -78,7 +77,7 @@ Protected: `GET /`, `GET /book/{id}` (`?mode=paged|scroll`), `GET /data/{id}`, `
 
 Public: `GET|POST /login`, `POST /logout`, `GET /healthz`, `/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/favicon.svg`, `/favicon-32.png`, `/apple-touch-icon.png`.
 
-Layers, outermost first: `securityHeaders` → `http.CrossOriginProtection` → `requestLog` → the mux; protected routes add `requireAuth` → `noStoreHTML`. `COMICS_DISABLE_CSRF_GUARD` removes the CSRF layer (escape hatch for plain-HTTP LAN hosts sending `Origin: null`); read the comment on it in `Handler` first.
+Layers, outermost first: `securityHeaders` → `http.CrossOriginProtection` → `requestLog` → the mux; protected routes add `requireAuth`. `writeHTML`, the only place comics writes `text/html`, makes every page `no-store` (the stdlib mux's 307 for an unclean path such as `//book/x` is the one exception, and its body is only the requested URL); the login and logout 303s set it themselves, and the image routes keep their own `private` value. `COMICS_DISABLE_CSRF_GUARD` removes the CSRF layer (escape hatch for plain-HTTP LAN hosts sending `Origin: null`); read the comment on it in `Handler` first.
 
 ### CSRF
 
@@ -122,7 +121,7 @@ Enabled only when both `COMICS_AUTH_USERNAME` and `COMICS_AUTH_PASSWORD_HASH` ar
 - Cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`; with `COMICS_COOKIE_SECURE`, also `Secure` and renamed `__Host-comics_session`. Exactly one name is accepted.
 - TTLs: idle `auth.DefaultIdleTTL` (3 days), absolute `auth.DefaultAbsoluteTTL` (7 days). Capacity 1 000 (`defaultMaxSessions`), LRU-evicting.
 - Login rate limit (`internal/auth/ratelimit.go`): 5 per client IP per 60 s **and** 20 globally. `RateLimiter.TryAcquire` returns a `Throttle` naming the refusing `Scope` (`per_ip` / `shared` / `global` in logs) and reset time → `Retry-After`. `Global` logs `login_lockout`; others log `login_rate_limited` with `scope`. Keep these separate — the lockout is the one worth alerting on. Both windows are checked before either is charged; a successful login refunds both (`Release`). Read the `RateLimiter` docs before changing thresholds. The key is the TCP peer unless it is in `COMICS_TRUSTED_PROXIES` (**empty by default**, so `X-Forwarded-For` is ignored).
-- `auth.EnsurePasswordHashUsable` (called from `ensurePasswordHashIsUsable` in `cmd/comics/serve.go`) fails startup on a hash the login route could not use (bcrypt gets a dedicated migration message). The parse is strict (all six PHC fields, `v=19`, `m,t,p` in order, a digest), so a digest-less or partial hash is refused there. Not applied to `hash-password`.
+- `auth.EnsurePasswordHashUsable` (called from `runServer` in `cmd/comics/serve.go`, only when a hash is set) fails startup on a hash the login route could not use (bcrypt gets a dedicated migration message). The parse is strict (all six PHC fields, `v=19`, `m,t,p` in order, a digest), so a digest-less or partial hash is refused there. Not applied to `hash-password`.
 - `auth.SafeNext` accepts only a local path: the second character may be neither `/` nor `\` (browsers read both as an authority), and **every control byte, including tab, and DEL is rejected**. `next` arrives percent-decoded, so a raw newline would split the `Location` header; a tab is stricter than Go's own header check allows, but URL parsing strips tabs, so `/<TAB>/evil.example` would become the open redirect `//evil.example`.
 - Audit events (emitted from `internal/server/handlers_login.go` and `internal/auth/authenticator.go`; `internal/auth/audit.go` holds the session-ID fingerprint) are INFO/WARN, visible at the default `COMICS_LOG_LEVEL=info`; pair with `--log-format json`. Never log session IDs in cleartext.
 
@@ -138,9 +137,8 @@ The version is never stored in a manifest: `internal/version.Version()` returns 
 
 ## Conventions
 
-- `go.mod` is the only source of the Go version (`go` and `toolchain` lines): CI and the Dockerfile install nothing version-specific (the Docker image's Go is used when it is at least the `toolchain` line; `GOTOOLCHAIN=auto` only moves up). `e2e/go.mod` mirrors those two lines (CI checks it).
 - Fixtures: `fixtures/data/`. Their book IDs derive from `testSecret` in `internal/server/harness_test.go` and are hard-coded as `dataIDs`; changing the secret or derivation means recomputing them (run the binary with that secret on `fixtures/data`, read `/book/…` hrefs from the index).
 - User-facing template/login strings are Traditional Chinese (e.g. `帳號或密碼錯誤`).
-- Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `full` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, default `info`) is env-only, with no flag. `RUST_LOG` is a retired variable and fails startup.
+- Config env vars carry a `COMICS_` prefix (except build-time `GIT_VERSION`): `BIND`, `DATA_DIR`, `CACHE_DIR`, `LOG_FORMAT`, `LOG_LEVEL`, `SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `COOKIE_SECURE`, `HSTS_MAX_AGE`, `TRUSTED_PROXIES`, `DISABLE_CSRF_GUARD`. `COMICS_LOG_FORMAT` accepts `text` or `json` only; `COMICS_LOG_LEVEL` (`debug|info|warn|error`, case-insensitive, parsed by `slog.Level.UnmarshalText`; default `info`) is env-only, with no flag. `RUST_LOG` is a retired variable and fails startup.
 - `ensureNoLegacyEnvVars` (`cmd/comics/env.go`) fails startup on retired names. Update `legacyEnvVars` there whenever an environment variable is added, renamed or removed — a silently ignored variable (e.g. falling back to a random secret) is worse than a startup failure.
 - GitHub Actions are pinned by commit SHA with the tag as a trailing comment (`uses: owner/repo@<sha> # v1.2.3`).

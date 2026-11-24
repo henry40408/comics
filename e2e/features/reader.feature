@@ -95,22 +95,18 @@ Feature: Reader
     And the segmented control should highlight "scroll"
     And all "3" pages should be showing
 
-  @nojs
-  Scenario: The first page offers no previous link and the last no next link
-    Then page "1" should offer no previous-page link
-    When I follow the next-page link
-    And I follow the next-page link
-    Then page "3" should offer no next-page link
-
   # `@nojs` runs with scripting off; paging falls back to per-page anchors
-  # resolved by CSS `:target`.
+  # resolved by CSS `:target`. The first page offers no previous link and the
+  # last no next link.
   @nojs
   Scenario: Paging works without JavaScript
     Then page "1" should be the only one showing
+    And page "1" should offer no previous-page link
     When I follow the next-page link
     Then page "2" should be the only one showing
     When I follow the next-page link
     Then page "3" should be the only one showing
+    And page "3" should offer no next-page link
     When I follow the previous-page link
     Then page "2" should be the only one showing
 
@@ -123,19 +119,14 @@ Feature: Reader
   # Without a script the switch lives on each page: the shared one would drop
   # you at page 1.
   @nojs
-  Scenario: Switching to scroll mode works without JavaScript
-    Then the shared mode control should not be visible
-    When I switch mode from page "1"
-    Then the reader should be in "scroll" mode
-    And all "3" pages should be showing
-
-  @nojs
   Scenario: Switching mode keeps your place without JavaScript
+    Then the shared mode control should not be visible
     When I follow the next-page link
     And I follow the next-page link
     Then page "3" should be the only one showing
     When I switch mode from page "3"
     Then the reader should be in "scroll" mode
+    And all "3" pages should be showing
     And page "3" should be in view
     When I switch mode from page "3"
     Then the reader should be in "paged" mode

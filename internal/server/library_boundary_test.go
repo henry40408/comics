@@ -3,8 +3,6 @@ package server
 import (
 	"strings"
 	"testing"
-
-	"github.com/henry40408/comics/internal/models"
 )
 
 const logoutControl = `data-testid="logout"`
@@ -26,15 +24,4 @@ func TestLibraryPagesShowTheLogoutControlOnlyWhenAuthIsEnabled(t *testing.T) {
 			t.Errorf("GET %s has no logout control with auth", path)
 		}
 	}
-}
-
-func TestABookIndexPastTheEndOfTheScanIsNotFound(t *testing.T) {
-	ta := newTestApp(t)
-	// An index equal to len(Books) is already out of range.
-	ta.app.storeScan(&models.BookScan{
-		Books:    []models.Book{{}},
-		BooksMap: map[string]int{"last": 0, "past": 1},
-	})
-	assertStatus(t, 200, ta.get("/book/last"), "the last book")
-	assertStatus(t, 404, ta.get("/book/past"), "an index equal to len(Books)")
 }

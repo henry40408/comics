@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/henry40408/comics/internal/auth"
@@ -75,51 +74,9 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// noStoreHTML adds Cache-Control: no-store (plus Pragma for HTTP/1.0) to HTML,
-// so the back button after logout cannot show a rendered page.
-//
-// It only fills an absent header, and only on text/html: the image routes set
-// long-lived private values on purpose, since a blanket no-store would re-read
-// every page from disk on every turn.
-func noStoreHTML(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&noStoreWriter{ResponseWriter: w}, r)
-	})
-}
-
-type noStoreWriter struct {
-	http.ResponseWriter
-	headersSent bool
-}
-
-func (w *noStoreWriter) WriteHeader(status int) {
-	w.stamp()
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *noStoreWriter) Write(body []byte) (int, error) {
-	w.stamp()
-	return w.ResponseWriter.Write(body)
-}
-
-func (w *noStoreWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-// stamp runs once, when the header block is about to go out.
-func (w *noStoreWriter) stamp() {
-	if w.headersSent {
-		return
-	}
-	w.headersSent = true
-	header := w.Header()
-	if header.Get("Cache-Control") != "" {
-		return
-	}
-	if !strings.HasPrefix(header.Get("Content-Type"), "text/html") {
-		return
-	}
-	setNoStore(header)
-}
-
+// setNoStore keeps a response out of every cache (Pragma is for HTTP/1.0), so
+// the back button after logout cannot show a page that was rendered for a
+// session.
 func setNoStore(header http.Header) {
 	header.Set("Cache-Control", "no-store")
 	header.Set("Pragma", "no-cache")

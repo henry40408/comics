@@ -50,15 +50,6 @@ func serverConfig(opts options, logger *slog.Logger) server.Config {
 	}
 }
 
-// ensurePasswordHashIsUsable runs before the server is built, and never before
-// hash-password, which is how an operator fixes a bad hash.
-func ensurePasswordHashIsUsable(opts options) error {
-	if opts.authPasswordHash == "" {
-		return nil
-	}
-	return auth.EnsurePasswordHashUsable(opts.authPasswordHash)
-}
-
 func logConfigurationWarnings(opts options, logger *slog.Logger) {
 	secure := opts.cookieSecure
 	if opts.disableCSRFGuard {
@@ -83,8 +74,12 @@ func logConfigurationWarnings(opts options, logger *slog.Logger) {
 // listener, so a signal arriving right after startup still shuts down
 // gracefully instead of hitting the default action.
 func runServer(opts options, logger *slog.Logger) error {
-	if err := ensurePasswordHashIsUsable(opts); err != nil {
-		return err
+	// Checked before the server is built, and never before hash-password,
+	// which is how an operator fixes a bad hash.
+	if opts.authPasswordHash != "" {
+		if err := auth.EnsurePasswordHashUsable(opts.authPasswordHash); err != nil {
+			return err
+		}
 	}
 	config := serverConfig(opts, logger)
 	app := server.New(config)

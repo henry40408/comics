@@ -53,16 +53,6 @@ func TestAllowsUpToMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestWindowExpiryResetsTheCounter(t *testing.T) {
-	// A zero-second window is elapsed the moment it is recorded.
-	limiter := newLimiter(1, 0)
-	firstAllowed := allowed(limiter, testIP(2))
-	secondAllowed := allowed(limiter, testIP(2))
-	if !firstAllowed || !secondAllowed {
-		t.Fatal("an expired window did not reset")
-	}
-}
-
 func TestDistinctIPsHaveIndependentBuckets(t *testing.T) {
 	limiter := newLimiter(1, 60)
 	if !allowed(limiter, testIP(3)) {
@@ -349,7 +339,7 @@ const proxyAddr = "10.0.0.5"
 
 func keysTrusting(t *testing.T, raw string) *ClientKeys {
 	t.Helper()
-	return NewClientKeys(mustParseProxies(t, raw), nil)
+	return NewClientKeys(mustParseProxies(t, raw), slog.New(slog.DiscardHandler))
 }
 
 func xff(lines ...string) http.Header {

@@ -4,32 +4,22 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"slices"
 )
 
-var logFormats = []string{"full", "json"}
-
-// parseLogFormat validates a --log-format value. slog has no compact or pretty
-// layouts, so those names are rejected rather than silently ignored.
+// parseLogFormat validates a --log-format value.
 func parseLogFormat(text string) (string, error) {
-	if slices.Contains(logFormats, text) {
+	if text == "text" || text == "json" {
 		return text, nil
 	}
-	return "", fmt.Errorf("unknown log format %q (want full or json)", text)
+	return "", fmt.Errorf("unknown log format %q (want text or json)", text)
 }
 
+// parseLogLevel reads a level name the way slog does: debug, info, warn or
+// error in any case, optionally with an offset such as info+2.
 func parseLogLevel(text string) (slog.Level, error) {
-	switch text {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	}
-	return 0, fmt.Errorf("unknown log level %q (want debug, info, warn or error)", text)
+	var level slog.Level
+	err := level.UnmarshalText([]byte(text))
+	return level, err
 }
 
 // newLogger writes to w, which is stdout in server mode.

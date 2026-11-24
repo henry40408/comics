@@ -17,17 +17,14 @@ func TestParseLogLevel(t *testing.T) {
 		{"info", slog.LevelInfo, false},
 		{"warn", slog.LevelWarn, false},
 		{"error", slog.LevelError, false},
+		{"INFO", slog.LevelInfo, false},
 		{"trace", 0, true},
-		{"INFO", 0, true},
 		{"", 0, true},
 	}
 	for _, tc := range cases {
 		got, err := parseLogLevel(tc.text)
 		if (err != nil) != tc.wantErr || got != tc.want {
 			t.Errorf("parseLogLevel(%q) = %v, %v", tc.text, got, err)
-		}
-		if tc.wantErr && !strings.Contains(err.Error(), tc.text) {
-			t.Errorf("error %q does not name %q", err, tc.text)
 		}
 	}
 }
@@ -38,7 +35,7 @@ func TestNewLoggerHonoursTheFormatAndLevel(t *testing.T) {
 		wantJSON bool
 	}{
 		{"json", true},
-		{"full", false},
+		{defaultLogFormat, false},
 	}
 	for _, tc := range cases {
 		var buffer bytes.Buffer

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -72,19 +71,6 @@ func TestVerifyAcceptsASignatureOfExactlyTheDigestLength(t *testing.T) {
 	}
 }
 
-func TestURLEncodeKeepsTheUnreservedRangesIncludingTheirEnds(t *testing.T) {
-	for _, kept := range []string{"A", "Z", "a", "z", "0", "9"} {
-		if got := escapeNext(kept); got != kept {
-			t.Errorf("escapeNext(%q) = %q, want it unchanged", kept, got)
-		}
-	}
-	for in, want := range map[string]string{"@": "%40", "[": "%5B", "`": "%60", "{": "%7B", "/": "%2F", ":": "%3A"} {
-		if got := escapeNext(in); got != want {
-			t.Errorf("escapeNext(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestSafeNextHeaderValueByteBoundaries(t *testing.T) {
 	for _, next := range []string{"/ a", "/~", "/é"} {
 		if got := SafeNext(next); got != next {
@@ -98,17 +84,17 @@ func TestSafeNextHeaderValueByteBoundaries(t *testing.T) {
 	}
 }
 
-func TestUserAgentVisibleASCIIBoundaries(t *testing.T) {
-	for ua, want := range map[string]string{
-		" ":    " ",
-		"~":    "~",
-		"a\tb": "a\tb",
-		"\x1f": "-",
-		"\x7f": "-",
+func TestVisibleASCIIBoundaries(t *testing.T) {
+	for value, want := range map[string]bool{
+		" ":    true,
+		"~":    true,
+		"a\tb": true,
+		"\x1f": false,
+		"\x7f": false,
+		"é":    false,
 	} {
-		r := &http.Request{Header: http.Header{"User-Agent": {ua}}}
-		if got := UserAgent(r); got != want {
-			t.Errorf("UserAgent(%q) = %q, want %q", ua, got, want)
+		if got := isVisibleASCII(value); got != want {
+			t.Errorf("isVisibleASCII(%q) = %v, want %v", value, got, want)
 		}
 	}
 }

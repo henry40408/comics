@@ -6,10 +6,9 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"testing"
-
-	"github.com/henry40408/comics/internal/auth"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -32,7 +31,7 @@ func mustParse(t *testing.T, args []string, env map[string]string) options {
 
 func TestDefaults(t *testing.T) {
 	opts := mustParse(t, nil, nil)
-	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != "full" ||
+	if opts.bind != "127.0.0.1:8080" || opts.dataDir != "./data" || opts.logFormat != defaultLogFormat ||
 		opts.logLevel != slog.LevelInfo || opts.command != "" || opts.secret != nil ||
 		opts.authUsername != "" || opts.hstsMaxAge != nil || opts.disableCSRFGuard {
 		t.Fatalf("unexpected defaults: %+v", opts)
@@ -43,23 +42,28 @@ func TestDefaults(t *testing.T) {
 }
 
 func TestFlagBeatsEnvBeatsDefault(t *testing.T) {
-	env := map[string]string{"COMICS_DATA_DIR": "from-env", "COMICS_BIND": "127.0.0.1:1"}
-	opts := mustParse(t, []string{"--data-dir", "from-flag"}, env)
+	env := map[string]string{"COMICS_DATA_DIR": "from-env", "COMICS_BIND": "127.0.0.1:1", "COMICS_LOG_FORMAT": "json"}
+	opts := mustParse(t, []string{"--data-dir", "from-flag", "--log-format", "text"}, env)
 	if opts.dataDir != "from-flag" {
 		t.Errorf("dataDir = %q", opts.dataDir)
 	}
+	if opts.logFormat != "text" {
+		t.Errorf("logFormat = %q", opts.logFormat)
+	}
 	if opts.bind != "127.0.0.1:1" {
 		t.Errorf("bind = %q", opts.bind)
-	}
-	if got := mustParse(t, []string{"-b", "127.0.0.1:2"}, env).bind; got != "127.0.0.1:2" {
-		t.Errorf("short flag: bind = %q", got)
 	}
 }
 
 func TestAnEmptyEnvVarIsUnset(t *testing.T) {
 	opts := mustParse(t, nil, map[string]string{"COMICS_TRUSTED_PROXIES": "", "COMICS_COOKIE_SECURE": ""})
-	if !opts.trustedProxies.IsEmpty() || opts.cookieSecure {
-		t.Fatalf("empty variables took effect: %+v", opts)
+	for _, ip := range []string{"127.0.0.1", "::1"} {
+		if opts.trustedProxies.Contains(netip.MustParseAddr(ip)) {
+			t.Errorf("an empty COMICS_TRUSTED_PROXIES trusts %s", ip)
+		}
+	}
+	if opts.cookieSecure {
+		t.Error("an empty COMICS_COOKIE_SECURE took effect")
 	}
 }
 
@@ -95,12 +99,13 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 		"bad proxies":      {"--trusted-proxies", "not-an-ip"},
 		"hostname bind":    {"--bind", "localhost:8080"},
 		"bad log format":   {"--log-format", "yaml"},
-		"compact format":   {"--log-format", "compact"},
-		"pretty format":    {"--log-format", "pretty"},
+		"retired format":   {"--log-format", "full"},
 		"bad hsts":         {"--hsts-max-age", "-1"},
 		"unknown flag":     {"--nope"},
 		"unknown command":  {"frobnicate"},
 		"extra argument":   {"list", "extra"},
+		"removed -b flag":  {"-b", "127.0.0.1:2"},
+		"removed ls alias": {"ls"},
 	}
 	for name, args := range cases {
 		_, err := parseOptions(args, envOf(nil), io.Discard)
@@ -110,13 +115,15 @@ func TestInvalidValuesAreUsageErrors(t *testing.T) {
 		}
 		assertUsageError(t, err)
 	}
-	_, err := parseOptions(nil, envOf(map[string]string{logLevelEnv: "trace"}), io.Discard)
-	assertUsageError(t, err)
+	for _, env := range []map[string]string{{logLevelEnv: "trace"}, {"COMICS_LOG_FORMAT": "full"}} {
+		_, err := parseOptions(nil, envOf(env), io.Discard)
+		assertUsageError(t, err)
+	}
 }
 
 func TestBindIsValidatedOnlyInServerMode(t *testing.T) {
 	env := envOf(map[string]string{"COMICS_BIND": "localhost:8080"})
-	for _, args := range [][]string{{"list"}, {"ls"}, {"hash-password"}, {"--version"}} {
+	for _, args := range [][]string{{"list"}, {"hash-password"}, {"--version"}} {
 		if _, err := parseOptions(args, env, io.Discard); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -141,13 +148,15 @@ func TestOptionsAreParsedIntoTheirTypes(t *testing.T) {
 		"--auth-username", "user",
 		"--auth-password-hash", "x",
 		"--log-format", "json",
-		"ls",
+		"list",
 	}, map[string]string{logLevelEnv: "warn"})
 	if opts.secret == nil || opts.hstsMaxAge == nil || *opts.hstsMaxAge != 0 {
 		t.Fatalf("secret/hsts: %+v", opts)
 	}
-	if opts.trustedProxies.IsEmpty() {
-		t.Error("trusted proxies were dropped")
+	for ip, want := range map[string]bool{"10.1.2.3": true, "192.168.0.1": true, "192.168.0.2": false} {
+		if got := opts.trustedProxies.Contains(netip.MustParseAddr(ip)); got != want {
+			t.Errorf("trusted proxies contain %s = %v, want %v", ip, got, want)
+		}
 	}
 	if opts.authUsername != "user" {
 		t.Errorf("auth username = %q", opts.authUsername)
@@ -175,10 +184,11 @@ func TestHelpPrintsUsageAndABadFlagDoesNot(t *testing.T) {
 
 func TestLegacyEnvVarsAreReportedInOrder(t *testing.T) {
 	err := ensureNoLegacyEnvVars(envOf(map[string]string{
-		"COMICS_SESSION_KEY": "x", "BIND": "", "RUST_LOG": "debug",
+		"COMICS_SESSION_KEY": "x", "COMICS_SEED": "x", "BIND": "", "RUST_LOG": "debug",
 	}))
 	want := "these environment variables no longer exist; rename (or unset) them to continue:\n" +
-		"  BIND -> COMICS_BIND\n  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
+		"  BIND -> COMICS_BIND\n  COMICS_SEED -> COMICS_SECRET\n" +
+		"  COMICS_SESSION_KEY -> COMICS_SECRET\n  RUST_LOG -> COMICS_LOG_LEVEL"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v", err)
 	}
@@ -203,52 +213,9 @@ func TestEveryLegacyVariableNamesALiveReplacement(t *testing.T) {
 	}
 }
 
-func TestAUsablePasswordHashStartsTheServer(t *testing.T) {
-	hash, err := auth.HashPassword("password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ensurePasswordHashIsUsable(options{authPasswordHash: hash}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensurePasswordHashIsUsable(options{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAMalformedPasswordHashStopsStartup(t *testing.T) {
-	cases := []string{
-		"not-a-hash",
-		"password",
-		"$argon2id$v=19$m=19456$nope",
-		"$pbkdf2-sha256$i=1000$c2FsdHNhbHQ$xEbJPmXjr2fBIf1RhJ1Kd0uGrjhOTOAgWnMYGVBLj4Y",
-	}
-	for _, hash := range cases {
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
-		if err == nil || !strings.Contains(err.Error(), "hash-password") {
-			t.Errorf("%q: err = %v", hash, err)
-		}
-	}
-}
-
 func TestAnExplicitlyEmptyCredentialIsRefused(t *testing.T) {
 	for _, flagName := range []string{"--auth-username", "--auth-password-hash"} {
 		_, err := parseOptions([]string{flagName, ""}, envOf(nil), io.Discard)
 		assertUsageError(t, err)
-	}
-}
-
-func TestABcryptHashNamesTheMigration(t *testing.T) {
-	for _, version := range []string{"2a", "2b", "2x", "2y"} {
-		hash := "$" + version + "$11$JhuJ1rMv1wShbVrJyh0p2.wLkQWFDDrx4F3huF5DdphG38jkwwYVu"
-		err := ensurePasswordHashIsUsable(options{authPasswordHash: hash})
-		if err == nil {
-			t.Fatalf("%s accepted", version)
-		}
-		for _, want := range []string{"bcrypt", "Argon2id", "hash-password", "password itself is unchanged"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: %q lacks %q", version, err, want)
-			}
-		}
 	}
 }

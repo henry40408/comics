@@ -1,12 +1,9 @@
 package models
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"runtime"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -38,12 +35,10 @@ func (s *BookScan) PageByID(id string) (*Page, bool) {
 }
 
 // ScanBooks treats every entry of dataDir that is a directory as a book and
-// every file inside it as a page. Nothing deeper is scanned. A nil logger
-// discards the per-entry errors.
+// every file inside it as a page. Nothing deeper is scanned. An entry that
+// is not a usable book or page is skipped and logged to logger, which must not
+// be nil; only an unreadable dataDir is an error.
 func ScanBooks(seed uint64, dataDir string, logger *slog.Logger) (*BookScan, error) {
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
 	start := time.Now()
 	names, err := readNames(dataDir)
 	if err != nil {
@@ -57,7 +52,6 @@ func ScanBooks(seed uint64, dataDir string, logger *slog.Logger) (*BookScan, err
 		}
 		return book, true
 	})
-	slices.SortFunc(books, func(a, b Book) int { return strings.Compare(a.Title, b.Title) })
 	scan := &BookScan{Books: books, ScannedAt: start.UTC()}
 	scan.index()
 	scan.ScanDuration = time.Since(start)
@@ -91,10 +85,11 @@ func scanPages(seed uint64, bookDir string, logger *slog.Logger) ([]Page, error)
 		}
 		pages = append(pages, page)
 	}
-	slices.SortFunc(pages, func(a, b Page) int { return strings.Compare(a.Path, b.Path) })
 	return pages, nil
 }
 
+// readNames lists the entry names of dir. os.ReadDir returns them sorted by
+// filename, and parallelMap keeps input order, so callers need no sort.
 func readNames(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

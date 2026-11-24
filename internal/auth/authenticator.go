@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // AuthKind is the outcome class of Authenticator.Authenticate.
@@ -31,8 +30,7 @@ const (
 	// RejectionBadSignature: not signed by this key; forged, or from a
 	// different COMICS_SECRET.
 	RejectionBadSignature
-	// RejectionMalformed: correctly signed, but not the shape this version
-	// issues.
+	// RejectionMalformed: correctly signed, but not a session identifier.
 	RejectionMalformed
 	// RejectionUnknown: names no live session.
 	RejectionUnknown
@@ -60,7 +58,7 @@ type Authenticator struct {
 	Signer       CookieSigner
 	Sessions     *SessionStore
 	Salt         *AuditSalt
-	Logger       *slog.Logger
+	Logger       *slog.Logger // must not be nil
 }
 
 // Authenticate applies three gates, cheapest first: signature, identifier
@@ -74,7 +72,7 @@ func (a *Authenticator) Authenticate(r *http.Request) AuthState {
 	if !ok {
 		return unauthenticated(why)
 	}
-	return a.validate(id, UserAgent(r))
+	return a.validate(id, r.UserAgent())
 }
 
 func (a *Authenticator) validate(id, userAgent string) AuthState {
@@ -128,69 +126,43 @@ func (a *Authenticator) SessionFingerprint(r *http.Request) string {
 // unknown on restart. BadSignature and Malformed cannot happen by accident, so
 // they WARN.
 func (a *Authenticator) LogRejection(r *http.Request, why Rejection) {
-	logger := a.logger()
-	userAgent := UserAgent(r)
+	userAgent := r.UserAgent()
 	switch why {
 	case RejectionExpiredIdle:
-		a.logExpired(logger, r, "idle")
+		a.logExpired(r, "idle")
 	case RejectionExpiredAbsolute:
-		a.logExpired(logger, r, "absolute")
+		a.logExpired(r, "absolute")
 	case RejectionBadSignature:
-		logger.Warn("session cookie was not signed by this key",
+		a.Logger.Warn("session cookie was not signed by this key",
 			"event", "session_rejected", "reason", "bad_signature", "user_agent", userAgent)
 	case RejectionMalformed:
-		logger.Warn("session cookie is not a session identifier",
+		a.Logger.Warn("session cookie is not a session identifier",
 			"event", "session_rejected", "reason", "malformed", "user_agent", userAgent)
 	case RejectionUnknown:
-		logger.Debug("session cookie names no live session",
+		a.Logger.Debug("session cookie names no live session",
 			"event", "session_rejected", "session", a.SessionFingerprint(r),
 			"reason", "unknown", "user_agent", userAgent)
 	}
 }
 
-func (a *Authenticator) logExpired(logger *slog.Logger, r *http.Request, reason string) {
-	logger.Info("session expired",
+func (a *Authenticator) logExpired(r *http.Request, reason string) {
+	a.Logger.Info("session expired",
 		"event", "session_expired", "session", a.SessionFingerprint(r),
-		"reason", reason, "user_agent", UserAgent(r))
+		"reason", reason, "user_agent", r.UserAgent())
 }
 
 // LogUserAgentChanged records a User-Agent change mid-session. Reported, never
 // enforced.
 func (a *Authenticator) LogUserAgentChanged(r *http.Request) {
-	a.logger().Warn("User-Agent changed mid-session",
+	a.Logger.Warn("User-Agent changed mid-session",
 		"event", "session_user_agent_changed",
-		"session", a.SessionFingerprint(r), "user_agent", UserAgent(r))
-}
-
-func (a *Authenticator) logger() *slog.Logger {
-	if a.Logger == nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	return a.Logger
-}
-
-// UserAgent is the request's User-Agent. A missing or non-ASCII value becomes
-// "-", so every audit event carries the field and the store always has
-// something stable to compare. A present but empty header stays empty.
-func UserAgent(r *http.Request) string {
-	values, present := r.Header["User-Agent"]
-	if !present || !isVisibleASCII(values[0]) {
-		return "-"
-	}
-	return values[0]
+		"session", a.SessionFingerprint(r), "user_agent", r.UserAgent())
 }
 
 // LoginRedirectTarget is where an unauthenticated GET is sent: the login form,
 // remembering the requested path and query.
 func LoginRedirectTarget(requested *url.URL) string {
-	return "/login?next=" + escapeNext(requested.RequestURI())
-}
-
-// escapeNext percent-encodes everything but A-Za-z0-9-_.~. QueryEscape writes a
-// space as "+", so it becomes %20 to keep one spelling; a literal "+" is
-// already %2B, so the replacement cannot touch it.
-func escapeNext(next string) string {
-	return strings.ReplaceAll(url.QueryEscape(next), "+", "%20")
+	return "/login?" + url.Values{"next": {requested.RequestURI()}}.Encode()
 }
 
 // SafeNext constrains a post-login redirect target to a local path.
@@ -216,8 +188,8 @@ func isLocalPath(next string) bool {
 }
 
 // isValidHeaderValue allows no control byte and no DEL; bytes of 0x80 and above
-// are allowed. A tab is rejected too, although
-// header values may contain one: URL parsing strips tabs, so a Location of "/\t/evil.example" would become
+// are allowed. A tab is rejected too, although header values may contain one:
+// URL parsing strips tabs, so a Location of "/\t/evil.example" would become
 // "//evil.example", an open redirect.
 func isValidHeaderValue(value string) bool {
 	for i := range len(value) {

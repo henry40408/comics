@@ -39,18 +39,11 @@ func (w window) isExpired(now time.Duration, windowSecs int) bool {
 // secondsUntilReset is for Retry-After. Never zero: a client told zero retries
 // at once and is refused again.
 func (w window) secondsUntilReset(now time.Duration, windowSecs int) int {
-	elapsed := elapsedSecs(now, w.started)
-	if elapsed >= windowSecs {
-		return 1
-	}
-	return max(windowSecs-elapsed, 1)
+	return max(windowSecs-elapsedSecs(now, w.started), 1)
 }
 
 func elapsedSecs(now, started time.Duration) int {
-	if now <= started {
-		return 0
-	}
-	return int((now - started) / time.Second)
+	return int(max(now-started, 0) / time.Second)
 }
 
 // Scope names the window that refused an attempt; the three mean very
@@ -209,11 +202,9 @@ func (l *RateLimiter) charge(w *window, now time.Duration) {
 	w.count++
 }
 
-// Release refunds the attempt reserved by TryAcquire after a successful login,
-// so legitimate sign-ins never spend a budget meant for guessing, least of all
-// the global one the reader shares with attackers. An address without its own
-// window was charged to overflow, so that is refunded instead. Only callers
-// past the credential check reach here.
+// Release refunds the attempt reserved by TryAcquire after a successful login
+// (see RateLimiter). An address without its own window was charged to
+// overflow, so that is refunded instead.
 func (l *RateLimiter) Release(ip netip.Addr) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -239,8 +230,8 @@ type ClientKeys struct {
 	warned  atomic.Bool
 }
 
-// NewClientKeys builds a resolver. logger receives the one-time warning about
-// an ignored X-Forwarded-For.
+// NewClientKeys builds a resolver. logger, which must not be nil, receives the
+// one-time warning about an ignored X-Forwarded-For.
 func NewClientKeys(trusted TrustedProxies, logger *slog.Logger) *ClientKeys {
 	return &ClientKeys{trusted: trusted, logger: logger}
 }
@@ -293,7 +284,7 @@ func (c *ClientKeys) keyFor(peer netip.Addr, hasPeer bool, headers http.Header) 
 // missing trusted-proxies entry (every client collapses into one bucket) or a
 // forgery.
 func (c *ClientKeys) warnOnceAboutIgnoredForwarding(peer netip.Addr, headers http.Header) {
-	if len(headers.Values("X-Forwarded-For")) == 0 || c.logger == nil {
+	if len(headers.Values("X-Forwarded-For")) == 0 {
 		return
 	}
 	if c.warned.Swap(true) {
@@ -329,7 +320,8 @@ func forwardedClient(headers http.Header, trusted TrustedProxies) (netip.Addr, b
 	return netip.Addr{}, false
 }
 
-// isVisibleASCII mirrors http::HeaderValue::to_str: visible ASCII and tab only.
+// isVisibleASCII reports whether value holds only visible ASCII and tab; a
+// forwarded-for line with any other byte is ignored.
 func isVisibleASCII(value string) bool {
 	for i := range len(value) {
 		b := value[i]

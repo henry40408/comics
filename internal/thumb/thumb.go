@@ -12,14 +12,15 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // registers the WebP decoder with image.Decode
 )
 
-// Quality is the JPEG quality of every generated thumbnail.
-const Quality = 72
+// quality is the JPEG quality of every generated thumbnail.
+const quality = 72
 
 // SizePx maps a size keyword to the maximum edge length in pixels. Any other
 // keyword is not allowed.
@@ -36,20 +37,16 @@ func SizePx(name string) (int, bool) {
 
 // ContentTypeFromPath names the image type by file extension, ignoring case.
 func ContentTypeFromPath(filePath string) string {
-	ext := filePath
-	if i := strings.LastIndex(filePath, "."); i >= 0 {
-		ext = filePath[i+1:]
-	}
-	switch strings.ToLower(ext) {
-	case "jpg", "jpeg":
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".jpg", ".jpeg":
 		return "image/jpeg"
-	case "png":
+	case ".png":
 		return "image/png"
-	case "gif":
+	case ".gif":
 		return "image/gif"
-	case "webp":
+	case ".webp":
 		return "image/webp"
-	case "avif":
+	case ".avif":
 		return "image/avif"
 	default:
 		return "application/octet-stream"
@@ -64,7 +61,7 @@ func Generate(filePath string, limit int) ([]byte, error) {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, fit(src, limit), &jpeg.Options{Quality: Quality}); err != nil {
+	if err := jpeg.Encode(&buf, fit(src, limit), &jpeg.Options{Quality: quality}); err != nil {
 		return nil, fmt.Errorf("encode thumbnail: %w", err)
 	}
 	return buf.Bytes(), nil

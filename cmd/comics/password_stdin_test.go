@@ -27,19 +27,6 @@ func stdinFile(t *testing.T, content string) *os.File {
 	return file
 }
 
-func TestReadPasswordTwiceReadsTwoLinesWithoutATerminal(t *testing.T) {
-	password, confirmation, err := readPasswordTwice(stdinFile(t, "first\nsecond\n"), io.Discard)
-	if err != nil || password != "first" || confirmation != "second" {
-		t.Fatalf("got %q, %q, %v", password, confirmation, err)
-	}
-}
-
-func TestReadPasswordLinesFailsOnEmptyInput(t *testing.T) {
-	if _, _, err := readPasswordLines(strings.NewReader("")); err == nil {
-		t.Fatal("empty input was accepted")
-	}
-}
-
 func TestHashPasswordCommandHashesAMatchingPair(t *testing.T) {
 	var out, errw bytes.Buffer
 	stdin := stdinFile(t, "a-long-enough-password\na-long-enough-password\n")

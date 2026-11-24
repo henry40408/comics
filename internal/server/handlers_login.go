@@ -1,11 +1,9 @@
 package server
 
 import (
+	"cmp"
 	"errors"
-	"io"
-	"mime"
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/henry40408/comics/internal/auth"
@@ -30,7 +28,7 @@ type loginForm struct {
 // handleLoginPage renders the form, or redirects to next when auth is disabled
 // or the visitor is already signed in.
 func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	next := queryOrDefault(r.URL.Query(), "next", "/")
+	next := cmp.Or(r.URL.Query().Get("next"), "/")
 	signedIn := a.authenticator.Authenticate(r).Kind == auth.AuthAuthenticated
 	if a.creds == nil || signedIn {
 		seeOther(w, auth.SafeNext(next))
@@ -39,21 +37,12 @@ func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	renderLogin(w, false, next)
 }
 
-func queryOrDefault(values url.Values, key, fallback string) string {
-	if !values.Has(key) {
-		return fallback
-	}
-	return values.Get(key)
-}
-
-// renderLogin sends the form. It is public, so noStoreHTML never sees it, yet
-// it carries the error state and next.
+// renderLogin sends the form, which carries the error state and next.
 func renderLogin(w http.ResponseWriter, failed bool, next string) {
 	status := http.StatusOK
 	if failed {
 		status = http.StatusUnauthorized
 	}
-	setNoStore(w.Header())
 	writeHTML(w, status, views.LoginPage(views.LoginView{Error: failed, Next: auth.SafeNext(next)}))
 }
 
@@ -66,7 +55,7 @@ func (a *App) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := a.clientKeys.Key(r)
-	userAgent := auth.UserAgent(r)
+	userAgent := r.UserAgent()
 	if throttle := a.limiter.TryAcquire(ip); !throttle.Allowed {
 		a.respondThrottled(w, throttle, ip.String(), userAgent)
 		return
@@ -97,22 +86,19 @@ func readLoginForm(w http.ResponseWriter, r *http.Request) (loginForm, bool) {
 		http.Error(w, http.StatusText(status), status)
 		return loginForm{}, false
 	}
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/x-www-form-urlencoded" {
-		return fail(http.StatusUnsupportedMediaType)
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxLoginBodyBytes))
-	if err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
+	if err := r.ParseForm(); err != nil {
 		return fail(bodyErrorStatus(err))
 	}
-	values, err := url.ParseQuery(string(body))
-	if err != nil || !values.Has("username") || !values.Has("password") {
+	// PostForm, not Form: Form also holds the URL query, and a credential must
+	// not be accepted from a URL (it would land in access logs and history).
+	if !r.PostForm.Has("username") || !r.PostForm.Has("password") {
 		return fail(http.StatusUnprocessableEntity)
 	}
 	return loginForm{
-		username: values.Get("username"),
-		password: values.Get("password"),
-		next:     queryOrDefault(values, "next", "/"),
+		username: r.PostForm.Get("username"),
+		password: r.PostForm.Get("password"),
+		next:     cmp.Or(r.PostForm.Get("next"), "/"),
 	}, true
 }
 
@@ -185,7 +171,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	a.logger.Info("session destroyed",
 		"event", "session_destroyed", "session", session, "destroyed", destroyed,
-		"ip", ip.String(), "user_agent", auth.UserAgent(r))
+		"ip", ip.String(), "user_agent", r.UserAgent())
 
 	http.SetCookie(w, auth.BuildSessionRemovalCookie(a.cfg.CookieSecure))
 	w.Header().Set("Clear-Site-Data", clearSiteData)

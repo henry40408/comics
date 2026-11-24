@@ -17,9 +17,13 @@ func mustParseProxies(t *testing.T, raw string) TrustedProxies {
 
 func addr(s string) netip.Addr { return netip.MustParseAddr(s) }
 
+// listsNoProxy reports whether the list has no entry. Contains cannot show
+// that: it only answers for the addresses it is asked about.
+func listsNoProxy(trusted TrustedProxies) bool { return len(trusted.prefixes) == 0 }
+
 func TestDefaultTrustsNothing(t *testing.T) {
 	var trusted TrustedProxies
-	if !trusted.IsEmpty() {
+	if !listsNoProxy(trusted) {
 		t.Fatal("zero value not empty")
 	}
 	for _, ip := range []string{"127.0.0.1", "10.0.0.1"} {
@@ -31,7 +35,7 @@ func TestDefaultTrustsNothing(t *testing.T) {
 
 func TestParsesAMixOfPrefixesAndBareAddresses(t *testing.T) {
 	trusted := mustParseProxies(t, "172.16.0.0/12, 10.0.0.2 ,::1")
-	if trusted.IsEmpty() {
+	if listsNoProxy(trusted) {
 		t.Fatal("list is empty")
 	}
 	for _, ip := range []string{"172.20.3.4", "10.0.0.2", "::1"} {
@@ -48,7 +52,7 @@ func TestParsesAMixOfPrefixesAndBareAddresses(t *testing.T) {
 
 func TestEmptyAndBlankValuesAreTheEmptyList(t *testing.T) {
 	for _, raw := range []string{"", "   ", ",", " , "} {
-		if !mustParseProxies(t, raw).IsEmpty() {
+		if !listsNoProxy(mustParseProxies(t, raw)) {
 			t.Errorf("%q is not the empty list", raw)
 		}
 	}

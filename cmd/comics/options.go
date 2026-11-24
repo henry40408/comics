@@ -18,7 +18,7 @@ import (
 const (
 	defaultBind      = "127.0.0.1:8080"
 	defaultDataDir   = "./data"
-	defaultLogFormat = "full"
+	defaultLogFormat = "text"
 	logLevelEnv      = "COMICS_LOG_LEVEL"
 )
 
@@ -50,9 +50,12 @@ type options struct {
 
 // flagSpec describes one setting. Precedence is flag, then env, then default:
 // the environment is applied first and a flag parsed afterwards overrides it.
+// An empty name means the setting has no flag.
 type flagSpec struct {
-	names   []string
-	env     string
+	name string
+	env  string
+	// usage must not contain a backquote: flag shows the quoted text as the
+	// name of the flag's value.
 	usage   string
 	boolean bool
 	set     func(value string) error
@@ -70,30 +73,30 @@ func newOptions() options {
 
 func (o *options) specs() []flagSpec {
 	return []flagSpec{
-		{names: []string{"bind", "b"}, env: "COMICS_BIND", set: setString(&o.bind),
+		{name: "bind", env: "COMICS_BIND", set: setString(&o.bind),
 			usage: "bind host and port, loopback by default (default " + defaultBind + ")"},
-		{names: []string{"data-dir"}, env: "COMICS_DATA_DIR", set: setString(&o.dataDir),
+		{name: "data-dir", env: "COMICS_DATA_DIR", set: setString(&o.dataDir),
 			usage: "data directory (default " + defaultDataDir + ")"},
-		{names: []string{"cache-dir"}, env: "COMICS_CACHE_DIR", set: setString(&o.cacheDir),
+		{name: "cache-dir", env: "COMICS_CACHE_DIR", set: setString(&o.cacheDir),
 			usage: "directory for cached thumbnails (default comics-thumbs under the system temp dir)"},
-		{names: []string{"log-format"}, env: "COMICS_LOG_FORMAT", set: setParsed(&o.logFormat, parseLogFormat),
-			usage: "log format: full or json (default " + defaultLogFormat + ")"},
+		{name: "log-format", env: "COMICS_LOG_FORMAT", set: setParsed(&o.logFormat, parseLogFormat),
+			usage: "log format: text or json (default " + defaultLogFormat + ")"},
 		{env: logLevelEnv, set: setParsed(&o.logLevel, parseLogLevel)},
-		{names: []string{"secret"}, env: "COMICS_SECRET", set: o.setSecret,
-			usage: "at least 64 hex characters (`openssl rand -hex 32`); unset means a random secret per start"},
-		{names: []string{"auth-username"}, env: "COMICS_AUTH_USERNAME", set: setNonEmpty(&o.authUsername),
+		{name: "secret", env: "COMICS_SECRET", set: o.setSecret,
+			usage: "at least 64 hex characters, e.g. from openssl rand -hex 32; unset means a random secret per start"},
+		{name: "auth-username", env: "COMICS_AUTH_USERNAME", set: setNonEmpty(&o.authUsername),
 			usage: "username for the login form"},
-		{names: []string{"auth-password-hash"}, env: "COMICS_AUTH_PASSWORD_HASH", set: setNonEmpty(&o.authPasswordHash),
+		{name: "auth-password-hash", env: "COMICS_AUTH_PASSWORD_HASH", set: setNonEmpty(&o.authPasswordHash),
 			usage: "Argon2id hash of the password for the login form (see hash-password)"},
-		{names: []string{"cookie-secure"}, env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, parseStrictBool),
+		{name: "cookie-secure", env: "COMICS_COOKIE_SECURE", boolean: true, set: setParsed(&o.cookieSecure, parseStrictBool),
 			usage: "send the session cookie with the Secure attribute (HTTPS only)"},
-		{names: []string{"hsts-max-age"}, env: "COMICS_HSTS_MAX_AGE", set: o.setHSTSMaxAge,
+		{name: "hsts-max-age", env: "COMICS_HSTS_MAX_AGE", set: o.setHSTSMaxAge,
 			usage: "send Strict-Transport-Security with this max-age in seconds"},
-		{names: []string{"trusted-proxies"}, env: "COMICS_TRUSTED_PROXIES", set: setParsed(&o.trustedProxies, auth.ParseTrustedProxies),
+		{name: "trusted-proxies", env: "COMICS_TRUSTED_PROXIES", set: setParsed(&o.trustedProxies, auth.ParseTrustedProxies),
 			usage: "comma-separated IPs and CIDR prefixes whose X-Forwarded-For is trusted"},
-		{names: []string{"disable-csrf-guard"}, env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: setParsed(&o.disableCSRFGuard, parseStrictBool),
+		{name: "disable-csrf-guard", env: "COMICS_DISABLE_CSRF_GUARD", boolean: true, set: setParsed(&o.disableCSRFGuard, parseStrictBool),
 			usage: "turn off the CSRF origin guard (plain-HTTP LAN hosts only)"},
-		{names: []string{"version"}, boolean: true, set: setParsed(&o.showVersion, parseStrictBool),
+		{name: "version", boolean: true, set: setParsed(&o.showVersion, parseStrictBool),
 			usage: "print the version and exit"},
 	}
 }
@@ -150,16 +153,17 @@ func newFlagSet(specs []flagSpec) *flag.FlagSet {
 	flags := flag.NewFlagSet("comics", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	for _, spec := range specs {
-		for _, name := range spec.names {
-			if spec.boolean {
-				flags.BoolFunc(name, spec.usage, spec.set)
-				continue
-			}
-			flags.Func(name, spec.usage, spec.set)
+		if spec.name == "" {
+			continue
 		}
+		if spec.boolean {
+			flags.BoolFunc(spec.name, spec.usage, spec.set)
+			continue
+		}
+		flags.Func(spec.name, spec.usage, spec.set)
 	}
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(flags.Output(), "Usage: comics [flags] [list|ls|hash-password]")
+		_, _ = fmt.Fprintln(flags.Output(), "Usage: comics [flags] [list|hash-password]")
 		flags.PrintDefaults()
 	}
 	return flags
@@ -188,12 +192,10 @@ func (o *options) setCommand(rest []string) error {
 		return fmt.Errorf("unexpected argument %q after the subcommand", rest[1])
 	}
 	switch rest[0] {
-	case "list", "ls":
-		o.command = "list"
-	case "hash-password":
-		o.command = "hash-password"
+	case "list", "hash-password":
+		o.command = rest[0]
 	default:
-		return fmt.Errorf("unknown subcommand %q (want list, ls or hash-password)", rest[0])
+		return fmt.Errorf("unknown subcommand %q (want list or hash-password)", rest[0])
 	}
 	return nil
 }
@@ -230,7 +232,7 @@ func setNonEmpty(target *string) func(string) error {
 	}
 }
 
-// parseStrictBool accepts only true and false, like clap.
+// parseStrictBool accepts only "true" and "false".
 func parseStrictBool(value string) (bool, error) {
 	switch value {
 	case "true":

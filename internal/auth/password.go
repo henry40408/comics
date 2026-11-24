@@ -92,9 +92,7 @@ func HashPasswordWith(password string, params PasswordParams) (string, error) {
 		return "", err
 	}
 	salt := make([]byte, saltBytes)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("failed to hash the password: %w", err)
-	}
+	_, _ = rand.Read(salt) // crypto/rand.Read never returns an error
 	digest := argon2.IDKey([]byte(password), salt, params.Time, params.Memory, params.Threads, digestBytes)
 	return formatPHC(params, salt, digest), nil
 }

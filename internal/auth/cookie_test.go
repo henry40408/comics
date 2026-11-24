@@ -6,41 +6,12 @@ import (
 	"testing"
 )
 
-func TestBuildSessionCookieSetsSecureWhenRequested(t *testing.T) {
-	if !BuildSessionCookie(true, "id").Secure {
-		t.Error("secure=true did not set Secure")
-	}
-	if BuildSessionCookie(false, "id").Secure {
-		t.Error("secure=false set Secure")
-	}
-}
-
 func TestSessionCookieNameIsPrefixedOnlyWhenSecure(t *testing.T) {
 	if got := SessionCookieName(true); got != "__Host-comics_session" {
 		t.Errorf("secure = %q", got)
 	}
 	if got := SessionCookieName(false); got != "comics_session" {
 		t.Errorf("plain = %q", got)
-	}
-}
-
-func TestBuildSessionCookieUsesThePrefixedNameWhenSecure(t *testing.T) {
-	if got := BuildSessionCookie(true, "id").Name; got != "__Host-comics_session" {
-		t.Errorf("secure = %q", got)
-	}
-	if got := BuildSessionCookie(false, "id").Name; got != "comics_session" {
-		t.Errorf("plain = %q", got)
-	}
-}
-
-func TestBuildSessionCookieValueIsTheBareIdentifier(t *testing.T) {
-	id := "0123456789abcdef0123456789abcdef"
-	cookie := BuildSessionCookie(false, id)
-	if cookie.Value != id {
-		t.Fatalf("value = %q", cookie.Value)
-	}
-	if !IsSessionID(cookie.Value) {
-		t.Fatal("the cookie value is not a session id")
 	}
 }
 
@@ -73,18 +44,6 @@ func TestRemovalCookieMirrorsTheSessionCookie(t *testing.T) {
 		if !strings.Contains(removal.String(), "Max-Age=0") {
 			t.Errorf("secure=%v: %q does not expire the cookie", secure, removal.String())
 		}
-	}
-}
-
-func TestSignAndVerifyRoundTrip(t *testing.T) {
-	signer := NewCookieSigner(randomSessionKey(t))
-	signed := signer.Sign("value")
-
-	if got, ok := signer.Verify(signed); !ok || got != "value" {
-		t.Fatalf("Verify = %q, %v", got, ok)
-	}
-	if len(signed) != signedDigestLen+len("value") {
-		t.Fatalf("signed value has length %d", len(signed))
 	}
 }
 

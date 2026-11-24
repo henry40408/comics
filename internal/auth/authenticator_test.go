@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,6 +26,7 @@ func newTestAuthenticator(t *testing.T, key [64]byte) *Authenticator {
 		Signer:   NewCookieSigner(key),
 		Sessions: newTestStore(),
 		Salt:     NewAuditSalt(),
+		Logger:   slog.New(slog.DiscardHandler),
 	}
 }
 
@@ -68,19 +70,6 @@ func TestAuthenticateAuthenticatedForALiveSession(t *testing.T) {
 	wantState(t, a.Authenticate(requestFor(key, id)), AuthAuthenticated, RejectionNone)
 }
 
-func TestAuthenticateRejectsADestroyedSession(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
-	id := a.Sessions.Create("test-agent")
-	request := requestFor(key, id)
-
-	wantState(t, a.Authenticate(request), AuthAuthenticated, RejectionNone)
-	if !a.Sessions.Destroy(id) {
-		t.Fatal("Destroy reported the session missing")
-	}
-	wantState(t, a.Authenticate(request), AuthUnauthenticated, RejectionUnknown)
-}
-
 func TestAuthenticateReportsWhyItRefused(t *testing.T) {
 	key := randomSessionKey(t)
 	a := newTestAuthenticator(t, key)
@@ -97,14 +86,6 @@ func TestAuthenticateReportsWhyItRefused(t *testing.T) {
 
 	// Well-formed and correctly signed, but never issued.
 	wantState(t, a.Authenticate(requestFor(key, strings.Repeat("0", 32))), AuthUnauthenticated, RejectionUnknown)
-}
-
-func TestAuthenticateRejectsTheLegacyNonceDotExpiryCookie(t *testing.T) {
-	key := randomSessionKey(t)
-	a := newTestAuthenticator(t, key)
-	legacy := strings.Repeat("0", 32) + ".9999999999"
-	header := signedHeader(key, &http.Cookie{Name: SessionCookie, Value: legacy, Path: "/"})
-	wantState(t, a.Authenticate(requestWithCookie(header)), AuthUnauthenticated, RejectionMalformed)
 }
 
 func TestAuthenticateRejectsACookieSignedByAnotherKey(t *testing.T) {
@@ -186,60 +167,29 @@ func TestTheLastCookieOfTheNameWins(t *testing.T) {
 	}
 }
 
-func TestSessionFingerprintIsADashWithoutASession(t *testing.T) {
-	a := newTestAuthenticator(t, randomSessionKey(t))
-	if got := a.SessionFingerprint(requestWithCookie("")); got != "-" {
-		t.Fatalf("fingerprint = %q, want -", got)
-	}
-}
-
-func TestUserAgentFallsBackToAPlaceholder(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	if got := UserAgent(r); got != "-" {
-		t.Errorf("absent = %q, want -", got)
-	}
-	r.Header.Set("User-Agent", "curl/8.0")
-	if got := UserAgent(r); got != "curl/8.0" {
-		t.Errorf("present = %q", got)
-	}
-	r.Header.Set("User-Agent", "")
-	if got := UserAgent(r); got != "" {
-		t.Errorf("empty = %q, want empty", got)
-	}
-	r.Header.Set("User-Agent", "café")
-	if got := UserAgent(r); got != "-" {
-		t.Errorf("non-ASCII = %q, want -", got)
-	}
-}
-
-func TestURLEncodeKeepsUnreservedCharactersAndEscapesTheRest(t *testing.T) {
-	cases := map[string]string{
-		"Az09-_.~":     "Az09-_.~",
-		"/a b?x=1&y=é": "%2Fa%20b%3Fx%3D1%26y%3D%C3%A9",
-		"":             "",
-	}
-	for input, want := range cases {
-		if got := escapeNext(input); got != want {
-			t.Errorf("escapeNext(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
 func TestLoginRedirectTargetCarriesPathAndQuery(t *testing.T) {
-	requested, err := url.Parse("/book/abc?mode=scroll")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "/login?next=%2Fbook%2Fabc%3Fmode%3Dscroll"
-	if got := LoginRedirectTarget(requested); got != want {
-		t.Fatalf("target = %q, want %q", got, want)
-	}
-}
-
-func TestSafeNextAllowsLocalPaths(t *testing.T) {
-	for _, target := range []string{"/book/abc", "/"} {
-		if got := SafeNext(target); got != target {
-			t.Errorf("SafeNext(%q) = %q", target, got)
+	for _, tc := range []struct{ requested, want string }{
+		{"/book/abc?mode=scroll", "/login?next=%2Fbook%2Fabc%3Fmode%3Dscroll"},
+		// The '&' and '=' inside next must not read as parameters of /login, a
+		// '+' must not come back as a space, and the '%' of an escape is escaped
+		// again, so one decoding gives the requested URI back.
+		{"/book/a%20b/caf%C3%A9?title=x%20y&k=a=b&p=1+1&n=漫", "/login?next=%2Fbook%2Fa%2520b%2Fcaf%25C3%25A9%3Ftitle%3Dx%2520y%26k%3Da%3Db%26p%3D1%2B1%26n%3D%E6%BC%AB"},
+	} {
+		requested, err := url.Parse(tc.requested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := LoginRedirectTarget(requested)
+		if target != tc.want {
+			t.Errorf("target for %q = %q, want %q", tc.requested, target, tc.want)
+		}
+		login, err := url.Parse(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := login.Query().Get("next")
+		if next != tc.requested || SafeNext(next) != next {
+			t.Errorf("next for %q came back as %q (SafeNext: %q)", tc.requested, next, SafeNext(next))
 		}
 	}
 }

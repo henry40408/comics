@@ -1,12 +1,16 @@
 package views
 
-import "strings"
+import (
+	"html"
+	"strings"
+)
 
 // node is markup that is already safe to concatenate: every piece of text and
-// every attribute value in it went through escape.
+// every attribute value in it went through html.EscapeString, which is right
+// for both contexts the views use, element text and double-quoted attributes.
 type node string
 
-// attr is one attribute. A flag renders bare (`defer`), like maud does.
+// attr is one attribute. A flag renders bare (`defer`).
 type attr struct {
 	name, value string
 	flag        bool
@@ -16,13 +20,8 @@ func a(name, value string) attr { return attr{name: name, value: value} }
 
 func flag(name string) attr { return attr{name: name, flag: true} }
 
-// escape covers both contexts the views use, element text and double-quoted
-// attribute values. maud escapes exactly these four characters in both, and
-// html/template would write `&#34;` instead of `&quot;`.
-var escape = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace
-
 // text escapes s for use as element content.
-func text(s string) node { return node(escape(s)) }
+func text(s string) node { return node(html.EscapeString(s)) }
 
 // group concatenates nodes without any whitespace between them.
 func group(children ...node) node {
@@ -39,7 +38,7 @@ func openTag(tag string, attrs []attr) string {
 	for _, at := range attrs {
 		b.WriteString(" " + at.name)
 		if !at.flag {
-			b.WriteString(`="` + escape(at.value) + `"`)
+			b.WriteString(`="` + html.EscapeString(at.value) + `"`)
 		}
 	}
 	b.WriteString(">")

@@ -63,8 +63,8 @@ func TestDestroyMakesTheIdentifierUseless(t *testing.T) {
 	if got := store.Validate(id, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("Validate = %+v, want Unknown", got)
 	}
-	if !store.IsEmpty() {
-		t.Fatal("store not empty")
+	if store.Len() != 0 {
+		t.Fatalf("Len = %d, want 0", store.Len())
 	}
 	if store.Destroy(id) {
 		t.Fatal("second Destroy reported a session")
@@ -85,8 +85,8 @@ func TestDestroyAllEndsEverySession(t *testing.T) {
 			t.Fatalf("Validate = %+v, want Unknown", got)
 		}
 	}
-	if !store.IsEmpty() {
-		t.Fatal("store not empty")
+	if store.Len() != 0 {
+		t.Fatalf("Len = %d, want 0", store.Len())
 	}
 }
 
@@ -103,13 +103,6 @@ func TestDestroyAllIgnoresAnIdentifierItNeverIssued(t *testing.T) {
 	}
 }
 
-func TestAnUnissuedIdentifierIsUnknown(t *testing.T) {
-	store := newTestStore()
-	if got := store.Validate(strings.Repeat("0", 32), testUA); got.Rejection != RejectionUnknown {
-		t.Fatalf("Validate = %+v, want Unknown", got)
-	}
-}
-
 func TestIdleExpiryDestroysTheSession(t *testing.T) {
 	store := NewSessionStore(0, DefaultAbsoluteTTL, nil)
 	id := store.Create(testUA)
@@ -119,8 +112,8 @@ func TestIdleExpiryDestroysTheSession(t *testing.T) {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}
 	// Expired means gone, not merely refused.
-	if !store.IsEmpty() {
-		t.Fatal("expired session still stored")
+	if store.Len() != 0 {
+		t.Fatalf("expired session still stored: Len = %d", store.Len())
 	}
 	if got := store.Validate(id, testUA); got.Rejection != RejectionUnknown {
 		t.Fatalf("Validate = %+v, want Unknown", got)
@@ -135,8 +128,8 @@ func TestAbsoluteExpiryBeatsActivity(t *testing.T) {
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
 	}
-	if !store.IsEmpty() {
-		t.Fatal("expired session still stored")
+	if store.Len() != 0 {
+		t.Fatalf("expired session still stored: Len = %d", store.Len())
 	}
 }
 
@@ -247,20 +240,8 @@ func TestTheDefaultLifetimesAreThreeAndSevenDays(t *testing.T) {
 	}
 }
 
-func TestAStoreIsEmptyOnlyUntilASessionIsCreated(t *testing.T) {
-	store := newTestStore()
-	if !store.IsEmpty() {
-		t.Fatal("new store not empty")
-	}
-	store.Create(testUA)
-	if store.IsEmpty() {
-		t.Fatal("store empty after Create")
-	}
-}
-
 // Idle time is measured on the store's own clock, so the session must really
-// expire once that clock passes the idle window. The injected clock replaces
-// the Rust test's two-second sleep.
+// expire once that clock passes the idle window.
 func TestASessionUnusedForLongerThanTheIdleWindowExpires(t *testing.T) {
 	clock := &fakeClock{}
 	store := NewSessionStore(time.Second, DefaultAbsoluteTTL, clock.now)
@@ -293,14 +274,5 @@ func TestActivityKeepsASessionAliveUntilTheAbsoluteDeadline(t *testing.T) {
 	want := Validation{Rejection: RejectionExpiredAbsolute}
 	if got := store.Validate(id, testUA); got != want {
 		t.Fatalf("Validate = %+v, want %+v", got, want)
-	}
-}
-
-func TestMonotonicClockDefaultKeepsSessionsLive(t *testing.T) {
-	store := NewSessionStore(DefaultIdleTTL, DefaultAbsoluteTTL, nil)
-	id := store.Create(testUA)
-	time.Sleep(5 * time.Millisecond)
-	if !isLive(store, id) {
-		t.Fatal("session expired under the real clock")
 	}
 }

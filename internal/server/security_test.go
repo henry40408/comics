@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -10,8 +9,8 @@ import (
 	"github.com/henry40408/comics/internal/assets"
 )
 
-// Pinned independently of the constants in middleware.go: these are the exact
-// values src/security_headers.rs sent.
+// Pinned independently of the constants in middleware.go, so a change to either
+// side fails.
 var wantConstantHeaders = map[string]string{
 	"Content-Security-Policy": "default-src 'none'; script-src 'self'; " +
 		"style-src 'self' https://fonts.bunny.net; " +
@@ -170,51 +169,6 @@ func TestEveryConstantHeaderIsWellFormed(t *testing.T) {
 	}
 }
 
-func TestCSPPermitsNoInlineOrEval(t *testing.T) {
-	for _, banned := range []string{"unsafe-inline", "unsafe-eval"} {
-		if strings.Contains(contentSecurityPolicy, banned) {
-			t.Errorf("CSP contains %s", banned)
-		}
-	}
-}
-
-func serveStub(contentType, cacheControl string) *httptest.ResponseRecorder {
-	stub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", contentType)
-		if cacheControl != "" {
-			w.Header().Set("Cache-Control", cacheControl)
-		}
-		_, _ = w.Write([]byte("body"))
-	})
-	rec := httptest.NewRecorder()
-	noStoreHTML(stub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	return rec
-}
-
-func TestNoStoreHTMLAddsNoStoreToHTMLWithoutCacheControl(t *testing.T) {
-	rec := serveStub("text/html; charset=utf-8", "")
-	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Pragma") != "no-cache" {
-		t.Errorf("status %d, headers %v", rec.Code, rec.Header())
-	}
-}
-
-func TestNoStoreHTMLLeavesExistingCacheControlUntouched(t *testing.T) {
-	rec := serveStub("text/html", "public, max-age=60")
-	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=60" {
-		t.Errorf("Cache-Control = %q", got)
-	}
-	if _, set := rec.Header()["Pragma"]; set {
-		t.Error("Pragma was added")
-	}
-}
-
-func TestNoStoreHTMLIgnoresNonHTMLContentTypes(t *testing.T) {
-	rec := serveStub("image/jpeg", "")
-	if _, set := rec.Header()["Cache-Control"]; set {
-		t.Error("Cache-Control was added to an image")
-	}
-}
-
 func TestStaticAssetsStayPubliclyCacheable(t *testing.T) {
 	res := newTestApp(t, withAuth()).get("/assets/app.css")
 	assertStatus(t, 200, res, "GET /assets/app.css")
@@ -223,22 +177,25 @@ func TestStaticAssetsStayPubliclyCacheable(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedHTMLIsNotCacheable(t *testing.T) {
-	ta := newTestApp(t)
-	for _, path := range []string{"/", "/book/" + dataIDs[0]} {
-		res := ta.get(path)
-		assertStatus(t, 200, res, "GET "+path)
-		if res.Header.Get("Cache-Control") != "no-store" || res.Header.Get("Pragma") != "no-cache" {
-			t.Errorf("GET %s: %v", path, res.Header)
+// A rendered page that is not no-store lets the back button show it after
+// logout. Every way the server answers with one is listed here.
+func TestEveryRenderedPageIsNotCacheable(t *testing.T) {
+	ta := newTestApp(t, withAuth()).browse()
+	check := func(what string, wantStatus int, res *response) {
+		t.Helper()
+		assertStatus(t, wantStatus, res, what)
+		if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+			t.Errorf("%s: Content-Type %q, so the no-store check proves nothing", what, got)
 		}
+		assertNoStore(t, res, what)
 	}
-}
 
-func TestLoginPageIsNotCacheable(t *testing.T) {
-	res := newTestApp(t, withAuth()).get("/login")
-	assertStatus(t, 200, res, "GET /login")
-	if got := res.Header.Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q", got)
+	check("login form", 200, ta.get("/login"))
+	check("login form after a failed login", 401, ta.failedLogin())
+	ta.login()
+	book := "/book/" + dataIDs[0]
+	for _, path := range []string{"/", book, book + "?mode=paged", book + "?mode=scroll", book + "?mode=unknown"} {
+		check("GET "+path, 200, ta.get(path))
 	}
 }
 
