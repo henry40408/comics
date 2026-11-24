@@ -53,23 +53,6 @@ func BuildSessionRemovalCookie(secure bool) *http.Cookie {
 	return cookie
 }
 
-// CookieSigner is an empty shell, kept only so the frozen tests still compile;
-// removed in the next production commit. The session cookie is no longer
-// signed.
-type CookieSigner struct{}
-
-// NewCookieSigner ignores key; kept only so the frozen tests still compile,
-// removed in the next production commit.
-func NewCookieSigner(key [64]byte) CookieSigner {
-	return CookieSigner{}
-}
-
-// SignCookie returns cookie unchanged; kept only so the frozen tests still
-// compile, removed in the next production commit.
-func (CookieSigner) SignCookie(cookie *http.Cookie) *http.Cookie {
-	return cookie
-}
-
 // cookieValue is the value of the last cookie called name in the request, which
 // is the one a cookie jar keeps.
 func cookieValue(r *http.Request, name string) (string, bool) {

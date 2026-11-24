@@ -52,12 +52,9 @@ type Authenticator struct {
 	// Enabled is true when both a username and a password hash are configured.
 	Enabled      bool
 	CookieSecure bool
-	// Signer is unused; kept only so the frozen tests still compile, removed in
-	// the next production commit.
-	Signer   CookieSigner
-	Sessions *SessionStore
-	Salt     *AuditSalt
-	Logger   *slog.Logger // must not be nil
+	Sessions     *SessionStore
+	Salt         *AuditSalt
+	Logger       *slog.Logger // must not be nil
 }
 
 // Authenticate applies two gates, cheapest first: the cookie value's shape,
